@@ -4,6 +4,16 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.8.1] — 2026-11-07
+
+### Nouveautés
+- **Annuler / Rétablir** : Ctrl+Z et Ctrl+Y (ou les flèches en haut à droite) annulent n'importe quelle modification : touche, page, fader, LED…
+- **Sauvegardes automatiques** : avant chaque modification, HubForge garde une copie du profil (les 30 dernières). Menu du profil → « Sauvegardes… » pour revenir à une version précédente en un clic.
+- **Partage de profils** : menu du profil → « Exporter dans un fichier » crée un `.hfprofile` qui contient les touches, les pages et les images. Pour l'importer : double-clic sur le fichier, glisser-déposer sur la fenêtre, ou « Importer un profil… ». Les addons manquants sont signalés.
+- **Copier / coller une touche** : Ctrl+C sur une touche, Ctrl+V sur une autre (ou les boutons de l'inspecteur).
+- **Dupliquer une page** depuis ses réglages.
+- **Diagnostic** (Réglages) : modules détectés, ports, addons et journal ; boutons « Reconnecter les modules », « Réinitialiser la base » (utile si un module rebranché à chaud n'est plus vu) et « Copier le rapport » pour demander de l'aide.
+
 ## [0.8.0] — 2026-11-07
 
 ### Nouveautés

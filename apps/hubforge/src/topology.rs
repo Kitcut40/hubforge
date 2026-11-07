@@ -45,6 +45,13 @@ pub fn placement(kind: &str, code: &str) -> Option<Placement> {
 }
 
 /// Chemins de ports des modules : n° de série → code (ex. "134").
+/// Demande à Windows de réexaminer la base (hub USB) et ce qui y est branché :
+/// utile quand un module rebranché à chaud n'est plus vu. Retourne le
+/// nombre de hubs réexaminés.
+pub fn reenumerate_base() -> Result<usize, String> {
+    imp::reenumerate_base()
+}
+
 pub fn port_codes() -> HashMap<String, String> {
     imp::port_codes()
 }
@@ -140,6 +147,40 @@ mod imp {
         }
     }
 
+    pub fn reenumerate_base() -> Result<usize, String> {
+        use windows::Win32::Devices::DeviceAndDriverInstallation::{
+            CM_Get_Parent, CM_Reenumerate_DevNode, CM_REENUMERATE_RETRY_INSTALLATION, CM_REENUMERATE_SYNCHRONOUS,
+        };
+        let mut done = 0;
+        for id in device_ids() {
+            let up = id.to_uppercase();
+            if !up.starts_with("USB\\VID_067B&PID_2586\\") || up.contains("&MI_") {
+                continue;
+            }
+            let w = wide(&id);
+            let mut inst = 0u32;
+            unsafe {
+                if CM_Locate_DevNodeW(&mut inst, PCWSTR(w.as_ptr()), CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS {
+                    continue;
+                }
+                let flags = CM_REENUMERATE_SYNCHRONOUS | CM_REENUMERATE_RETRY_INSTALLATION;
+                // Le hub de la base, puis le port du PC sur lequel elle est branchée.
+                let mut ok = CM_Reenumerate_DevNode(inst, flags) == CR_SUCCESS;
+                let mut parent = 0u32;
+                if CM_Get_Parent(&mut parent, inst, 0) == CR_SUCCESS {
+                    ok |= CM_Reenumerate_DevNode(parent, flags) == CR_SUCCESS;
+                }
+                if ok {
+                    done += 1;
+                }
+            }
+        }
+        if done == 0 {
+            return Err("base introuvable ou réexamen refusé par Windows".into());
+        }
+        Ok(done)
+    }
+
     pub fn port_codes() -> HashMap<String, String> {
         let mut hubs = Vec::new();
         let mut modules = Vec::new();
@@ -173,6 +214,10 @@ mod imp {
     use std::collections::HashMap;
     pub fn port_codes() -> HashMap<String, String> {
         HashMap::new()
+    }
+
+    pub fn reenumerate_base() -> Result<usize, String> {
+        Err("disponible uniquement sous Windows pour l'instant".into())
     }
 }
 

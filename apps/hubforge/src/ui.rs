@@ -245,7 +245,12 @@ pub fn open_url(url: String) -> Result<(), String> {
 /// Enregistre la configuration et l'applique immédiatement.
 #[tauri::command]
 pub fn apply_config(state: State<AppState>, config: Config) -> Result<(), String> {
-    let path = state.active.lock().unwrap().path.clone();
+    let (name, path) = {
+        let a = state.active.lock().unwrap();
+        (a.name.clone(), a.path.clone())
+    };
+    // Copie de sécurité de la version précédente (au plus une toutes les 2 min).
+    crate::backups::snapshot(&state.cfg_dir, &name, &path, false);
     config::save(&path, &config)?;
     let _ = state.engine.lock().unwrap().send(EngineMsg::ApplyConfig(Box::new(config)));
     Ok(())
@@ -282,6 +287,7 @@ pub fn create_profile(state: State<AppState>, name: String, copy_from: Option<St
 pub fn rename_profile(state: State<AppState>, old: String, new: String) -> Result<String, String> {
     let is_active = state.active.lock().unwrap().name == old;
     let new = profiles::rename(&state.cfg_dir, &old, &new)?;
+    crate::backups::rename(&state.cfg_dir, &old, &new);
     if is_active {
         // Le fichier a changé de nom : le moteur suit.
         {
@@ -545,10 +551,132 @@ pub async fn pick_file(app: AppHandle, kind: String) -> Result<Option<String>, S
     d = match kind.as_str() {
         "image" => d.add_filter("Images et GIF", &["png", "jpg", "jpeg", "gif", "webp", "bmp"]),
         "addon" => d.add_filter("Addon HubForge", &["forge"]),
+        "profile" => d.add_filter("Profil HubForge", &["hfprofile"]),
         "program" => d.add_filter("Programmes", &["exe", "lnk", "bat", "cmd"]).add_filter("Tous les fichiers", &["*"]),
         _ => d,
     };
     Ok(d.blocking_pick_file().and_then(|p| p.into_path().ok()).map(|p| p.display().to_string()))
+}
+
+// ----------------------------------------------------------------------
+// Sauvegardes, partage de profils, diagnostic
+// ----------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_backups(state: State<AppState>) -> Vec<crate::backups::BackupInfo> {
+    let name = state.active.lock().unwrap().name.clone();
+    crate::backups::list(&state.cfg_dir, &name)
+}
+
+/// Remet une sauvegarde du profil actif ; l'interface recharge ensuite le profil.
+#[tauri::command]
+pub fn restore_backup(state: State<AppState>, file: String) -> Result<(), String> {
+    let (name, path) = {
+        let a = state.active.lock().unwrap();
+        (a.name.clone(), a.path.clone())
+    };
+    crate::backups::restore(&state.cfg_dir, &name, &file, &path)?;
+    let cfg = config::load(&path)?;
+    let _ = state.engine.lock().unwrap().send(EngineMsg::ApplyConfig(Box::new(cfg)));
+    log::info!("profil « {name} » restauré depuis la sauvegarde {file}");
+    Ok(())
+}
+
+/// Exporte un profil : choix de l'emplacement, puis écriture du .hfprofile.
+#[tauri::command]
+pub async fn export_profile(app: AppHandle, state: State<'_, AppState>, name: String) -> Result<Option<String>, String> {
+    let file_name = format!("{}.hfprofile", name.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|'], "_"));
+    let Some(dest) = app
+        .dialog()
+        .file()
+        .add_filter("Profil HubForge", &["hfprofile"])
+        .set_file_name(&file_name)
+        .blocking_save_file()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let dest = if dest.extension().map(|e| e == "hfprofile").unwrap_or(false) { dest } else { dest.with_extension("hfprofile") };
+    let images = crate::share::export(&state.cfg_dir, &name, &dest)?;
+    log::info!("profil « {name} » exporté vers {} ({images} images)", dest.display());
+    Ok(Some(dest.display().to_string()))
+}
+
+fn finish_import(state: &State<AppState>, bytes: &[u8]) -> Result<crate::share::ImportReport, String> {
+    let r = crate::share::import(&state.cfg_dir, bytes)?;
+    log::info!("profil « {} » importé ({} images)", r.name, r.images);
+    let _ = state.engine.lock().unwrap().send(EngineMsg::SwitchProfile(r.name.clone()));
+    Ok(r)
+}
+
+#[tauri::command]
+pub fn import_profile(state: State<AppState>, path: String) -> Result<crate::share::ImportReport, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("lecture impossible : {e}"))?;
+    finish_import(&state, &bytes)
+}
+
+#[tauri::command]
+pub fn import_profile_data(state: State<AppState>, data: String) -> Result<crate::share::ImportReport, String> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|e| e.to_string())?;
+    finish_import(&state, &bytes)
+}
+
+#[derive(Serialize)]
+pub struct Diagnostic {
+    version: String,
+    os: String,
+    profile: String,
+    config_dir: String,
+    status: Status,
+    addons: Vec<String>,
+    log: String,
+}
+
+/// Informations utiles pour une demande d'aide (rien n'est envoyé : l'utilisateur copie le rapport s'il le souhaite).
+#[tauri::command]
+pub fn get_diagnostic(state: State<AppState>) -> Diagnostic {
+    let log_text = std::fs::read_to_string(state.cfg_dir.join("hubforge.log")).unwrap_or_default();
+    let lines: Vec<&str> = log_text.lines().collect();
+    let tail = lines[lines.len().saturating_sub(150)..].join("\n");
+    Diagnostic {
+        version: crate::update::CURRENT.into(),
+        os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
+        profile: state.active.lock().unwrap().name.clone(),
+        config_dir: state.cfg_dir.display().to_string(),
+        status: state.status.lock().unwrap().clone(),
+        addons: crate::addons::scan(&state.cfg_dir)
+            .into_iter()
+            .map(|e| match (e.addon, e.error) {
+                (Some(a), _) => format!("{} {}", a.id, a.version),
+                (None, err) => format!("{} (erreur : {})", e.folder, err.unwrap_or_default()),
+            })
+            .collect(),
+        log: tail,
+    }
+}
+
+/// Ferme et rouvre tous les modules (ils réapparaissent en 1 à 2 secondes).
+#[tauri::command]
+pub fn reconnect_modules(state: State<AppState>) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::Reconnect);
+}
+
+/// Demande à Windows de réexaminer la base, puis reconnecte les modules.
+#[tauri::command]
+pub async fn reset_base(state: State<'_, AppState>) -> Result<String, String> {
+    let r = crate::topology::reenumerate_base();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let _ = state.engine.lock().unwrap().send(EngineMsg::Reconnect);
+    match r {
+        Ok(n) => {
+            log::info!("base réexaminée ({n} hub)");
+            Ok(format!("Base réexaminée ({n} hub). Les modules réapparaissent dans quelques secondes."))
+        }
+        Err(e) => {
+            log::warn!("réexamen de la base : {e}");
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]

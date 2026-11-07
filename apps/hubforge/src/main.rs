@@ -17,6 +17,7 @@ mod addons;
 mod appicon;
 mod audio;
 mod autostart;
+mod backups;
 mod config;
 mod engine;
 mod foreground;
@@ -26,6 +27,7 @@ mod logging;
 mod official;
 mod profiles;
 mod render;
+mod share;
 mod topology;
 mod ui;
 mod update;
@@ -57,13 +59,19 @@ fn show_main(app: &AppHandle) {
     }
 }
 
-/// Fichier .forge passé en argument (double-clic ou `--install-addon`).
+/// Fichier .forge (addon) ou .hfprofile (profil) passé en argument
+/// (double-clic, `--install-addon` ou `--import-profile`).
 fn addon_argument() -> Option<PathBuf> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(i) = args.iter().position(|a| a == "--install-addon") {
+    if let Some(i) = args.iter().position(|a| a == "--install-addon" || a == "--import-profile") {
         return args.get(i + 1).map(PathBuf::from);
     }
-    args.iter().find(|a| a.to_lowercase().ends_with(".forge")).map(PathBuf::from)
+    args.iter()
+        .find(|a| {
+            let l = a.to_lowercase();
+            l.ends_with(".forge") || l.ends_with(".hfprofile")
+        })
+        .map(PathBuf::from)
 }
 
 /// Envoie un message à HubForge déjà lancé. Retourne false s'il ne tourne pas.
@@ -77,8 +85,23 @@ fn send_to_running(msg: &str) -> bool {
     }
 }
 
-/// Installe un addon .forge et prévient l'interface.
+/// Installe un addon .forge (ou importe un profil .hfprofile) et prévient l'interface.
 fn install_addon_file(app: &AppHandle, dir: &std::path::Path, path: &std::path::Path) {
+    if path.extension().map(|e| e.eq_ignore_ascii_case("hfprofile")).unwrap_or(false) {
+        let res = std::fs::read(path).map_err(|e| format!("lecture impossible : {e}")).and_then(|b| share::import(dir, &b));
+        match &res {
+            Ok(r) => {
+                log::info!("profil « {} » importé depuis {}", r.name, path.display());
+                if let Some(st) = app.try_state::<ui::AppState>() {
+                    let _ = st.engine.lock().unwrap().send(EngineMsg::SwitchProfile(r.name.clone()));
+                }
+            }
+            Err(e) => log::error!("{} : {e}", path.display()),
+        }
+        show_main(app);
+        let _ = app.emit("profile-imported", res);
+        return;
+    }
     let res = std::fs::read(path).map_err(|e| format!("lecture impossible : {e}")).and_then(|b| addons::install_bytes(dir, &b));
     match &res {
         Ok(id) => {
@@ -176,6 +199,14 @@ fn main() {
             ui::rename_profile,
             ui::delete_profile,
             ui::start_game,
+            ui::list_backups,
+            ui::restore_backup,
+            ui::export_profile,
+            ui::import_profile,
+            ui::import_profile_data,
+            ui::get_diagnostic,
+            ui::reconnect_modules,
+            ui::reset_base,
             ui::list_addons,
             ui::addons_signature,
             ui::install_addon,

@@ -30,6 +30,8 @@ pub enum EngineMsg {
     SwitchProfile(String),
     /// Lancer le mini-jeu caché.
     StartGame,
+    /// Fermer et rouvrir tous les modules (ils sont redétectés tout de suite).
+    Reconnect,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -278,6 +280,21 @@ impl Engine {
             }
             EngineMsg::SwitchProfile(name) => self.switch_profile(&name),
             EngineMsg::StartGame => self.start_game(),
+            EngineMsg::Reconnect => {
+                log::info!("reconnexion des modules demandée");
+                self.mgr.shutdown();
+                self.modules.clear();
+                self.faders.clear();
+                self.ports.clear();
+                self.pressed = [false; KEY_COUNT];
+                self.notify();
+                self.mgr.scan();
+                if self.modules_changed {
+                    self.modules_changed = false;
+                    self.ports = topology::port_codes();
+                }
+                self.notify();
+            }
             EngineMsg::ShowPage(p) => {
                 if p < self.visuals.len() && p != self.page {
                     self.auto_from = None;

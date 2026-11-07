@@ -186,6 +186,14 @@ async function init() {
 
   $("#btn-settings").onclick = () => select({ type: "settings" });
   $("#btn-addons").onclick = () => select({ type: "addons" });
+  $("#btn-undo").onclick = undo;
+  $("#btn-redo").onclick = redo;
+  resetHistory();
+  listen("profile-imported", (e) => {
+    const r = e.payload;
+    if (r && r.Err) { toast(`Profil non importé : ${r.Err}`, true); return; }
+    afterProfileImport(r && (r.Ok || r));
+  });
   await loadAddons();
   buildLibrary();
   setInterval(checkAddons, 3000);
@@ -230,6 +238,7 @@ function fitDevice() {
 // Enregistrement automatique
 // ---------------------------------------------------------------------------
 function changed(opts = {}) {
+  recordHistory();
   setSaveState("saving", "Enregistrement…");
   clearTimeout(S.saveTimer);
   S.saveTimer = setTimeout(save, opts.immediate ? 0 : 350);
@@ -792,6 +801,7 @@ function keyInspector(k) {
   setTimeout(renderKeyPreviewInInspector);
   if (!def) {
     out.push(el("p", { class: "empty-state" }, "Touche vide.", el("br"), "Glisse une action depuis la liste de gauche, ou :"));
+    if (S.clipboard) out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:8px", onclick: () => pasteKey(k) }, "Coller la touche copiée"));
     out.push(el("button", { class: "btn primary", style: "width:100%", onclick: () => {
       setKeyDef(k, { key: k, label: "Nouvelle touche", color: "#3949AB", icon: "builtin:star", action: { type: "none" } });
       keyChanged(k, { immediate: true }); renderInspector();
@@ -847,6 +857,9 @@ function keyInspector(k) {
     : "Action lancée quand la touche est dans l'état 2 ; elle revient ensuite à l'état 1."));
   out.push(...actionEditor(st, k, () => keyChanged(k)));
   out.push(el("div", { class: "sep" }));
+  out.push(el("div", { class: "row", style: "margin-bottom:8px" },
+    el("button", { class: "btn grow", title: "Ctrl+C", onclick: () => copyKey(k) }, "Copier"),
+    el("button", { class: "btn grow", title: "Ctrl+V", disabled: !S.clipboard, onclick: () => pasteKey(k) }, "Coller ici")));
   out.push(el("button", { class: "btn danger", style: "width:100%", onclick: async () => {
     if (!(await confirm_(`Vider la touche ${k} ?`))) return;
     setKeyDef(k, null); delete S.previews[`${S.page}:${k}:0`]; delete S.previews[`${S.page}:${k}:1`]; updateKeyNode(k); changed(); renderInspector();
@@ -1303,7 +1316,9 @@ function pageInspector() {
     out.push(el("p", { class: "hint", style: "color:var(--warn, #ffb74d)" }, "Les pages automatiques sont désactivées dans les réglages généraux."));
   }
   out.push(el("div", { class: "sep" }));
-  out.push(el("button", { class: "btn", style: "width:100%", onclick: () => renamePage(S.page) }, "Renommer…"));
+  out.push(el("div", { class: "row" },
+    el("button", { class: "btn grow", onclick: () => renamePage(S.page) }, "Renommer…"),
+    el("button", { class: "btn grow", onclick: () => duplicatePage(S.page) }, "Dupliquer la page")));
   return out;
 }
 
@@ -1366,7 +1381,8 @@ function setupForgeDrop() {
     if (!f) return;
     e.preventDefault();
     if (/\.forge$/i.test(f.name)) installForgeFile(f);
-    else toast("Dépose un addon .forge sur la fenêtre, ou une image sur une touche.");
+    else if (/\.hfprofile$/i.test(f.name)) importProfileFile(f);
+    else toast("Dépose un addon .forge ou un profil .hfprofile sur la fenêtre, ou une image sur une touche.");
   });
 }
 
@@ -1503,6 +1519,10 @@ async function toggleProfileMenu(forceOpen) {
   m.append(action("+ Nouveau profil vierge…", () => newProfile(null)));
   m.append(action("⧉ Dupliquer « " + (S.profile || "") + " »…", () => newProfile(S.profile)));
   m.append(action("✎ Renommer « " + (S.profile || "") + " »…", renameProfile));
+  m.append(el("div", { class: "pm-sep" }));
+  m.append(action("⇪ Exporter « " + (S.profile || "") + " » dans un fichier…", exportProfile));
+  m.append(action("⇩ Importer un profil…", importProfile));
+  m.append(action("⟲ Sauvegardes de « " + (S.profile || "") + " »…", showBackups));
   m.classList.remove("hidden");
 }
 
@@ -1531,6 +1551,7 @@ async function reloadProfile() {
   clearTimeout(S.saveTimer);
   const ini = await invoke("get_initial");
   S.cfg = normalize(ini.config);
+  resetHistory();
   S.profile = ini.profile;
   S.profiles = ini.profiles || [];
   S.configPath = ini.config_path;
@@ -1541,6 +1562,198 @@ async function reloadProfile() {
   renderProfileButton();
   renderAll();
   await refreshPreviews(S.page);
+}
+
+// --- Annuler / Rétablir ---
+// Chaque modification enregistre l'état d'avant ; les modifications rapprochées
+// (frappe, curseur qu'on fait glisser) sont regroupées en une seule étape.
+const HISTORY_MAX = 100;
+function snapshot() { return JSON.stringify(clean(S.cfg)); }
+function resetHistory() {
+  S.history = [];
+  S.future = [];
+  S.histCur = S.cfg ? snapshot() : null;
+  S.histLast = 0;
+  updateUndoButtons();
+}
+function recordHistory() {
+  if (S.restoringHistory || !S.cfg) return;
+  const now = snapshot();
+  if (now === S.histCur) return;
+  if (Date.now() - (S.histLast || 0) > 700 && S.histCur) {
+    S.history.push(S.histCur);
+    if (S.history.length > HISTORY_MAX) S.history.shift();
+  }
+  S.histCur = now;
+  S.histLast = Date.now();
+  S.future = [];
+  updateUndoButtons();
+}
+function applySnapshot(snap) {
+  S.restoringHistory = true;
+  S.cfg = normalize(JSON.parse(snap));
+  S.histCur = snap;
+  S.histLast = 0;
+  S.page = Math.min(S.page, S.cfg.pages.length - 1);
+  S.previews = {};
+  renderAll();
+  refreshPreviews(S.page);
+  setSaveState("saving", "Enregistrement…");
+  clearTimeout(S.saveTimer);
+  save();
+  S.restoringHistory = false;
+  updateUndoButtons();
+}
+function undo() {
+  if (!S.history || !S.history.length) { toast("Rien à annuler."); return; }
+  clearTimeout(S.saveTimer);
+  recordHistory(); // la modification en cours devient annulable
+  S.future.push(S.histCur);
+  applySnapshot(S.history.pop());
+  toast("Modification annulée (Ctrl+Y pour rétablir).");
+}
+function redo() {
+  if (!S.future || !S.future.length) { toast("Rien à rétablir."); return; }
+  S.history.push(S.histCur);
+  applySnapshot(S.future.pop());
+  toast("Modification rétablie.");
+}
+function updateUndoButtons() {
+  const u = $("#btn-undo"), r = $("#btn-redo");
+  if (u) u.disabled = !(S.history && S.history.length);
+  if (r) r.disabled = !(S.future && S.future.length);
+}
+
+// --- Copier / coller une touche, dupliquer une page ---
+function copyKey(k) {
+  const def = keyDef(k);
+  if (!def) { toast("Touche vide : rien à copier."); return; }
+  S.clipboard = clone(def);
+  toast(`Touche ${k} copiée. Sélectionne une autre touche et fais Ctrl+V.`);
+}
+function pasteKey(k) {
+  if (!S.clipboard) { toast("Rien à coller : copie d'abord une touche (Ctrl+C)."); return; }
+  const def = clone(S.clipboard);
+  setKeyDef(k, def);
+  S.editState = 0;
+  keyChanged(k, { immediate: true });
+  renderInspector();
+  toast(`Touche collée sur la ${k} (Ctrl+Z pour annuler).`);
+}
+function duplicatePage(i) {
+  const copy = clone(S.cfg.pages[i]);
+  copy.name = `${copy.name || "Page " + (i + 1)} (copie)`;
+  delete copy.apps; // une appli n'ouvre qu'une seule page
+  S.cfg.pages.push(copy);
+  changed({ immediate: true });
+  movePage(S.cfg.pages.length - 1, i + 1);
+  goToPage(i + 1);
+  toast("Page dupliquée.");
+}
+
+// --- Export / import de profils ---
+async function exportProfile() {
+  try {
+    const path = await invoke("export_profile", { name: S.profile });
+    if (path) toast(`Profil exporté : ${path}`);
+  } catch (e) { toast(String(e), true); }
+}
+async function importProfile() {
+  const p = await invoke("pick_file", { kind: "profile" });
+  if (!p) return;
+  try { afterProfileImport(await invoke("import_profile", { path: p })); } catch (e) { toast(String(e), true); }
+}
+async function importProfileFile(f) {
+  try { afterProfileImport(await invoke("import_profile_data", { data: await fileToBase64(f) })); } catch (e) { toast(String(e), true); }
+}
+function afterProfileImport(r) {
+  if (!r) return;
+  const imgs = r.images ? ` avec ${r.images} image${r.images > 1 ? "s" : ""}` : "";
+  if (r.missing_addons && r.missing_addons.length) {
+    toast(`Profil « ${r.name} » importé${imgs}. Addons à installer pour certaines touches : ${r.missing_addons.join(", ")}.`, true);
+  } else {
+    toast(`Profil « ${r.name} » importé${imgs} et activé.`);
+  }
+}
+
+// --- Sauvegardes automatiques ---
+function formatDateTime(secs) {
+  try {
+    return new Date(secs * 1000).toLocaleString("fr-FR", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  } catch (_) { return String(secs); }
+}
+async function showBackups() {
+  let list = [];
+  try { list = (await invoke("list_backups")) || []; } catch (e) { toast(String(e), true); return; }
+  const body = el("div", { class: "backup-list" });
+  if (!list.length) body.append(el("p", {}, "Pas encore de sauvegarde : HubForge en fait une automatiquement quand tu modifies ce profil (au plus une toutes les 2 minutes, les 30 dernières sont gardées)."));
+  list.forEach((b, i) => {
+    body.append(el("div", { class: "backup-row" },
+      el("div", { class: "grow" },
+        el("div", { class: "backup-date" }, formatDateTime(b.time), i === 0 ? el("span", { class: "addon-badge", style: "margin-left:8px" }, "la plus récente") : null),
+        el("div", { class: "backup-meta" }, `${b.pages} page${b.pages > 1 ? "s" : ""} · ${b.keys} touche${b.keys > 1 ? "s" : ""}`)),
+      el("button", { class: "btn small", onclick: async () => {
+        if (!(await confirm_(`Remettre le profil « ${S.profile} » comme il était le ${formatDateTime(b.time)} ? (La version actuelle est sauvegardée avant, tu pourras y revenir.)`))) return;
+        try { await invoke("restore_backup", { file: b.file }); closeDialog(); await reloadProfile(); toast("Profil restauré."); }
+        catch (e) { toast(String(e), true); }
+      } }, "Restaurer")));
+  });
+  openDialog({
+    title: `Sauvegardes de « ${S.profile} »`,
+    sub: "Copies automatiques avant chaque modification",
+    html: "",
+    actions: [el("button", { class: "btn primary", onclick: closeDialog }, "Fermer")],
+    icon: `<div class="dialog-glyph">${svgIcon("refresh-cw")}</div>`,
+  });
+  $("#dialog-body").append(body);
+}
+
+// --- Diagnostic ---
+async function showDiagnostic() {
+  let d;
+  try { d = await invoke("get_diagnostic"); } catch (e) { toast(String(e), true); return; }
+  const kinds = { keys15: "15 touches", faders5: "5 faders", rollers2: "2 molettes", base: "LED de la base", encoder: "Encodeur", knobs3: "3 boutons" };
+  const mods = (d.status.modules || []).map((m) => `${(kinds[m.kind] || m.kind).padEnd(16)} série ${m.serial || "?"}${m.port ? " · port " + m.port : ""}${m.placement ? ` · col ${m.placement.col} lig ${m.placement.row} ${m.placement.rot}°` : ""}`);
+  const report = [
+    `HubForge ${d.version} (${d.os})`,
+    `Profil : ${d.profile}`,
+    `Dossier : ${d.config_dir}`,
+    "",
+    "Modules :",
+    ...(mods.length ? mods.map((m) => "  " + m) : ["  aucun module détecté"]),
+    "",
+    "Addons :",
+    ...(d.addons.length ? d.addons.map((a) => "  " + a) : ["  aucun"]),
+    "",
+    "Journal (fin) :",
+    d.log,
+  ].join("\n");
+  const html = `<div class="diag-grid">
+      <div><b>Version</b>${d.version}</div><div><b>Système</b>${d.os}</div><div><b>Profil</b>${d.profile.replace(/</g, "&lt;")}</div>
+    </div>
+    <h4>Modules détectés (${mods.length})</h4>
+    <pre class="diag-pre">${(mods.join("\n") || "Aucun module : vérifie le câble USB de la base.").replace(/</g, "&lt;")}</pre>
+    <h4>Journal</h4>
+    <pre class="diag-pre diag-log">${d.log.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>
+    <p class="hint">Rien n'est envoyé : « Copier le rapport » met ces informations dans le presse-papiers pour que tu puisses les joindre à une demande d'aide.</p>`;
+  openDialog({
+    title: "Diagnostic",
+    sub: "État du MasterHUB et du logiciel",
+    html,
+    icon: `<div class="dialog-glyph">${svgIcon("activity")}</div>`,
+    actions: [
+      el("button", { class: "btn small", onclick: async () => { await invoke("reconnect_modules"); toast("Modules reconnectés : ils réapparaissent dans 1 à 2 secondes."); } }, "Reconnecter les modules"),
+      el("button", { class: "btn small", title: "Si un module rebranché à chaud n'est plus vu", onclick: async () => {
+        toast("Réexamen de la base…");
+        try { toast(await invoke("reset_base")); } catch (e) { toast(`Réexamen impossible : ${e}. Débranche puis rebranche le câble USB de la base.`, true); }
+      } }, "Réinitialiser la base"),
+      el("span", { class: "spacer" }),
+      el("button", { class: "btn", onclick: async () => {
+        try { await navigator.clipboard.writeText(report); toast("Rapport copié dans le presse-papiers."); } catch (_) { toast("Copie impossible.", true); }
+      } }, "Copier le rapport"),
+      el("button", { class: "btn primary", onclick: closeDialog }, "Fermer"),
+    ],
+  });
 }
 
 // --- Supprimer une touche en la glissant hors du MasterHUB ---
@@ -1656,6 +1869,7 @@ function settingsInspector() {
   out.push(el("div", { class: "sep" }));
   out.push(el("button", { class: "btn", style: "width:100%", onclick: () => invoke("open_config_folder") }, "Ouvrir le dossier de configuration"));
   out.push(el("p", { class: "hint" }, S.configPath || ""));
+  out.push(el("button", { class: "btn", style: "width:100%", onclick: showDiagnostic }, "Diagnostic et reconnexion des modules…"));
   out.push(...updateSettings());
   out.push(...aboutSection());
   return out;
@@ -2008,6 +2222,12 @@ function onGlobalKey(e) {
   if (S.capturing) return;
   const tag = (e.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select") return;
+  const ctrl = e.ctrlKey || e.metaKey;
+  const k = e.key.toLowerCase();
+  if (ctrl && k === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
+  if (ctrl && (k === "y" || (k === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
+  if (ctrl && k === "c" && S.sel.type === "key") { e.preventDefault(); copyKey(S.sel.key); return; }
+  if (ctrl && k === "v" && S.sel.type === "key") { e.preventDefault(); pasteKey(S.sel.key); return; }
   if (e.key === "Escape") select({ type: "settings" });
   if ((e.key === "Delete" || e.key === "Backspace") && S.sel.type === "key" && keyDef(S.sel.key)) {
     const k = S.sel.key;
@@ -2068,6 +2288,10 @@ async function mockInvoke(cmd, args) {
        { kind: "rollers2", port: "121", placement: { col: 0, row: 5, rot: 0 } }, { kind: "base" }];
   switch (cmd) {
     case "list_profiles": return ["Benjamin", "Laura", "Streaming"];
+    case "list_backups": return [0, 1, 2].map((i) => ({ file: `${1794000000 - i * 3600}.toml`, time: Date.now() / 1000 - i * 5400 - 300, size: 4000, pages: 3, keys: 30 - i * 2 }));
+    case "get_diagnostic": return { version: "0.8.1", os: "windows x86_64", profile: "Benjamin", config_dir: "C:\\Users\\benja\\AppData\\Roaming\\HubForge",
+      status: { modules: [{ kind: "keys15", serial: "MHKD15AA431251602923", port: "24", placement: { col: 0, row: 0, rot: 0 } }, { kind: "faders5", serial: "MHFD05AA421251700387", port: "41", placement: { col: 0, row: 3, rot: 0 } }] },
+      addons: ["fusion360 1.1.0", "discord 1.0.0"], log: "[20:12:01] HubForge v0.8.1 démarre\n[20:12:02] ✓ 15 touches connecté\n[20:12:02] ✓ 5 faders connecté" };
     case "check_updates_now": case "get_update_state": return window.__mockUpdate();
     case "set_update_auto": return Object.assign(window.__mockUpdate(), { auto: args.on });
     case "skip_update": return Object.assign(window.__mockUpdate(), { available: null });
@@ -2075,7 +2299,7 @@ async function mockInvoke(cmd, args) {
     case "addons_signature": return "x";
     case "addon_pages": return [{ name: "Fusion 360", apps: ["Fusion360.exe"], keys: [{ key: 1, label: "Esquisse", color: "#1565C0", action: { type: "hotkey", keys: "s" } }] }];
     case "get_initial":
-      return { update: window.__mockUpdate(), whats_new: location.search.includes("new") ? "### Nouveautés\n- **Installateur Windows** : menu Démarrer, désinstallation propre.\n- **Mises à jour depuis GitHub** en un clic.\n- Double-clic sur un fichier `.forge`." : null, profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.8.0",
+      return { update: window.__mockUpdate(), whats_new: location.search.includes("new") ? "### Nouveautés\n- **Installateur Windows** : menu Démarrer, désinstallation propre.\n- **Mises à jour depuis GitHub** en un clic.\n- Double-clic sur un fichier `.forge`." : null, profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.8.1",
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;

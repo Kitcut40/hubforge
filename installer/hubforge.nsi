@@ -125,6 +125,8 @@ LangString FileLocked   ${LANG_FRENCH}  "HubForge est encore ouvert. Quitte-le (
 LangString FileLocked   ${LANG_ENGLISH} "HubForge is still running. Quit it (icon near the clock → Quit HubForge) and click Retry."
 LangString AddonFile    ${LANG_FRENCH}  "Addon HubForge"
 LangString AddonFile    ${LANG_ENGLISH} "HubForge add-on"
+LangString ProfileFile  ${LANG_FRENCH}  "Profil HubForge"
+LangString ProfileFile  ${LANG_ENGLISH} "HubForge profile"
 
 Var IsUpdate
 
@@ -215,6 +217,11 @@ Section "$(SecMain)" SecMain
   WriteRegStr HKCU "Software\Classes\HubForge.Addon" "" "$(AddonFile)"
   WriteRegStr HKCU "Software\Classes\HubForge.Addon\DefaultIcon" "" "$INSTDIR\${EXE},0"
   WriteRegStr HKCU "Software\Classes\HubForge.Addon\shell\open\command" "" '"$INSTDIR\${EXE}" --install-addon "%1"'
+  ; Profils partagés : double-clic sur un fichier .hfprofile
+  WriteRegStr HKCU "Software\Classes\.hfprofile" "" "HubForge.Profile"
+  WriteRegStr HKCU "Software\Classes\HubForge.Profile" "" "$(ProfileFile)"
+  WriteRegStr HKCU "Software\Classes\HubForge.Profile\DefaultIcon" "" "$INSTDIR\${EXE},0"
+  WriteRegStr HKCU "Software\Classes\HubForge.Profile\shell\open\command" "" '"$INSTDIR\${EXE}" --import-profile "%1"'
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 
   ; Désinstallation (Paramètres → Applications)
@@ -353,6 +360,11 @@ Section "Uninstall"
     DeleteRegKey HKCU "Software\Classes\.forge"
   ${EndIf}
   DeleteRegKey HKCU "Software\Classes\HubForge.Addon"
+  ReadRegStr $0 HKCU "Software\Classes\.hfprofile" ""
+  ${If} $0 == "HubForge.Profile"
+    DeleteRegKey HKCU "Software\Classes\.hfprofile"
+  ${EndIf}
+  DeleteRegKey HKCU "Software\Classes\HubForge.Profile"
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   DeleteRegKey HKCU "${UNINST_KEY}"
   DeleteRegKey HKCU "Software\${APP}"
