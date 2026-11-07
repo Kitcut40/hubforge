@@ -1,0 +1,17 @@
+[package]
+name = "hubforge-probe"
+version = "0.2.0"
+description = "Outil de test HubForge : détecte les modules MasterHUB et valide le protocole USB"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+[target.'cfg(windows)'.dependencies]
+hidapi = { version = "2.6", default-features = false }
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+hidapi = { version = "2.6", default-features = false, features = ["linux-static-hidraw"] }
