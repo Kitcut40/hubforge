@@ -11,7 +11,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
 pub struct AppState {
@@ -21,6 +21,97 @@ pub struct AppState {
     pub engine: Mutex<Sender<EngineMsg>>,
     pub status: Arc<Mutex<Status>>,
     pub audio: Audio,
+    /// État des mises à jour (partagé avec la vérification en arrière-plan).
+    pub update: SharedUpdate,
+}
+
+/// État des mises à jour, envoyé à l'interface.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdateState {
+    pub current: String,
+    /// Version plus récente disponible (sauf si ignorée).
+    pub available: Option<crate::update::UpdateInfo>,
+    pub checking: bool,
+    /// Dernier message d'erreur (pas de connexion…).
+    pub error: Option<String>,
+    /// Dernière vérification (secondes depuis 1970).
+    pub last_check: u64,
+    /// Vérification automatique activée.
+    pub auto: bool,
+}
+
+pub type SharedUpdate = Arc<Mutex<UpdateState>>;
+
+fn update_snapshot(cfg_dir: &std::path::Path, shared: &SharedUpdate) -> UpdateState {
+    let st = profiles::load_settings(cfg_dir);
+    let mut u = shared.lock().unwrap().clone();
+    u.current = crate::update::CURRENT.into();
+    u.auto = !st.no_update_check;
+    u.last_check = st.last_update_check;
+    if let Some(a) = &u.available {
+        if a.version == st.skipped_version {
+            u.available = None;
+        }
+    }
+    u
+}
+
+/// Vérifie s'il existe une version plus récente et prévient l'interface.
+pub fn run_update_check(app: &AppHandle, cfg_dir: &std::path::Path, shared: &SharedUpdate) -> UpdateState {
+    shared.lock().unwrap().checking = true;
+    let _ = app.emit("update-state", update_snapshot(cfg_dir, shared));
+    let res = crate::update::check();
+    {
+        let mut u = shared.lock().unwrap();
+        u.checking = false;
+        match res {
+            Ok(info) => {
+                if let Some(i) = &info {
+                    log::info!("mise à jour disponible : {} → {}", crate::update::CURRENT, i.version);
+                }
+                u.available = info;
+                u.error = None;
+            }
+            Err(e) => {
+                log::info!("vérification des mises à jour : {e}");
+                u.error = Some(e);
+            }
+        }
+    }
+    let mut st = profiles::load_settings(cfg_dir);
+    st.last_update_check = crate::update::now_secs();
+    profiles::save_settings(cfg_dir, &st);
+    let snap = update_snapshot(cfg_dir, shared);
+    if let Some(tray) = app.tray_by_id("main") {
+        let tip = match &snap.available {
+            Some(a) => format!("HubForge — mise à jour {} disponible", a.version),
+            None => "HubForge".to_string(),
+        };
+        let _ = tray.set_tooltip(Some(tip));
+    }
+    let _ = app.emit("update-state", snap.clone());
+    snap
+}
+
+/// Notes de la version en cours, tirées du CHANGELOG intégré au programme.
+fn current_release_notes() -> String {
+    const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+    let v = crate::update::CURRENT;
+    let mut out = Vec::new();
+    let mut inside = false;
+    for line in CHANGELOG.lines() {
+        if line.starts_with("## ") {
+            if inside {
+                break;
+            }
+            inside = line.contains(&format!("[{v}]")) || line.contains(&format!(" {v} ")) || line.ends_with(&format!(" {v}"));
+            continue;
+        }
+        if inside {
+            out.push(line);
+        }
+    }
+    out.join("\n").trim().to_string()
 }
 
 #[derive(Serialize)]
@@ -33,6 +124,9 @@ pub struct Initial {
     status: Status,
     autostart: bool,
     version: String,
+    /// Notes de version à montrer (première ouverture après une mise à jour).
+    whats_new: Option<String>,
+    update: UpdateState,
 }
 
 #[derive(Serialize)]
@@ -57,7 +151,95 @@ pub fn get_initial(state: State<AppState>) -> Result<Initial, String> {
         status: state.status.lock().unwrap().clone(),
         autostart: autostart::is_enabled(),
         version: env!("CARGO_PKG_VERSION").into(),
+        whats_new: whats_new(&state.cfg_dir),
+        update: update_snapshot(&state.cfg_dir, &state.update),
     })
+}
+
+/// Nouveautés à afficher une fois, après une mise à jour.
+fn whats_new(cfg_dir: &std::path::Path) -> Option<String> {
+    let mut st = profiles::load_settings(cfg_dir);
+    let current = crate::update::CURRENT;
+    if st.last_version_run == current {
+        return None;
+    }
+    let first_run = st.last_version_run.is_empty();
+    st.last_version_run = current.to_string();
+    profiles::save_settings(cfg_dir, &st);
+    if first_run {
+        return None;
+    }
+    let notes = current_release_notes();
+    (!notes.is_empty()).then_some(notes)
+}
+
+// ----------------------------------------------------------------------
+// Mises à jour
+// ----------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_update_state(state: State<AppState>) -> UpdateState {
+    update_snapshot(&state.cfg_dir, &state.update)
+}
+
+#[tauri::command]
+pub async fn check_updates_now(app: AppHandle, state: State<'_, AppState>) -> Result<UpdateState, String> {
+    // Une vérification demandée à la main montre aussi une version ignorée.
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.skipped_version.clear();
+    profiles::save_settings(&state.cfg_dir, &st);
+    Ok(run_update_check(&app, &state.cfg_dir, &state.update))
+}
+
+#[tauri::command]
+pub fn set_update_auto(state: State<AppState>, on: bool) -> UpdateState {
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.no_update_check = !on;
+    profiles::save_settings(&state.cfg_dir, &st);
+    update_snapshot(&state.cfg_dir, &state.update)
+}
+
+#[tauri::command]
+pub fn skip_update(state: State<AppState>, version: String) -> UpdateState {
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.skipped_version = version;
+    profiles::save_settings(&state.cfg_dir, &st);
+    update_snapshot(&state.cfg_dir, &state.update)
+}
+
+#[derive(Clone, Serialize)]
+struct Progress {
+    done: u64,
+    total: u64,
+}
+
+/// Télécharge la nouvelle version, vérifie l'installateur, le lance en mode
+/// mise à jour puis ferme HubForge (l'installateur le relance ensuite).
+#[tauri::command]
+pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let info = state.update.lock().unwrap().available.clone().ok_or("aucune mise à jour disponible")?;
+    let app2 = app.clone();
+    let path = crate::update::download(&info, move |done, total| {
+        let _ = app2.emit("update-progress", Progress { done, total });
+    })?;
+    crate::update::launch_installer(&path)?;
+    log::info!("installateur {} lancé : fermeture de HubForge", info.version);
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let h = app.clone();
+        let _ = app.run_on_main_thread(move || h.exit(0));
+    });
+    Ok(())
+}
+
+/// Ouvre une adresse web (uniquement GitHub et le site de Microsoft pour WebView2).
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://github.com/") || url.starts_with("https://developer.microsoft.com/")) {
+        return Err("adresse non autorisée".into());
+    }
+    crate::actions::launch(&url, &[]);
+    Ok(())
 }
 
 /// Enregistre la configuration et l'applique immédiatement.

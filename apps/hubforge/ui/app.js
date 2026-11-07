@@ -164,6 +164,8 @@ async function init() {
   S.profile = ini.profile;
   S.profiles = ini.profiles || [];
   S.gameBest = ini.game_best || 0;
+  S.update = ini.update || {};
+  S.version = ini.version;
   $("#version").textContent = "v" + ini.version;
   S.icons = (await invoke("list_icons")) || [];
 
@@ -173,6 +175,14 @@ async function init() {
 
   listen("status", (e) => onStatus(e.payload));
   listen("autostart", (e) => { S.autostart = e.payload; if (S.sel.type === "settings") renderInspector(); });
+  listen("update-state", (e) => { S.update = e.payload || {}; renderUpdatePill(); if (S.sel.type === "settings") renderInspector(); });
+  listen("update-progress", (e) => updateProgress(e.payload));
+  listen("addon-installed", async (e) => {
+    const r = e.payload;
+    if (r && r.Err) { toast(`Addon non installé : ${r.Err}`, true); return; }
+    const id = r && (r.Ok || r);
+    await afterAddonInstall(id);
+  });
 
   $("#btn-settings").onclick = () => select({ type: "settings" });
   $("#btn-addons").onclick = () => select({ type: "addons" });
@@ -185,6 +195,11 @@ async function init() {
   renderProfileButton();
   setupEasterEgg();
   setupTrashDrop();
+  renderUpdatePill();
+  $("#update-pill").onclick = () => showUpdateDialog();
+  $("#dialog-close").onclick = closeDialog;
+  $("#dialog").addEventListener("click", (e) => { if (e.target.id === "dialog" && !S.updating) closeDialog(); });
+  if (ini.whats_new) setTimeout(() => showWhatsNew(ini.version, ini.whats_new), 400);
   $("#lib-search").oninput = (e) => filterLibrary(e.target.value);
   document.addEventListener("keydown", onGlobalKey, true);
   fitDevice();
@@ -1641,7 +1656,166 @@ function settingsInspector() {
   out.push(el("div", { class: "sep" }));
   out.push(el("button", { class: "btn", style: "width:100%", onclick: () => invoke("open_config_folder") }, "Ouvrir le dossier de configuration"));
   out.push(el("p", { class: "hint" }, S.configPath || ""));
+  out.push(...updateSettings());
+  out.push(...aboutSection());
   return out;
+}
+
+// --- Mises à jour ---
+function renderUpdatePill() {
+  const pill = $("#update-pill");
+  const a = S.update && S.update.available;
+  pill.classList.toggle("hidden", !a);
+  if (a) pill.textContent = `Mise à jour ${a.version}`;
+}
+
+function formatDate(iso) {
+  if (!iso) return "";
+  try { return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }); } catch (_) { return ""; }
+}
+
+function timeAgo(secs) {
+  if (!secs) return "jamais";
+  const d = Math.max(0, Date.now() / 1000 - secs);
+  if (d < 90) return "à l'instant";
+  if (d < 3600) return `il y a ${Math.round(d / 60)} min`;
+  if (d < 86400) return `il y a ${Math.round(d / 3600)} h`;
+  return `il y a ${Math.round(d / 86400)} j`;
+}
+
+/** Markdown simple (titres, listes, gras, code, liens) → HTML sûr. */
+function miniMarkdown(md) {
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (t) => esc(t)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]]+)\]\((https:\/\/github\.com\/[^)\s]+)\)/g, '<a href="#" data-url="$2">$1</a>');
+  const out = [];
+  let list = false;
+  for (const raw of (md || "").split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    const li = line.match(/^\s*[-*]\s+(.*)$/);
+    if (li) { if (!list) { out.push("<ul>"); list = true; } out.push(`<li>${inline(li[1])}</li>`); continue; }
+    if (list) { out.push("</ul>"); list = false; }
+    const h = line.match(/^#{1,6}\s+(.*)$/);
+    if (h) out.push(`<h4>${inline(h[1])}</h4>`);
+    else if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+  }
+  if (list) out.push("</ul>");
+  return out.join("");
+}
+
+function brandSvg() { return $(".brand-logo").outerHTML.replace('class="brand-logo"', ""); }
+
+function openDialog({ title, sub, html, actions, icon }) {
+  $("#dialog-title").textContent = title;
+  $("#dialog-sub").textContent = sub || "";
+  $("#dialog-icon").innerHTML = icon || brandSvg();
+  const body = $("#dialog-body");
+  body.innerHTML = html || "";
+  body.querySelectorAll("a[data-url]").forEach((a) => { a.onclick = (e) => { e.preventDefault(); invoke("open_url", { url: a.dataset.url }); }; });
+  const act = $("#dialog-actions");
+  act.innerHTML = "";
+  act.append(...actions);
+  $("#dialog-progress").classList.add("hidden");
+  $("#dialog").classList.remove("hidden");
+}
+function closeDialog() { if (!S.updating) $("#dialog").classList.add("hidden"); }
+
+function showUpdateDialog() {
+  const a = S.update && S.update.available;
+  if (!a) return;
+  const size = a.asset_size ? ` · ${(a.asset_size / 1048576).toFixed(1).replace(".", ",")} Mo` : "";
+  openDialog({
+    title: `HubForge ${a.version} est disponible`,
+    sub: `Tu as la version ${a.current}${a.published ? " · publiée le " + formatDate(a.published) : ""}${size}`,
+    html: miniMarkdown(a.notes) || "<p>Pas de notes de version.</p>",
+    actions: [
+      el("button", { class: "btn ghost small", onclick: async () => { S.update = await invoke("skip_update", { version: a.version }); renderUpdatePill(); closeDialog(); toast(`La version ${a.version} ne sera plus proposée.`); } }, "Ignorer cette version"),
+      el("button", { class: "btn ghost small", onclick: () => invoke("open_url", { url: a.page_url }) }, "Voir sur GitHub"),
+      el("span", { class: "spacer" }),
+      el("button", { class: "btn", onclick: closeDialog }, "Plus tard"),
+      el("button", { class: "btn primary", id: "do-update", onclick: runUpdate }, "Mettre à jour maintenant"),
+    ],
+  });
+}
+
+async function runUpdate() {
+  S.updating = true;
+  $("#dialog-progress").classList.remove("hidden");
+  $("#dialog-progress-text").textContent = "Téléchargement…";
+  $("#dialog-actions").querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  try {
+    await invoke("install_update");
+    $("#dialog-progress-text").textContent = "Installation… HubForge va redémarrer tout seul dans quelques secondes.";
+    $("#dialog-bar").style.width = "100%";
+  } catch (e) {
+    S.updating = false;
+    $("#dialog-progress-text").textContent = "Échec : " + e;
+    $("#dialog-actions").querySelectorAll("button").forEach((b) => { b.disabled = false; });
+  }
+}
+
+function updateProgress(p) {
+  if (!p || !p.total) return;
+  const pct = Math.min(100, Math.round((p.done / p.total) * 100));
+  $("#dialog-bar").style.width = pct + "%";
+  $("#dialog-progress-text").textContent = `Téléchargement… ${pct} % (${(p.done / 1048576).toFixed(1).replace(".", ",")} / ${(p.total / 1048576).toFixed(1).replace(".", ",")} Mo)`;
+}
+
+function showWhatsNew(version, notes) {
+  openDialog({
+    title: `Bienvenue dans HubForge ${version}`,
+    sub: "Voici les nouveautés de cette version",
+    html: miniMarkdown(notes),
+    actions: [el("button", { class: "btn primary", onclick: closeDialog }, "C'est parti")],
+  });
+}
+
+function updateSettings() {
+  const u = S.update || {};
+  const out = [el("div", { class: "sep" }), el("h2", {}, "Mises à jour")];
+  let status;
+  if (u.checking) status = el("div", { class: "update-status" }, "Vérification en cours…");
+  else if (u.available) status = el("div", { class: "update-status new" }, "Version ", el("b", {}, u.available.version), " disponible (tu as la ", u.current || S.version, ").");
+  else if (u.error) status = el("div", { class: "update-status" }, "Dernière vérification impossible : " + u.error);
+  else status = el("div", { class: "update-status ok" }, "HubForge est à jour · vérifié " + timeAgo(u.last_check));
+  out.push(status);
+  out.push(el("div", { class: "row" },
+    el("button", { class: "btn grow", disabled: !!u.checking, onclick: async () => {
+      S.update = Object.assign({}, S.update, { checking: true }); renderInspector();
+      try { S.update = await invoke("check_updates_now"); } catch (e) { toast(String(e), true); }
+      renderUpdatePill(); renderInspector();
+      if (S.update.available) showUpdateDialog(); else if (!S.update.error) toast("HubForge est à jour.");
+    } }, "Vérifier maintenant"),
+    u.available ? el("button", { class: "btn primary grow", onclick: showUpdateDialog }, "Voir la mise à jour") : null));
+  out.push(el("div", { style: "height:10px" }));
+  out.push(switchRow("Vérifier automatiquement (une fois par jour)", u.auto !== false, async (v) => {
+    S.update = await invoke("set_update_auto", { on: v }); renderInspector();
+  }));
+  out.push(el("p", { class: "hint" }, "HubForge regarde seulement s'il existe une nouvelle version sur GitHub. Rien n'est installé sans ton accord, et tout fonctionne sans Internet."));
+  return out;
+}
+
+function aboutSection() {
+  const repo = "https://github.com/Kitcut40/hubforge";
+  const link = (label, url) => el("button", { class: "btn small", onclick: () => invoke("open_url", { url }) }, label);
+  const box = el("div", { class: "about", html: brandSvg() });
+  box.append(el("div", {},
+    el("div", { class: "about-name", html: 'Hub<span class="accent">Forge</span>' }),
+    el("div", { class: "about-meta" }, `Version ${S.version || ""} · licence GPL-3.0`),
+    el("div", { class: "about-meta" }, "Logiciel libre pour le Cooler Master MasterHUB")));
+  return [
+    el("div", { class: "sep" }),
+    el("h2", {}, "À propos"),
+    box,
+    el("div", { class: "links" },
+      link("Site du projet", repo),
+      link("Nouveautés", repo + "/blob/main/CHANGELOG.md"),
+      link("Guide des addons", repo + "/blob/main/docs/ADDON_GUIDE.md"),
+      link("Signaler un problème", repo + "/issues")),
+    el("p", { class: "hint" }, "HubForge n'est pas affilié à Cooler Master. MasterHUB est une marque de Cooler Master. Aucun firmware n'est modifié."),
+  ];
 }
 
 function switchRow(label, value, onChange) {
@@ -1875,6 +2049,11 @@ function toast(msg, isError, action) {
 // ---------------------------------------------------------------------------
 // Simulation (ouverture dans un navigateur, pour le développement)
 // ---------------------------------------------------------------------------
+window.__mockUpdate = () => ({ current: "0.8.0", checking: false, auto: true, last_check: Date.now() / 1000 - 600, error: null,
+  available: location.search.includes("update") ? { version: "0.8.1", current: "0.8.0", name: "HubForge 0.8.1", published: "2026-11-08T10:00:00Z",
+    page_url: "https://github.com/Kitcut40/hubforge/releases/tag/v0.8.1", asset_name: "HubForge-Setup-0.8.1.exe", asset_size: 6340000,
+    notes: "### Nouveautés\n- **Appui long** sur les touches\n- Intégration `OBS` avec retour d'état\n\n### Corrections\n- Le module 15 touches revient seul après un rebranchement" } : null });
+
 async function mockInvoke(cmd, args) {
   if (!window.__mock) {
     const cfg = await fetch("mock-config.json").then((r) => r.json()).catch(() => ({ pages: [{ name: "Accueil", keys: [] }] }));
@@ -1889,11 +2068,14 @@ async function mockInvoke(cmd, args) {
        { kind: "rollers2", port: "121", placement: { col: 0, row: 5, rot: 0 } }, { kind: "base" }];
   switch (cmd) {
     case "list_profiles": return ["Benjamin", "Laura", "Streaming"];
+    case "check_updates_now": case "get_update_state": return window.__mockUpdate();
+    case "set_update_auto": return Object.assign(window.__mockUpdate(), { auto: args.on });
+    case "skip_update": return Object.assign(window.__mockUpdate(), { available: null });
     case "list_addons": return await fetch("mock-addons.json").then((r) => r.json()).catch(() => ({ addons: [], signature: "", folder: "" }));
     case "addons_signature": return "x";
     case "addon_pages": return [{ name: "Fusion 360", apps: ["Fusion360.exe"], keys: [{ key: 1, label: "Esquisse", color: "#1565C0", action: { type: "hotkey", keys: "s" } }] }];
     case "get_initial":
-      return { profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.7.2",
+      return { update: window.__mockUpdate(), whats_new: location.search.includes("new") ? "### Nouveautés\n- **Installateur Windows** : menu Démarrer, désinstallation propre.\n- **Mises à jour depuis GitHub** en un clic.\n- Double-clic sur un fichier `.forge`." : null, profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.8.0",
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;

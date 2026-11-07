@@ -22,6 +22,14 @@ pub struct Settings {
     pub game_best: u32,
     /// Addons désactivés (leurs actions n'apparaissent plus).
     pub disabled_addons: Vec<String>,
+    /// Ne pas vérifier les mises à jour sur GitHub.
+    pub no_update_check: bool,
+    /// Version que l'utilisateur a choisi d'ignorer.
+    pub skipped_version: String,
+    /// Dernière vérification (secondes depuis 1970).
+    pub last_update_check: u64,
+    /// Dernière version lancée (pour afficher les nouveautés après une mise à jour).
+    pub last_version_run: String,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.

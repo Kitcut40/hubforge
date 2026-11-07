@@ -5,3 +5,4 @@ hubforge-probe-log-*.txt
 .DS_Store
 Thumbs.db
 apps/hubforge/gen/
+dist/

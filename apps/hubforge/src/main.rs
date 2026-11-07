@@ -3,6 +3,12 @@
 //! Une seule application : le moteur (qui pilote le MasterHUB) tourne en
 //! arrière-plan, l'interface s'ouvre depuis l'icône près de l'horloge.
 //! Fermer la fenêtre ne coupe pas le MasterHUB ; « Quitter » arrête tout.
+//!
+//! Options de la ligne de commande :
+//! - `--hidden` : démarre sans ouvrir la fenêtre (démarrage avec Windows) ;
+//! - `--quit` : demande à HubForge déjà lancé de se fermer (installateur) ;
+//! - `--install-addon <fichier.forge>` ou simplement `<fichier.forge>` :
+//!   installe un addon (double-clic sur un fichier .forge).
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -14,19 +20,21 @@ mod autostart;
 mod config;
 mod engine;
 mod foreground;
+mod game;
 mod icons_data;
 mod logging;
 mod official;
-mod game;
 mod profiles;
 mod render;
 mod topology;
 mod ui;
+mod update;
 mod widgets;
 
 use engine::{Engine, EngineMsg, Status};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -38,6 +46,8 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
 /// Port local utilisé pour n'avoir qu'une seule instance de HubForge.
 const INSTANCE_PORT: u16 = 36360;
+/// Délai entre deux vérifications automatiques des mises à jour.
+const UPDATE_EVERY_SECS: u64 = 20 * 3600;
 
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -47,24 +57,75 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+/// Fichier .forge passé en argument (double-clic ou `--install-addon`).
+fn addon_argument() -> Option<PathBuf> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(i) = args.iter().position(|a| a == "--install-addon") {
+        return args.get(i + 1).map(PathBuf::from);
+    }
+    args.iter().find(|a| a.to_lowercase().ends_with(".forge")).map(PathBuf::from)
+}
+
+/// Envoie un message à HubForge déjà lancé. Retourne false s'il ne tourne pas.
+fn send_to_running(msg: &str) -> bool {
+    match TcpStream::connect_timeout(&([127, 0, 0, 1], INSTANCE_PORT).into(), Duration::from_millis(800)) {
+        Ok(mut s) => {
+            let _ = s.write_all(msg.as_bytes());
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Installe un addon .forge et prévient l'interface.
+fn install_addon_file(app: &AppHandle, dir: &std::path::Path, path: &std::path::Path) {
+    let res = std::fs::read(path).map_err(|e| format!("lecture impossible : {e}")).and_then(|b| addons::install_bytes(dir, &b));
+    match &res {
+        Ok(id) => {
+            official::unmark_removed(dir, id);
+            log::info!("addon « {id} » installé depuis {}", path.display());
+        }
+        Err(e) => log::error!("{} : {e}", path.display()),
+    }
+    show_main(app);
+    let _ = app.emit("addon-installed", res.map_err(|e| e.to_string()));
+}
+
 fn main() {
     let dir = config::config_dir();
     let _ = std::fs::create_dir_all(&dir);
-    logging::init(&dir);
-    let hidden = std::env::args().any(|a| a == "--hidden");
+    let args: Vec<String> = std::env::args().collect();
 
-    // Instance unique : si HubForge tourne déjà, on lui demande d'afficher sa fenêtre.
+    // --quit : fermer HubForge déjà lancé (utilisé par l'installateur) et attendre.
+    if args.iter().any(|a| a == "--quit") {
+        if send_to_running("quit") {
+            for _ in 0..80 {
+                std::thread::sleep(Duration::from_millis(100));
+                if TcpStream::connect_timeout(&([127, 0, 0, 1], INSTANCE_PORT).into(), Duration::from_millis(100)).is_err() {
+                    break;
+                }
+            }
+        }
+        return;
+    }
+
+    logging::init(&dir);
+    let hidden = args.iter().any(|a| a == "--hidden");
+    let addon_to_install = addon_argument();
+
+    // Instance unique : si HubForge tourne déjà, on lui transmet la demande.
     let listener = match TcpListener::bind(("127.0.0.1", INSTANCE_PORT)) {
         Ok(l) => l,
         Err(_) => {
-            if let Ok(mut s) = TcpStream::connect(("127.0.0.1", INSTANCE_PORT)) {
-                let _ = s.write_all(b"show");
-            }
+            match &addon_to_install {
+                Some(p) => send_to_running(&format!("addon:{}", p.display())),
+                None => send_to_running("show"),
+            };
             return;
         }
     };
 
-    log::info!("HubForge v{} démarre", env!("CARGO_PKG_VERSION"));
+    log::info!("HubForge v{} démarre", update::CURRENT);
     official::install(&dir);
     let active = profiles::init(&dir);
     log::info!("profil « {} »", active.name);
@@ -93,6 +154,7 @@ fn main() {
     let stop = Arc::new(AtomicBool::new(false));
     let (engine_tx, engine_rx) = mpsc::channel::<EngineMsg>();
     let engine_thread: Arc<Mutex<Option<JoinHandle<()>>>> = Arc::new(Mutex::new(None));
+    let update_state: ui::SharedUpdate = Arc::new(Mutex::new(ui::UpdateState::default()));
 
     let state = ui::AppState {
         active: active.clone(),
@@ -100,6 +162,7 @@ fn main() {
         engine: Mutex::new(engine_tx),
         status: status.clone(),
         audio: audio.clone(),
+        update: update_state.clone(),
     };
 
     let app = tauri::Builder::default()
@@ -130,12 +193,18 @@ fn main() {
             ui::list_audio_apps,
             ui::set_autostart,
             ui::open_config_folder,
+            ui::open_url,
             ui::pick_file,
             ui::pick_folder,
             ui::import_image,
             ui::import_image_data,
             ui::list_icons,
             ui::extract_app_icon,
+            ui::get_update_state,
+            ui::check_updates_now,
+            ui::set_update_auto,
+            ui::skip_update,
+            ui::install_update,
         ])
         .setup({
             let stop = stop.clone();
@@ -175,15 +244,25 @@ fn main() {
                     *engine_thread.lock().unwrap() = Some(t);
                 }
 
-                // --- Instance unique : afficher la fenêtre sur demande ---
+                // --- Instance unique : messages d'une autre instance ---
                 {
                     let handle = handle.clone();
+                    let dir = dir.clone();
                     std::thread::spawn(move || {
                         for mut conn in listener.incoming().flatten() {
-                            let mut buf = [0u8; 8];
-                            let _ = conn.set_read_timeout(Some(Duration::from_millis(500)));
-                            if conn.read(&mut buf).is_ok() {
-                                let h = handle.clone();
+                            let mut buf = vec![0u8; 4096];
+                            let _ = conn.set_read_timeout(Some(Duration::from_millis(800)));
+                            let Ok(n) = conn.read(&mut buf) else { continue };
+                            let msg = String::from_utf8_lossy(&buf[..n]).to_string();
+                            let h = handle.clone();
+                            let d = dir.clone();
+                            if msg == "quit" {
+                                log::info!("fermeture demandée (installation d'une mise à jour)");
+                                let _ = handle.run_on_main_thread(move || h.exit(0));
+                            } else if let Some(path) = msg.strip_prefix("addon:") {
+                                let path = PathBuf::from(path);
+                                std::thread::spawn(move || install_addon_file(&h, &d, &path));
+                            } else {
                                 let _ = handle.run_on_main_thread(move || show_main(&h));
                             }
                         }
@@ -207,7 +286,7 @@ fn main() {
                 let stop_tray = stop.clone();
                 let thread_tray = engine_thread.clone();
                 TrayIconBuilder::with_id("main")
-                    .icon(app.default_window_icon().cloned().ok_or("icône manquante")?)
+                    .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
                     .tooltip("HubForge")
                     .menu(&menu)
                     .show_menu_on_left_click(false)
@@ -237,7 +316,34 @@ fn main() {
                     })
                     .build(app)?;
 
-                if !hidden {
+                // --- Mises à jour : vérification discrète en arrière-plan ---
+                {
+                    let handle = handle.clone();
+                    let dir = dir.clone();
+                    let update_state = update_state.clone();
+                    std::thread::Builder::new().name("mises-a-jour".into()).spawn(move || {
+                        std::thread::sleep(Duration::from_secs(20));
+                        loop {
+                            let st = profiles::load_settings(&dir);
+                            if !st.no_update_check && update::now_secs().saturating_sub(st.last_update_check) >= UPDATE_EVERY_SECS {
+                                ui::run_update_check(&handle, &dir, &update_state);
+                            }
+                            std::thread::sleep(Duration::from_secs(3600));
+                        }
+                    })?;
+                }
+
+                // --- Addon passé en argument (double-clic sur un .forge) ---
+                if let Some(path) = addon_to_install.clone() {
+                    let h = handle.clone();
+                    let d = dir.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(1500));
+                        install_addon_file(&h, &d, &path);
+                    });
+                }
+
+                if !hidden || addon_to_install.is_some() {
                     show_main(&handle);
                 }
                 Ok(())

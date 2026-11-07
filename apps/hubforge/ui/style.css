@@ -1,5 +1,7 @@
 @font-face { font-family: "Inter"; src: url("fonts/Inter-Regular.otf"); font-weight: 400; }
+@font-face { font-family: "Inter"; src: url("fonts/Inter-Medium.otf"); font-weight: 500; }
 @font-face { font-family: "Inter"; src: url("fonts/Inter-SemiBold.otf"); font-weight: 600; }
+@font-face { font-family: "Inter"; src: url("fonts/Inter-Bold.otf"); font-weight: 700; }
 
 :root {
   --bg: #0e0f13;
@@ -40,8 +42,9 @@ input, select, textarea, button { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #13151b, #111318); flex: none;
 }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 200px; }
-.brand-logo { width: 28px; height: 28px; }
-.brand-name { font-weight: 600; font-size: 16px; letter-spacing: 0.2px; }
+.brand-logo { width: 30px; height: 30px; filter: drop-shadow(0 2px 6px rgba(255, 122, 26, 0.18)); cursor: default; }
+.brand-name { font-weight: 700; font-size: 16.5px; letter-spacing: -0.2px; }
+.brand-name .accent { color: var(--accent); }
 .brand-version { color: var(--faint); font-size: 12px; }
 .pages { display: flex; align-items: center; gap: 6px; flex: 1; overflow-x: auto; scrollbar-width: none; }
 .page-tab {
@@ -393,3 +396,49 @@ body.dragging-key.over-trash .stage { box-shadow: inset 0 0 0 2px rgba(198, 40, 
 .lib-folder.level-1 > .lib-folder-body, .lib-folder.level-2 > .lib-folder-body, .lib-folder.level-3 > .lib-folder-body { margin-left: 10px; padding-left: 8px; border-left: 1px solid var(--line); }
 .lib-count { font-size: 10.5px; font-weight: 600; color: var(--faint); background: var(--panel-2); border-radius: 999px; padding: 1px 7px; }
 .lib-folder .addon-icon { padding: 3px; border-radius: 6px; }
+
+/* Mises à jour : pastille dans la barre du haut */
+.update-pill { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255, 122, 26, 0.55); background: linear-gradient(180deg, rgba(255, 122, 26, 0.2), rgba(255, 122, 26, 0.08));
+  color: #ffd2ad; font: inherit; font-size: 12.5px; font-weight: 600; box-shadow: 0 0 18px rgba(255, 122, 26, 0.18); }
+.update-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: fx-breathe 2s ease-in-out infinite; }
+.update-pill:hover { border-color: var(--accent); color: #fff; }
+
+/* Boîte de dialogue riche (mise à jour, nouveautés) */
+.dialog { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; background: rgba(5, 6, 9, 0.62); backdrop-filter: blur(3px); animation: fade-in 0.15s ease-out; }
+.dialog-card { width: min(600px, 92vw); max-height: 82vh; display: flex; flex-direction: column; background: linear-gradient(180deg, #1a1d25, #14161c);
+  border: 1px solid var(--line-2); border-radius: 18px; box-shadow: 0 40px 80px rgba(0, 0, 0, 0.55); overflow: hidden; animation: pop-in 0.18s ease-out; }
+.dialog-head { display: flex; align-items: center; gap: 14px; padding: 20px 20px 14px; }
+.dialog-head h3 { margin: 0; font-size: 17px; font-weight: 700; }
+.dialog-icon { width: 44px; height: 44px; flex: none; }
+.dialog-icon svg { width: 100%; height: 100%; }
+.dialog-sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.dialog-close { width: 30px; height: 30px; border-radius: 8px; border: 1px solid transparent; background: none; color: var(--muted); font-size: 20px; cursor: pointer; }
+.dialog-close:hover { background: var(--panel-2); color: var(--text); }
+.dialog-body { padding: 4px 20px 16px; overflow-y: auto; font-size: 13.5px; line-height: 1.55; color: #d7dae2; }
+.dialog-body h4 { margin: 14px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent-2); }
+.dialog-body ul { margin: 4px 0 8px; padding-left: 20px; }
+.dialog-body li { margin: 3px 0; }
+.dialog-body code { background: #0f1116; border: 1px solid var(--line-2); border-radius: 5px; padding: 0 5px; font-size: 12px; }
+.dialog-body a { color: var(--accent-2); }
+.dialog-progress { padding: 0 20px 14px; }
+.dialog-progress .bar { height: 8px; border-radius: 999px; background: #0f1116; border: 1px solid var(--line-2); overflow: hidden; }
+.dialog-progress .bar span { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, #FFB15C, #FF6A00); transition: width 0.15s; }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 14px 20px 18px; border-top: 1px solid var(--line-2); background: rgba(0, 0, 0, 0.15); }
+.dialog-actions .spacer { flex: 1; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+/* À propos */
+.about { display: flex; gap: 14px; align-items: center; padding: 14px; border-radius: 14px; border: 1px solid var(--line-2);
+  background: radial-gradient(400px 120px at 0% 0%, rgba(255, 122, 26, 0.12), transparent), #12141a; margin-bottom: 10px; }
+.about svg { width: 54px; height: 54px; flex: none; }
+.about .about-name { font-size: 17px; font-weight: 700; }
+.about .about-name .accent { color: var(--accent); }
+.about .about-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.links { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.update-status { font-size: 12.5px; color: var(--muted); margin: 6px 0 10px; }
+.update-status b { color: var(--text); }
+.update-status.ok::before { content: "✓ "; color: var(--ok); }
+.update-status.new::before { content: "● "; color: var(--accent); }
+.dialog-actions .btn.small { padding: 6px 10px; font-size: 12px; }

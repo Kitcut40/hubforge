@@ -1,10 +1,22 @@
+<p align="center"><img src="assets/brand/png/hubforge-wordmark.png" alt="HubForge" width="520"></p>
+
 # HubForge
 
 **Logiciel libre et hors ligne pour le Cooler Master MasterHUB.**
 
 Le MasterHUB est un excellent contrôleur modulaire (touches à écran, faders, molettes…), mais son logiciel officiel n'est presque plus suivi. HubForge le remplace par un logiciel rapide, sans compte, sans connexion Internet, pour Windows et Linux — et extensible par de simples fichiers d'**addons** (`.forge`).
 
-> 🚧 **Projet en cours de développement.** Rien n'est encore utilisable au quotidien.
+> 🚧 **Version de test (0.8)** : utilisable au quotidien, mais en développement actif vers la v1.0.
+
+## Installation (Windows 10 / 11)
+
+1. Télécharge **`HubForge-Setup-x.y.z.exe`** dans la [dernière version](https://github.com/Kitcut40/hubforge/releases/latest).
+2. Lance-le : installation sans droits administrateur, en français ou en anglais.
+3. Ferme le logiciel officiel MasterHUB s'il est ouvert (un seul logiciel peut piloter le MasterHUB à la fois).
+
+HubForge te proposera ensuite tout seul les nouvelles versions (désactivable dans les réglages). Windows peut afficher un avertissement SmartScreen car le programme n'est pas encore signé : *Informations complémentaires → Exécuter quand même*.
+
+Pour fabriquer l'installateur toi-même : `installer/build.sh` (NSIS).
 
 ## État d'avancement
 
