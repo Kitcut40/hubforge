@@ -23,6 +23,7 @@ const LIBRARY = [
   { cat: "Clavier", items: [
     { name: "Raccourci clavier", label: "Raccourci", icon: "keyboard", color: "#3949AB", action: { type: "hotkey", keys: "" } },
     { name: "Taper un texte", label: "Texte", icon: "type", color: "#EF6C00", action: { type: "text", text: "" } },
+    { name: "Macro (plusieurs actions)", label: "Macro", icon: "layers", color: "#6A1B9A", action: { type: "macro", steps: [{ type: "hotkey", keys: "" }] } },
     { name: "Copier", label: "Copier", icon: "copy", color: "#5D4037", action: { type: "hotkey", keys: "ctrl+c" } },
     { name: "Coller", label: "Coller", icon: "clipboard-paste", color: "#5D4037", action: { type: "hotkey", keys: "ctrl+v" } },
     { name: "Couper", label: "Couper", icon: "scissors", color: "#5D4037", action: { type: "hotkey", keys: "ctrl+x" } },
@@ -73,6 +74,7 @@ const ACTION_TYPES = [
   ["none", "Aucune action"], ["hotkey", "Raccourci clavier"], ["text", "Taper un texte"],
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
   ["media", "Multimédia"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
+  ["macro", "Macro (plusieurs actions à la suite)"],
 ];
 
 const SWATCHES = ["#FF3B30", "#FF7A1A", "#FFB300", "#FFD60A", "#3DDC84", "#1DB954", "#00C8FF", "#1E88E5",
@@ -400,7 +402,9 @@ function keyElement(k) {
   },
     def && prev ? el("img", { src: prev.src, alt: "" }) : null,
     el("span", { class: "num" }, String(k)),
-    def && def.toggle ? el("span", { class: "badge" }, "2 états") : def && prev && prev.animated ? el("span", { class: "badge" }, "GIF") : null,
+    def && def.toggle ? el("span", { class: "badge" }, "2 états")
+      : def && def.action && def.action.type === "macro" ? el("span", { class: "badge" }, "Macro")
+      : def && prev && prev.animated ? el("span", { class: "badge" }, "GIF") : null,
   );
   node.onclick = (e) => { e.stopPropagation(); S.editState = 0; select({ type: "key", key: k }); };
   node.ondragstart = (e) => { e.dataTransfer.setData("text/hubforge-key", String(k)); e.dataTransfer.effectAllowed = "move"; node.classList.add("dragging"); };
@@ -775,26 +779,54 @@ function actionTypeId(a) {
   return a.type;
 }
 
-/** Éditeur d'action pour `st.action` ; `onChange` est appelé à chaque modification. */
-function actionEditor(st, k, onChange) {
+/** Valeurs par défaut quand on choisit un type d'action. */
+const ACTION_DEFAULTS = {
+  none: { type: "none" }, hotkey: { type: "hotkey", keys: "" }, text: { type: "text", text: "" },
+  "launch:program": { type: "launch", target: "" }, "launch:url": { type: "launch", target: "https://" },
+  "launch:path": { type: "launch", target: "", _kind: "path" }, media: { type: "media", command: "play_pause" },
+  page: { type: "page", to: "next" }, lock: { type: "lock" }, open_config: { type: "open_config" },
+  macro: { type: "macro", steps: [{ type: "hotkey", keys: "" }] }, wait: { type: "wait", ms: 500 },
+};
+
+/** Résumé d'une étape de macro (affiché dans son en-tête). */
+function stepSummary(a) {
+  switch (a.type) {
+    case "hotkey": return a.keys ? `Raccourci ${a.keys}` : "Raccourci clavier";
+    case "text": return a.text ? `Taper « ${a.text.length > 24 ? a.text.slice(0, 24) + "…" : a.text} »` : "Taper un texte";
+    case "launch": return a.target ? `Ouvrir ${a.target.split(/[\\/]/).pop()}` : "Ouvrir…";
+    case "media": return (MEDIA[a.command] || [a.command])[0];
+    case "page": return a.to === "next" ? "Page suivante" : a.to === "previous" ? "Page précédente" : `Page ${a.to}`;
+    case "lock": return "Verrouiller le PC";
+    case "open_config": return "Ouvrir la configuration";
+    case "wait": return `Pause ${(a.ms / 1000).toLocaleString("fr-FR")} s`;
+    default: return "Aucune action";
+  }
+}
+
+/** Éditeur d'action pour `st.action` ; `onChange` est appelé à chaque modification.
+    opts.nested : étape d'une macro (pas de titre, pas d'icône ni de nom automatiques). */
+function actionEditor(st, k, onChange, opts = {}) {
   if (!st.action) st.action = { type: "none" };
   const a = st.action;
+  const nested = !!opts.nested;
   const upd = (fn) => { fn(st.action); onChange(); };
-  const typeSel = el("select", { class: "input" }, ...ACTION_TYPES.map(([v, l]) => el("option", { value: v, selected: v === actionTypeId(a) }, l)));
+  const types = nested
+    ? [...ACTION_TYPES.filter(([v]) => v !== "macro"), ["wait", "Attendre (pause)"]]
+    : ACTION_TYPES;
+  const typeSel = el("select", { class: "input" }, ...types.map(([v, l]) => el("option", { value: v, selected: v === actionTypeId(a) }, l)));
   typeSel.onchange = () => {
-    const v = typeSel.value;
-    const defaults = {
-      none: { type: "none" }, hotkey: { type: "hotkey", keys: "" }, text: { type: "text", text: "" },
-      "launch:program": { type: "launch", target: "" }, "launch:url": { type: "launch", target: "https://" },
-      "launch:path": { type: "launch", target: "", _kind: "path" }, media: { type: "media", command: "play_pause" },
-      page: { type: "page", to: "next" }, lock: { type: "lock" }, open_config: { type: "open_config" },
-    };
-    st.action = clone(defaults[v]);
+    st.action = clone(ACTION_DEFAULTS[typeSel.value]);
     onChange();
     renderInspector();
   };
-  const out = [el("h2", {}, "Action"), field("Quand j'appuie sur la touche", typeSel)];
+  const out = nested ? [field("Type", typeSel)] : [el("h2", {}, "Action"), field("Quand j'appuie sur la touche", typeSel)];
   const t = actionTypeId(a);
+  const autoIcon = (p) => {
+    if (nested) return;
+    // Icône et nom automatiques (l'icône seulement si la touche n'a pas déjà sa propre image).
+    const ownImage = st.icon && !st.icon.startsWith("builtin:") && !st.icon.startsWith("icons/app-");
+    applyAppIcon(k, st, p, { quiet: true, keepIcon: ownImage }).then((ok) => { if (!ok) renderInspector(); });
+  };
 
   if (t === "hotkey") {
     const cap = el("input", { class: "input capture", value: a.keys || "", placeholder: "Clique ici puis fais la combinaison", spellcheck: "false" });
@@ -816,7 +848,7 @@ function actionEditor(st, k, onChange) {
       cap.value = v; upd((x) => { x.keys = v; }); extra.value = "";
     };
     out.push(field("Combinaison", cap, el("div", { style: "height:8px" }), extra,
-      el("p", { class: "hint" }, "Ex. ctrl+shift+s · win+d · alt+f4. Les combinaisons avec la touche Windows s'ajoutent avec la liste.")));
+      nested ? null : el("p", { class: "hint" }, "Ex. ctrl+shift+s · win+d · alt+f4. Les combinaisons avec la touche Windows s'ajoutent avec la liste.")));
   } else if (t === "text") {
     out.push(field("Texte à taper", el("textarea", { class: "input", oninput: (e) => upd((x) => { x.text = e.target.value; }) }, a.text || "")));
   } else if (t === "launch:program") {
@@ -825,23 +857,22 @@ function actionEditor(st, k, onChange) {
       const p = await invoke("pick_file", { kind: "program" });
       if (!p) return;
       inp.value = p; upd((x) => { x.target = p; });
-      // Icône et nom automatiques (l'icône seulement si la touche n'a pas déjà sa propre image).
-      const ownImage = st.icon && !st.icon.startsWith("builtin:") && !st.icon.startsWith("icons/app-");
-      applyAppIcon(k, st, p, { quiet: true, keepIcon: ownImage }).then((ok) => { if (!ok) renderInspector(); });
+      autoIcon(p);
+      if (nested) renderInspector();
     } }, "Parcourir…"))));
     out.push(field("Arguments (facultatif)", el("input", { class: "input", value: (a.args || []).join(" "), placeholder: "ex. --nouvelle-fenetre",
       oninput: (e) => upd((x) => { const v = e.target.value.trim(); if (v) x.args = v.split(/\s+/); else delete x.args; }) })));
   } else if (t === "launch:url") {
     out.push(field("Adresse du site", el("input", { class: "input", value: a.target || "https://", spellcheck: "false",
-      oninput: (e) => upd((x) => { x.target = e.target.value; }), onchange: () => applySiteName(k, st) }),
-      el("p", { class: "hint" }, "Le nom du site devient le texte de la touche s'il n'a pas été personnalisé.")));
+      oninput: (e) => upd((x) => { x.target = e.target.value; }), onchange: () => { if (!nested) applySiteName(k, st); } }),
+      nested ? null : el("p", { class: "hint" }, "Le nom du site devient le texte de la touche s'il n'a pas été personnalisé.")));
   } else if (t === "launch:path") {
     const inp = el("input", { class: "input", value: a.target || "", placeholder: "C:\\Users\\…", spellcheck: "false", oninput: (e) => upd((x) => { x.target = e.target.value; }) });
     const choose = async (p) => {
       if (!p) return;
       inp.value = p; upd((x) => { x.target = p; });
-      const ownImage = st.icon && !st.icon.startsWith("builtin:") && !st.icon.startsWith("icons/app-");
-      applyAppIcon(k, st, p, { quiet: true, keepIcon: ownImage }).then((ok) => { if (!ok) renderInspector(); });
+      autoIcon(p);
+      if (nested) renderInspector();
     };
     out.push(field("Dossier ou fichier", inp, el("div", { class: "row", style: "margin-top:8px" },
       el("button", { class: "btn grow", onclick: async () => choose(await invoke("pick_folder")) }, "Choisir un dossier…"),
@@ -850,11 +881,58 @@ function actionEditor(st, k, onChange) {
     out.push(field("Commande", el("select", { class: "input", onchange: (e) => upd((x) => { x.command = e.target.value; }) },
       ...Object.entries(MEDIA).map(([v, [l]]) => el("option", { value: v, selected: v === a.command }, l)))));
   } else if (t === "page") {
-    const opts = [["next", "Page suivante"], ["previous", "Page précédente"], ...S.cfg.pages.map((p, i) => [String(i + 1), `Page ${i + 1} — ${p.name}`])];
+    const opts2 = [["next", "Page suivante"], ["previous", "Page précédente"], ...S.cfg.pages.map((p, i) => [String(i + 1), `Page ${i + 1} — ${p.name}`])];
     out.push(field("Aller à", el("select", { class: "input", onchange: (e) => upd((x) => { x.to = e.target.value; }) },
-      ...opts.map(([v, l]) => el("option", { value: v, selected: v === a.to }, l)))));
+      ...opts2.map(([v, l]) => el("option", { value: v, selected: v === a.to }, l)))));
+  } else if (t === "wait") {
+    const sec = el("span", { class: "val" }, (a.ms / 1000).toLocaleString("fr-FR") + " s");
+    const inp = el("input", { class: "input grow", type: "number", min: 0, max: 60000, step: 50, value: a.ms });
+    inp.oninput = () => {
+      const v = Math.max(0, Math.min(60000, Math.round(Number(inp.value) || 0)));
+      upd((x) => { x.ms = v; });
+      sec.textContent = (v / 1000).toLocaleString("fr-FR") + " s";
+    };
+    const quick = el("div", { class: "chips" }, ...[100, 300, 500, 1000, 2000].map((v) =>
+      el("span", { class: "chip add", onclick: () => { inp.value = v; inp.oninput(); } }, v < 1000 ? `${v} ms` : `${v / 1000} s`)));
+    out.push(field("Durée (millisecondes)", el("div", { class: "row" }, inp, sec), quick));
+  } else if (t === "macro") {
+    out.push(...macroEditor(a, k, onChange));
   }
   return out;
+}
+
+/** Liste des étapes d'une macro, chacune avec son propre éditeur. */
+function macroEditor(a, k, onChange) {
+  if (!Array.isArray(a.steps)) a.steps = [];
+  const steps = a.steps;
+  const changedAndRedraw = () => { onChange(); renderInspector(); };
+  const list = el("div", { class: "steps" });
+  steps.forEach((step, i) => {
+    // L'éditeur d'action travaille sur un « porteur » qui pointe vers l'étape.
+    const holder = { get action() { return steps[i]; }, set action(v) { steps[i] = v; } };
+    const move = (d) => { const j = i + d; if (j < 0 || j >= steps.length) return; [steps[i], steps[j]] = [steps[j], steps[i]]; changedAndRedraw(); };
+    const card = el("div", { class: "step" + (step.type === "wait" ? " wait" : "") },
+      el("div", { class: "step-head" },
+        el("span", { class: "step-num" }, String(i + 1)),
+        el("span", { class: "step-sum" }, stepSummary(step)),
+        el("button", { class: "icon-btn", title: "Monter", disabled: i === 0, onclick: () => move(-1) }, "↑"),
+        el("button", { class: "icon-btn", title: "Descendre", disabled: i === steps.length - 1, onclick: () => move(1) }, "↓"),
+        el("button", { class: "icon-btn danger", title: "Supprimer l'étape", onclick: () => { steps.splice(i, 1); changedAndRedraw(); } }, "×")),
+      el("div", { class: "step-body" }, ...actionEditor(holder, k, () => {
+        onChange();
+        const sum = card.querySelector(".step-sum");
+        if (sum) sum.textContent = stepSummary(steps[i]);
+      }, { nested: true })));
+    list.append(card);
+  });
+  return [
+    el("h2", { style: "margin-top:4px" }, `Étapes (${steps.length})`),
+    el("p", { class: "hint", style: "margin:-4px 0 10px" }, "Exécutées dans l'ordre, de haut en bas. Ajoute des pauses pour laisser le temps à une application de s'ouvrir."),
+    steps.length ? list : el("p", { class: "hint" }, "Aucune étape pour l'instant."),
+    el("div", { class: "row", style: "margin-top:10px" },
+      el("button", { class: "btn grow", disabled: steps.length >= 100, onclick: () => { steps.push({ type: "hotkey", keys: "" }); changedAndRedraw(); } }, "+ Étape"),
+      el("button", { class: "btn grow", disabled: steps.length >= 100, onclick: () => { steps.push({ type: "wait", ms: 500 }); changedAndRedraw(); } }, "+ Pause")),
+  ];
 }
 
 function comboFromEvent(e) {
@@ -1162,7 +1240,7 @@ async function mockInvoke(cmd, args) {
        { kind: "rollers2", port: "121", placement: { col: 0, row: 5, rot: 0 } }, { kind: "base" }];
   switch (cmd) {
     case "get_initial":
-      return { config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.4.0",
+      return { config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.4.1",
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;

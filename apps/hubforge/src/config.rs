@@ -183,6 +183,33 @@ pub enum Action {
     Lock,
     /// Ouvre le fichier de configuration
     OpenConfig,
+    /// Suite d'actions exécutées l'une après l'autre (macro)
+    Macro {
+        #[serde(default)]
+        steps: Vec<Action>,
+    },
+    /// Pause dans une macro, en millisecondes
+    Wait { ms: u64 },
+}
+
+/// Nombre maximal d'étapes dans une macro et durée maximale d'une pause.
+pub const MACRO_MAX_STEPS: usize = 100;
+pub const WAIT_MAX_MS: u64 = 60_000;
+
+fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
+    match a {
+        Action::Macro { steps } => {
+            if depth > 0 {
+                return Err("une macro ne peut pas contenir une autre macro".into());
+            }
+            if steps.len() > MACRO_MAX_STEPS {
+                return Err(format!("macro trop longue ({} étapes, maximum {MACRO_MAX_STEPS})", steps.len()));
+            }
+            steps.iter().try_for_each(|s| validate_action(s, depth + 1))
+        }
+        Action::Wait { ms } if *ms > WAIT_MAX_MS => Err(format!("pause trop longue ({ms} ms, maximum {WAIT_MAX_MS} ms)")),
+        _ => Ok(()),
+    }
 }
 
 pub fn parse_color(s: &str) -> Option<(u8, u8, u8)> {
@@ -232,6 +259,9 @@ pub fn validate(cfg: &Config) -> Result<(), String> {
                 return Err(format!("page {} : la touche {} n'existe pas (1 à 15)", p + 1, k.key));
             }
             let alt = k.toggle.as_ref();
+            for a in std::iter::once(&k.action).chain(alt.map(|t| &t.action)) {
+                validate_action(a, 0).map_err(|e| format!("page {} touche {} : {e}", p + 1, k.key))?;
+            }
             for c in [&k.color, &k.text_color, &alt.and_then(|t| t.color.clone()), &alt.and_then(|t| t.text_color.clone())]
                 .into_iter()
                 .flatten()
@@ -478,6 +508,18 @@ color = "#2E7D32"
 action = { type = "media", command = "mic_mute" }
 toggle = { label = "Micro coupé", icon = "builtin:mic-off", color = "#C62828", action = { type = "media", command = "mic_mute" } }
 
+# Macro : plusieurs actions à la suite, avec des pauses (ms).
+[[pages.keys]]
+key = 7
+label = "Macro démo"
+icon = "builtin:layers"
+color = "#6A1B9A"
+action = { type = "macro", steps = [
+    { type = "launch", target = "notepad.exe" },
+    { type = "wait", ms = 1000 },
+    { type = "text", text = "Bonjour depuis HubForge !" },
+] }
+
 [[pages.keys]]
 key = 15
 label = "Accueil"
@@ -491,11 +533,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn macros_parse_and_validate() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [[pages]]
+            name = "Test"
+            [[pages.keys]]
+            key = 1
+            action = { type = "macro", steps = [
+                { type = "hotkey", keys = "ctrl+s" },
+                { type = "wait", ms = 300 },
+                { type = "text", text = "ok" },
+            ] }
+            "#,
+        )
+        .unwrap();
+        validate(&cfg).unwrap();
+        match &cfg.pages[0].keys[0].action {
+            Action::Macro { steps } => assert_eq!(steps.len(), 3),
+            a => panic!("{a:?}"),
+        }
+        // Enregistrement puis relecture : la macro est identique.
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(back.pages[0].keys[0].action, cfg.pages[0].keys[0].action);
+        let nested: Config = toml::from_str(
+            r#"
+            [[pages]]
+            [[pages.keys]]
+            key = 1
+            action = { type = "macro", steps = [ { type = "macro", steps = [] } ] }
+            "#,
+        )
+        .unwrap();
+        assert!(validate(&nested).is_err());
+    }
+
+    #[test]
     fn default_config_is_valid() {
         let cfg: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
         validate(&cfg).unwrap();
         assert_eq!(cfg.pages.len(), 2);
         assert!(cfg.pages[1].keys.iter().any(|k| k.toggle.is_some()));
+        assert!(cfg.pages[1].keys.iter().any(|k| matches!(k.action, Action::Macro { .. })));
         assert_eq!(cfg.faders.len(), 5);
         assert_eq!(
             cfg.pages[0].keys[3].action,

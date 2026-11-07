@@ -161,7 +161,7 @@ input, select, textarea, button { font: inherit; color: inherit; }
 .key img { width: 100%; height: 100%; display: block; pointer-events: none; }
 #keys .key img { transform: rotate(var(--key-rot, 0deg)); }
 .key .num { position: absolute; top: 2px; left: 4px; font-size: 9px; color: rgba(255, 255, 255, 0.35); pointer-events: none; }
-.key .badge { position: absolute; bottom: 3px; right: 3px; font-size: 8.5px; font-weight: 600; padding: 1px 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.65); color: var(--accent-2); pointer-events: none; }
+.key .badge { position: absolute; top: 3px; right: 3px; font-size: 8.5px; font-weight: 600; padding: 1px 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.65); color: var(--accent-2); pointer-events: none; }
 .key.empty::after { content: "+"; position: absolute; inset: 0; display: grid; place-items: center; color: #343947; font-size: 22px; }
 .key:hover { border-color: #4a5063; }
 .key.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -282,3 +282,18 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #2a2e39; border-radius: 10px; border: 2px solid var(--panel); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* Macros */
+.steps { display: flex; flex-direction: column; gap: 8px; }
+.step { border: 1px solid var(--line-2); border-radius: 10px; background: #12141a; }
+.step.wait { background: #101217; border-style: dashed; }
+.step-head { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 10px; border-bottom: 1px solid var(--line-2); }
+.step.wait .step-head { border-bottom-style: dashed; }
+.step-num { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-size: 11px; font-weight: 600; background: var(--accent-soft); color: var(--accent-2); flex: none; }
+.step-sum { flex: 1; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step-body { padding: 10px 10px 2px; }
+.step-body .field { margin-bottom: 10px; }
+.icon-btn { width: 24px; height: 24px; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; flex: none; }
+.icon-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--text); border-color: var(--line-2); }
+.icon-btn.danger:hover:not(:disabled) { color: var(--err); }
+.icon-btn:disabled { opacity: 0.3; cursor: default; }

@@ -10,7 +10,7 @@ use crate::foreground;
 use crate::topology::{self, Placement};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -61,6 +61,9 @@ struct KeyVisuals {
     states: Vec<KeyVisual>,
 }
 
+/// Délai entre deux étapes d'une macro (millisecondes).
+const MACRO_GAP_MS: u64 = 30;
+
 pub struct Engine {
     mgr: DeviceManager,
     events: Receiver<Event>,
@@ -84,6 +87,9 @@ pub struct Engine {
     auto_from: Option<usize>,
     /// Dernière application vue au premier plan.
     last_fg: Option<String>,
+    /// Étapes de macro restant à exécuter, et moment de la prochaine.
+    macro_queue: VecDeque<Action>,
+    macro_next: Instant,
     faders: HashMap<String, [u8; FADER_COUNT]>,
     input: Input,
     audio: Audio,
@@ -127,6 +133,8 @@ impl Engine {
             keys_rot: 0,
             auto_from: None,
             last_fg: None,
+            macro_queue: VecDeque::new(),
+            macro_next: Instant::now(),
             faders: HashMap::new(),
             input: Input::new(),
             audio,
@@ -184,7 +192,8 @@ impl Engine {
             while let Ok(m) = msgs.try_recv() {
                 self.message(m);
             }
-            let timeout = if self.anims.is_empty() { 30 } else { 5 };
+            self.run_macro();
+            let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() { 30 } else { 5 };
             match self.events.recv_timeout(Duration::from_millis(timeout)) {
                 Ok(ev) => {
                     self.handle(ev);
@@ -496,6 +505,16 @@ impl Engine {
             Action::Media { command } if command == "mic_mute" => self.audio.send(AudioCmd::ToggleMicMute),
             Action::Media { command } => self.input.media(command),
             Action::Lock => actions::lock_session(),
+            Action::Macro { steps } => {
+                if self.macro_queue.len() + steps.len() > 4 * config::MACRO_MAX_STEPS {
+                    log::warn!("trop de macros en attente : appui ignoré");
+                    return;
+                }
+                // Les étapes s'ajoutent à la suite d'une macro déjà en cours.
+                self.macro_queue.extend(steps.iter().filter(|s| !matches!(s, Action::Macro { .. })).cloned());
+                self.run_macro();
+            }
+            Action::Wait { .. } => {} // n'a de sens que dans une macro
             Action::OpenConfig => actions::launch(&self.cfg_path.to_string_lossy(), &[]),
             Action::Page { to } => {
                 let n = self.visuals.len();
@@ -517,6 +536,28 @@ impl Engine {
                 self.page = target;
                 self.show_page();
             }
+        }
+    }
+
+    /// Exécute les étapes de macro dont le moment est venu (sans bloquer :
+    /// les touches, GIF et faders restent réactifs pendant une pause).
+    fn run_macro(&mut self) {
+        let page_before = self.page;
+        while !self.macro_queue.is_empty() && Instant::now() >= self.macro_next {
+            let Some(step) = self.macro_queue.pop_front() else { break };
+            match step {
+                Action::Wait { ms } => {
+                    self.macro_next = Instant::now() + Duration::from_millis(ms.min(config::WAIT_MAX_MS));
+                }
+                other => {
+                    self.execute(&other);
+                    // Petit délai entre deux étapes, pour que Windows suive.
+                    self.macro_next = Instant::now() + Duration::from_millis(MACRO_GAP_MS);
+                }
+            }
+        }
+        if self.page != page_before {
+            self.notify();
         }
     }
 
