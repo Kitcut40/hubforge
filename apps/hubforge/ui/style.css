@@ -55,6 +55,8 @@ input, select, textarea, button { font: inherit; color: inherit; }
 .page-tab:hover .close { opacity: 1; }
 .page-tab .auto { display: inline-flex; color: var(--accent-2); }
 .page-tab .auto svg { width: 13px; height: 13px; }
+.page-tab .folder-mark { color: #F4B400; }
+.page-tab.is-folder { font-style: normal; }
 .page-tab .opts { display: inline-flex; color: var(--faint); border-radius: 4px; padding: 1px; }
 .page-tab .opts svg { width: 14px; height: 14px; }
 .page-tab .opts:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }

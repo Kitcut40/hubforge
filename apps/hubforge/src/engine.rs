@@ -90,6 +90,8 @@ pub struct Engine {
     /// Étapes de macro restant à exécuter, et moment de la prochaine.
     macro_queue: VecDeque<Action>,
     macro_next: Instant,
+    /// Pages d'où l'on a ouvert les dossiers (pour la touche Retour).
+    page_stack: Vec<usize>,
     faders: HashMap<String, [u8; FADER_COUNT]>,
     input: Input,
     audio: Audio,
@@ -135,6 +137,7 @@ impl Engine {
             last_fg: None,
             macro_queue: VecDeque::new(),
             macro_next: Instant::now(),
+            page_stack: Vec::new(),
             faders: HashMap::new(),
             input: Input::new(),
             audio,
@@ -237,6 +240,7 @@ impl Engine {
             EngineMsg::ShowPage(p) => {
                 if p < self.visuals.len() && p != self.page {
                     self.auto_from = None;
+                    self.page_stack.clear();
                     self.page = p;
                     self.pressed = [false; KEY_COUNT];
                     self.show_page();
@@ -475,6 +479,12 @@ impl Engine {
         }
         let page_before = self.page;
         self.execute(&action);
+        // Dossier « refermé après une action » : retour à la page d'avant.
+        let closes = !matches!(action, Action::None | Action::Folder { .. } | Action::Back | Action::Page { .. });
+        if closes && self.page == page_before && self.is_closing_folder(self.page) {
+            self.go_back();
+            return;
+        }
         // Touche à 2 états : affiche tout de suite le nouvel état.
         if def.toggle.is_some() && self.page == page_before {
             self.restart_anim(key);
@@ -517,26 +527,82 @@ impl Engine {
             Action::Wait { .. } => {} // n'a de sens que dans une macro
             Action::OpenConfig => actions::launch(&self.cfg_path.to_string_lossy(), &[]),
             Action::Page { to } => {
-                let n = self.visuals.len();
-                let target = match to.as_str() {
-                    "next" | "suivante" => (self.page + 1) % n,
-                    "previous" | "prev" | "precedente" | "précédente" => (self.page + n - 1) % n,
-                    num => match num.parse::<usize>() {
-                        Ok(p) if p >= 1 && p <= n => p - 1,
-                        _ => {
-                            log::warn!("page inconnue : « {num} »");
-                            return;
-                        }
-                    },
-                };
-                // Évite de laisser une touche « enfoncée » assombrie.
-                self.pressed = [false; KEY_COUNT];
-                // Choix manuel : pas de retour automatique.
+                let Some(target) = self.resolve_page(to, true) else { return };
+                // Choix manuel : pas de retour automatique, dossiers refermés.
                 self.auto_from = None;
-                self.page = target;
-                self.show_page();
+                self.page_stack.clear();
+                self.change_page(target);
+            }
+            Action::Folder { to } => {
+                let Some(target) = self.resolve_page(to, false) else { return };
+                if target == self.page {
+                    return;
+                }
+                if self.page_stack.len() >= 16 {
+                    self.page_stack.remove(0);
+                }
+                self.page_stack.push(self.page);
+                self.change_page(target);
+            }
+            Action::Back => self.go_back(),
+        }
+    }
+
+    /// Change de page en relâchant les touches « enfoncées ».
+    fn change_page(&mut self, p: usize) {
+        self.pressed = [false; KEY_COUNT];
+        self.page = p;
+        self.show_page();
+    }
+
+    fn is_folder(&self, page: usize) -> bool {
+        self.cfg.pages.get(page).map(|p| p.folder).unwrap_or(false)
+    }
+
+    fn is_closing_folder(&self, page: usize) -> bool {
+        self.cfg.pages.get(page).map(|p| p.folder && p.close_after).unwrap_or(false)
+    }
+
+    /// Revient à la page d'où le dossier a été ouvert (sinon à la première
+    /// page normale).
+    fn go_back(&mut self) {
+        let target = loop {
+            match self.page_stack.pop() {
+                Some(p) if p < self.visuals.len() && p != self.page => break Some(p),
+                Some(_) => continue,
+                None => break (0..self.visuals.len()).find(|&p| !self.is_folder(p) && p != self.page),
+            }
+        };
+        if let Some(p) = target {
+            self.change_page(p);
+        }
+    }
+
+    /// « next », « previous » ou un numéro (1 = première page).
+    /// `skip_folders` : suivante / précédente ignorent les dossiers.
+    fn resolve_page(&self, to: &str, skip_folders: bool) -> Option<usize> {
+        let n = self.visuals.len();
+        let step = match to {
+            "next" | "suivante" => 1,
+            "previous" | "prev" | "precedente" | "précédente" => n - 1,
+            num => {
+                return match num.trim().parse::<usize>() {
+                    Ok(p) if p >= 1 && p <= n => Some(p - 1),
+                    _ => {
+                        log::warn!("page inconnue : « {num} »");
+                        None
+                    }
+                }
+            }
+        };
+        let mut p = self.page;
+        for _ in 0..n {
+            p = (p + step) % n;
+            if !skip_folders || !self.is_folder(p) {
+                return Some(p);
             }
         }
+        None
     }
 
     /// Exécute les étapes de macro dont le moment est venu (sans bloquer :
@@ -618,9 +684,8 @@ impl Engine {
     }
 
     fn set_page(&mut self, p: usize) {
-        self.pressed = [false; KEY_COUNT];
-        self.page = p;
-        self.show_page();
+        self.page_stack.clear();
+        self.change_page(p);
         self.notify();
     }
 

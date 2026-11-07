@@ -51,6 +51,7 @@ pub fn port_codes() -> HashMap<String, String> {
 
 /// Extrait les numéros de port d'un chemin Windows
 /// « PCIROOT(0)#PCI(1400)#USBROOT(0)#USB(2)#USB(1)#USB(3) » → (préfixe racine, [2, 1, 3]).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn parse_location(path: &str) -> Option<(String, Vec<u32>)> {
     let idx = path.find("#USBROOT(")?;
     let root = path[..idx].to_string();
@@ -64,6 +65,7 @@ fn parse_location(path: &str) -> Option<(String, Vec<u32>)> {
 
 /// Calcule les codes de position à partir des chemins des hubs de la base et
 /// des modules (fonction pure, testable).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn compute(hubs: &[(String, Vec<u32>)], modules: &[(String, String, Vec<u32>)]) -> HashMap<String, String> {
     let mut out = HashMap::new();
     for (serial, root, ports) in modules {

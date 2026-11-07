@@ -98,8 +98,19 @@ pub struct Page {
     /// automatiquement quand elles passent au premier plan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub apps: Vec<String>,
+    /// Page « dossier » : ouverte par une touche (action folder), absente
+    /// du défilement page suivante / précédente.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub folder: bool,
+    /// Dossier : revenir à la page d'avant après une action.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub close_after: bool,
     #[serde(default)]
     pub keys: Vec<KeyDef>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -183,6 +194,10 @@ pub enum Action {
     Lock,
     /// Ouvre le fichier de configuration
     OpenConfig,
+    /// Ouvre une page dossier (numéro de page, 1 = la première)
+    Folder { to: String },
+    /// Ferme le dossier : revient à la page d'avant
+    Back,
     /// Suite d'actions exécutées l'une après l'autre (macro)
     Macro {
         #[serde(default)]
@@ -520,12 +535,65 @@ action = { type = "macro", steps = [
     { type = "text", text = "Bonjour depuis HubForge !" },
 ] }
 
+# Dossier : ouvre la page « Applis » (page 3) ; la touche Retour la referme.
+[[pages.keys]]
+key = 8
+label = "Applis"
+icon = "builtin:folder"
+color = "#F4B400"
+action = { type = "folder", to = "3" }
+
 [[pages.keys]]
 key = 15
 label = "Accueil"
 icon = "builtin:house"
 color = "#212121"
 action = { type = "page", to = "1" }
+
+# ---------------------------------------------------------------------
+#  Dossier : page ouverte par une touche. folder = true la retire de
+#  « page suivante / précédente » ; close_after = true revient à la page
+#  d'avant après chaque action.
+# ---------------------------------------------------------------------
+[[pages]]
+name = "Applis"
+folder = true
+close_after = true
+
+[[pages.keys]]
+key = 1
+label = "Retour"
+icon = "builtin:arrow-left"
+color = "#212121"
+action = { type = "back" }
+
+[[pages.keys]]
+key = 2
+label = "Explorateur"
+icon = "builtin:folder-open"
+color = "#F4B400"
+action = { type = "launch", target = "explorer.exe" }
+
+[[pages.keys]]
+key = 3
+label = "Calculatrice"
+icon = "builtin:calculator"
+color = "#455A64"
+action = { type = "launch", target = "calc.exe" }
+
+[[pages.keys]]
+key = 4
+label = "Bloc-notes"
+icon = "builtin:notebook-pen"
+color = "#0288D1"
+action = { type = "launch", target = "notepad.exe" }
+
+[[pages.keys]]
+key = 5
+label = "Paramètres"
+icon = "builtin:settings"
+color = "#607D8B"
+action = { type = "hotkey", keys = "win+i" }
 "##;
 
 #[cfg(test)]
@@ -573,7 +641,9 @@ mod tests {
     fn default_config_is_valid() {
         let cfg: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
         validate(&cfg).unwrap();
-        assert_eq!(cfg.pages.len(), 2);
+        assert_eq!(cfg.pages.len(), 3);
+        assert!(cfg.pages[2].folder && cfg.pages[2].close_after);
+        assert!(cfg.pages[1].keys.iter().any(|k| matches!(k.action, Action::Folder { .. })));
         assert!(cfg.pages[1].keys.iter().any(|k| k.toggle.is_some()));
         assert!(cfg.pages[1].keys.iter().any(|k| matches!(k.action, Action::Macro { .. })));
         assert_eq!(cfg.faders.len(), 5);

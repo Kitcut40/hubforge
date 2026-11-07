@@ -66,6 +66,8 @@ const LIBRARY = [
     { name: "Page suivante", label: "Page suivante", icon: "arrow-right", color: "#212121", action: { type: "page", to: "next" } },
     { name: "Page précédente", label: "Page précédente", icon: "arrow-left", color: "#212121", action: { type: "page", to: "previous" } },
     { name: "Aller à la page 1", label: "Accueil", icon: "house", color: "#212121", action: { type: "page", to: "1" } },
+    { name: "Nouveau dossier (sous-page)", label: "Dossier", icon: "folder", color: "#F4B400", action: { type: "folder", to: "" }, newFolder: true },
+    { name: "Retour (fermer le dossier)", label: "Retour", icon: "arrow-left", color: "#212121", action: { type: "back" } },
     { name: "Ouvrir la configuration", label: "Config", icon: "file-cog", color: "#546E7A", action: { type: "open_config" } },
   ]},
 ];
@@ -75,6 +77,7 @@ const ACTION_TYPES = [
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
   ["media", "Multimédia"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
   ["macro", "Macro (plusieurs actions à la suite)"],
+  ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
 ];
 
 const SWATCHES = ["#FF3B30", "#FF7A1A", "#FFB300", "#FFD60A", "#3DDC84", "#1DB954", "#00C8FF", "#1E88E5",
@@ -226,8 +229,9 @@ function renderPages() {
   nav.innerHTML = "";
   S.cfg.pages.forEach((p, i) => {
     const apps = p.apps || [];
-    const tab = el("div", { class: "page-tab" + (i === S.page ? " active" : ""), title: "Double-clic pour renommer" },
+    const tab = el("div", { class: "page-tab" + (i === S.page ? " active" : "") + (p.folder ? " is-folder" : ""), title: "Double-clic pour renommer" },
       i === S.devicePage ? el("span", { class: "on-device", title: "Page affichée sur le MasterHUB" }) : null,
+      p.folder ? el("span", { class: "auto folder-mark", title: "Dossier", html: svgIcon("folder") }) : null,
       el("span", {}, p.name || `Page ${i + 1}`),
       apps.length ? el("span", { class: "auto", title: "S'affiche toute seule avec : " + apps.join(", "), html: svgIcon("app-window") }) : null,
       i === S.page ? el("span", { class: "opts", title: "Réglages de la page", html: svgIcon("settings"),
@@ -270,6 +274,7 @@ async function renamePage(i) {
 async function deletePage(i) {
   if (!(await confirm_(`Supprimer la page « ${S.cfg.pages[i].name} » et ses touches ?`))) return;
   S.cfg.pages.splice(i, 1);
+  fixPageRefs(i);
   S.previews = {};
   S.page = Math.min(S.page, S.cfg.pages.length - 1);
   changed({ immediate: true });
@@ -533,6 +538,11 @@ async function onDropOnKey(k, dt) {
   if (lib) {
     const item = JSON.parse(lib);
     const def = { key: k, label: item.label, color: item.color, icon: "builtin:" + item.icon, action: clone(item.action) };
+    if (item.newFolder) {
+      const idx = createFolder(nextFolderName());
+      def.label = S.cfg.pages[idx].name;
+      def.action = { type: "folder", to: String(idx + 1) };
+    }
     if (item.toggle) def.toggle = clone(item.toggle);
     setKeyDef(k, def);
     S.editState = 0;
@@ -786,6 +796,7 @@ const ACTION_DEFAULTS = {
   "launch:path": { type: "launch", target: "", _kind: "path" }, media: { type: "media", command: "play_pause" },
   page: { type: "page", to: "next" }, lock: { type: "lock" }, open_config: { type: "open_config" },
   macro: { type: "macro", steps: [{ type: "hotkey", keys: "" }] }, wait: { type: "wait", ms: 500 },
+  folder: { type: "folder", to: "" }, back: { type: "back" },
 };
 
 /** Résumé d'une étape de macro (affiché dans son en-tête). */
@@ -799,6 +810,8 @@ function stepSummary(a) {
     case "lock": return "Verrouiller le PC";
     case "open_config": return "Ouvrir la configuration";
     case "wait": return `Pause ${(a.ms / 1000).toLocaleString("fr-FR")} s`;
+    case "folder": { const p = S.cfg.pages[Number(a.to) - 1]; return `Ouvrir le dossier ${p ? "« " + p.name + " »" : a.to}`; }
+    case "back": return "Retour (fermer le dossier)";
     default: return "Aucune action";
   }
 }
@@ -816,6 +829,12 @@ function actionEditor(st, k, onChange, opts = {}) {
   const typeSel = el("select", { class: "input" }, ...types.map(([v, l]) => el("option", { value: v, selected: v === actionTypeId(a) }, l)));
   typeSel.onchange = () => {
     st.action = clone(ACTION_DEFAULTS[typeSel.value]);
+    if (st.action.type === "folder") {
+      // Premier dossier existant, sinon on en crée un.
+      let idx = S.cfg.pages.findIndex((p) => p.folder);
+      if (idx < 0) idx = createFolder(nextFolderName());
+      st.action.to = String(idx + 1);
+    }
     onChange();
     renderInspector();
   };
@@ -897,8 +916,70 @@ function actionEditor(st, k, onChange, opts = {}) {
     out.push(field("Durée (millisecondes)", el("div", { class: "row" }, inp, sec), quick));
   } else if (t === "macro") {
     out.push(...macroEditor(a, k, onChange));
+  } else if (t === "folder") {
+    const cur = Number(a.to) - 1;
+    const folders = S.cfg.pages.map((p, i) => [i, p]).filter(([i, p]) => p.folder || i === cur);
+    const sel = el("select", { class: "input" },
+      ...folders.map(([i, p]) => el("option", { value: String(i + 1), selected: i === cur }, `${p.name || "Page " + (i + 1)}${p.folder ? "" : " (page normale)"}`)),
+      el("option", { value: "__new" }, "+ Nouveau dossier…"));
+    sel.onchange = async () => {
+      if (sel.value === "__new") {
+        const name = await prompt_("Nom du nouveau dossier :", nextFolderName());
+        if (name === null) { renderInspector(); return; }
+        const idx = createFolder(name || nextFolderName());
+        upd((x) => { x.to = String(idx + 1); });
+        if (!nested && labelIsGeneric(st)) { st.label = S.cfg.pages[idx].name; keyChanged(k); }
+      } else upd((x) => { x.to = sel.value; });
+      renderInspector();
+    };
+    out.push(field("Dossier", sel));
+    if (!nested && S.cfg.pages[cur]) {
+      out.push(el("button", { class: "btn", style: "width:100%", onclick: () => goToPage(cur) }, "Ouvrir le dossier pour le remplir"));
+      out.push(el("p", { class: "hint" }, "Un dossier est une page à part, absente de « page suivante / précédente ». Sa touche Retour ramène à la page d'où on l'a ouvert."));
+    }
+  } else if (t === "back") {
+    if (!nested) out.push(el("p", { class: "hint" }, "Revient à la page d'où le dossier a été ouvert."));
   }
   return out;
+}
+
+/** Nom libre pour un nouveau dossier : « Dossier », « Dossier 2 »… */
+function nextFolderName() {
+  const names = new Set(S.cfg.pages.map((p) => p.name));
+  if (!names.has("Dossier")) return "Dossier";
+  let n = 2;
+  while (names.has(`Dossier ${n}`)) n++;
+  return `Dossier ${n}`;
+}
+
+/** Crée une page dossier (avec sa touche Retour) et retourne son index. */
+function createFolder(name) {
+  S.cfg.pages.push({
+    name, folder: true, close_after: true,
+    keys: [{ key: 1, label: "Retour", icon: "builtin:arrow-left", color: "#212121", action: { type: "back" } }],
+  });
+  changed({ immediate: true });
+  renderPages();
+  return S.cfg.pages.length - 1;
+}
+
+/** Après suppression de la page `removed` (index), corrige les numéros de
+    page des actions « page » et « dossier » (les liens vers elle sont retirés). */
+function fixPageRefs(removed) {
+  const fix = (a) => {
+    if (!a) return a;
+    if (a.type === "macro") { a.steps = (a.steps || []).map(fix).filter(Boolean); return a; }
+    if ((a.type === "page" || a.type === "folder") && /^\d+$/.test(a.to || "")) {
+      const n = Number(a.to);
+      if (n === removed + 1) return a.type === "folder" ? { type: "none" } : { type: "page", to: "1" };
+      if (n > removed + 1) a.to = String(n - 1);
+    }
+    return a;
+  };
+  for (const p of S.cfg.pages) for (const d of p.keys) {
+    d.action = fix(d.action) || { type: "none" };
+    if (d.toggle) d.toggle.action = fix(d.toggle.action) || { type: "none" };
+  }
 }
 
 /** Liste des étapes d'une macro, chacune avec son propre éditeur. */
@@ -1009,9 +1090,21 @@ function rollersInspector() {
 function pageInspector() {
   const p = currentPage();
   if (!p.apps) p.apps = [];
-  const out = [title(`Page ${S.page + 1}`, "Réglages de la page")];
+  const out = [title(p.folder ? "Dossier" : `Page ${S.page + 1}`, "Réglages de la page")];
   out.push(field("Nom", el("input", { class: "input", value: p.name || "", oninput: (e) => { p.name = e.target.value; changed(); renderPagesSoon(); } })));
 
+  out.push(switchRow("Cette page est un dossier", !!p.folder, (v) => {
+    if (v) { p.folder = true; p.close_after = true; } else { delete p.folder; delete p.close_after; }
+    changed(); renderPages(); renderInspector();
+  }));
+  if (p.folder) {
+    out.push(switchRow("Revenir à la page d'avant après une action", !!p.close_after, (v) => {
+      if (v) p.close_after = true; else delete p.close_after;
+      changed();
+    }));
+    out.push(el("p", { class: "hint", style: "margin-top:-4px" }, "Un dossier s'ouvre avec une touche « Ouvrir un dossier » et n'apparaît pas dans « page suivante / précédente »."));
+  }
+  out.push(el("div", { class: "sep" }));
   out.push(el("h2", { style: "margin-top:6px" }, "Page automatique"));
   out.push(el("p", { class: "hint", style: "margin:-4px 0 12px" },
     "Quand une de ces applications passe au premier plan, le MasterHUB affiche cette page tout seul. ",
@@ -1240,7 +1333,7 @@ async function mockInvoke(cmd, args) {
        { kind: "rollers2", port: "121", placement: { col: 0, row: 5, rot: 0 } }, { kind: "base" }];
   switch (cmd) {
     case "get_initial":
-      return { config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.4.1",
+      return { config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.4.2",
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;

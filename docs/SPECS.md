@@ -210,7 +210,7 @@ Priorité : **P1** = version 1 indispensable · **P2** = version 1 si possible �
 - **P1** Profils multiples (un profil = configuration de tous les modules)
 - **P1** Pages par profil, **sans la limite de 5 pages** du logiciel officiel
 - **P1** **Changement automatique de profil selon l'application au premier plan** — ✅ v0.4 : une page liée à des programmes (`apps = ["fusion360.exe"]`) s'affiche quand l'un d'eux passe au premier plan, retour à la page précédente en le quittant
-- **P1** Dossiers sur les touches (une touche ouvre une sous-grille)
+- **P1** Dossiers sur les touches (une touche ouvre une sous-grille) — ✅ v0.4.2 : pages `folder = true`, touche Retour, retour automatique `close_after`
 - **P2** Import / export de profils
 - **P2** Sauvegarde automatique de la config + restauration
 - **P2** Profil par défaut au démarrage
