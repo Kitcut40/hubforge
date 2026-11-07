@@ -139,6 +139,10 @@ pub struct KeyDef {
     /// L'image est redessinée en continu (le texte sert de titre).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widget: Option<String>,
+    /// Style de la touche vivante (ex. "analog" pour l'horloge, "gauge",
+    /// "graph" pour CPU et RAM). Vide = style par défaut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widget_style: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -169,6 +173,7 @@ impl KeyDef {
                 action: t.action.clone(),
                 toggle: None,
                 widget: None,
+                widget_style: None,
             },
             _ => KeyDef { toggle: None, ..self.clone() },
         }
@@ -203,6 +208,10 @@ pub enum Action {
     Folder { to: String },
     /// Ferme le dossier : revient à la page d'avant
     Back,
+    /// Change de profil : "next", "previous" ou le nom du profil
+    Profile { to: String },
+    /// Lance le mini-jeu caché
+    Game,
     /// Suite d'actions exécutées l'une après l'autre (macro)
     Macro {
         #[serde(default)]

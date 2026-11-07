@@ -107,6 +107,7 @@ input, select, textarea, button { font: inherit; color: inherit; }
 
 /* ---------- Scène : la base et ses modules ---------- */
 .stage {
+  position: relative;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
   padding: 20px; min-width: 0; overflow: hidden;
   background: radial-gradient(1200px 700px at 50% 40%, #171a22, var(--bg));
@@ -129,7 +130,8 @@ input, select, textarea, button { font: inherit; color: inherit; }
   opacity: 0.35;
 }
 .base-glow { position: absolute; inset: -2px; border-radius: 23px; pointer-events: none; opacity: 0.9; }
-.base-led-hit { position: absolute; left: 30%; right: 30%; bottom: 2px; height: 10px; cursor: pointer; border-radius: 6px; }
+.base { cursor: pointer; }
+.base .module { cursor: pointer; }
 
 /* Emplacement d'un module (boîte englobante sur la grille) */
 .slot { position: absolute; }
@@ -299,3 +301,56 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .icon-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--text); border-color: var(--line-2); }
 .icon-btn.danger:hover:not(:disabled) { color: var(--err); }
 .icon-btn:disabled { opacity: 0.3; cursor: default; }
+
+/* Profils */
+.profile-wrap { position: relative; margin-right: 12px; }
+.profile-btn { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-2);
+  background: var(--panel-2); color: var(--text); cursor: pointer; font: inherit; font-size: 13px; max-width: 220px; }
+.profile-btn:hover { border-color: #3a3f4f; }
+.profile-btn svg { width: 16px; height: 16px; fill: none; stroke: var(--accent); stroke-width: 2; flex: none; }
+.profile-btn #profile-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.profile-btn .caret { color: var(--faint); font-size: 11px; }
+.profile-menu { position: absolute; top: 40px; left: 0; z-index: 50; min-width: 250px; padding: 6px; border-radius: 12px;
+  background: #171a21; border: 1px solid var(--line-2); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5); }
+.profile-menu .pm-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--faint); padding: 6px 10px 4px; }
+.profile-menu .pm-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--text); }
+.profile-menu .pm-item:hover { background: var(--panel-2); }
+.profile-menu .pm-item.on { color: var(--accent-2); }
+.profile-menu .pm-item .check { width: 14px; color: var(--accent); }
+.profile-menu .pm-item .grow { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.profile-menu .pm-item .del { opacity: 0; color: var(--faint); padding: 0 4px; border-radius: 4px; }
+.profile-menu .pm-item:hover .del { opacity: 1; }
+.profile-menu .pm-item .del:hover { color: var(--err); }
+.profile-menu .pm-sep { height: 1px; background: var(--line-2); margin: 6px 4px; }
+.profile-menu .pm-action { color: var(--muted); }
+
+/* Glisser les onglets */
+.page-tab.drag-over-left { box-shadow: inset 3px 0 0 var(--accent); }
+.page-tab.drag-over-right { box-shadow: inset -3px 0 0 var(--accent); }
+.page-tab.dragging { opacity: 0.4; }
+
+/* Glisser une touche hors du hub pour la supprimer */
+body.dragging-key .stage::after { content: "Lâche en dehors du MasterHUB pour supprimer la touche"; position: absolute; left: 50%; bottom: 14px;
+  transform: translateX(-50%); padding: 6px 12px; border-radius: 8px; background: rgba(198, 40, 40, 0.18); border: 1px dashed var(--err);
+  color: #ffb3b5; font-size: 12px; pointer-events: none; }
+body.dragging-key.over-trash .stage { box-shadow: inset 0 0 0 2px rgba(198, 40, 40, 0.6); }
+.toast .toast-action { margin-left: 12px; color: var(--accent-2); font-weight: 600; cursor: pointer; text-decoration: underline; }
+
+/* Base sélectionnée (LED) */
+.base.selected { outline: 2px solid var(--accent); outline-offset: 3px; }
+.led-preview { height: 46px; border-radius: 12px; margin: 4px 0 16px; border: 1px solid var(--line-2); }
+
+/* Mini-jeu */
+.game-banner { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 5; padding: 8px 14px; border-radius: 10px;
+  background: rgba(46, 125, 50, 0.2); border: 1px solid #2e7d32; color: #b9f6ca; font-size: 13px; }
+
+/* Aperçu des effets de la LED de la base */
+.fx-2 { animation: fx-breathe 3s ease-in-out infinite; }
+.fx-3 { animation: fx-strobe 0.5s steps(2) infinite; }
+.fx-5, .fx-6, .fx-7, .fx-8, .fx-9 { animation: fx-hue 4s linear infinite; }
+@keyframes fx-breathe { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+@keyframes fx-strobe { 0% { opacity: 1; } 100% { opacity: 0.1; } }
+@keyframes fx-hue { from { filter: hue-rotate(0deg) saturate(1.6); } to { filter: hue-rotate(360deg) saturate(1.6); } }
+
+/* Choix du style des touches vivantes */
+.chip.style-on { border-color: var(--accent); color: var(--accent-2); background: var(--accent-soft); cursor: default; }

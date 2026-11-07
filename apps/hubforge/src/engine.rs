@@ -8,6 +8,8 @@ use crate::config::{self, parse_color, Action, Config, KeyDef};
 use crate::render::{self, KeyVisual};
 use crate::foreground;
 use crate::widgets;
+use crate::game::{self, Game};
+use crate::profiles::{self, SharedActive};
 use crate::topology::{self, Placement};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
 use serde::Serialize;
@@ -24,6 +26,10 @@ pub enum EngineMsg {
     ApplyConfig(Box<Config>),
     /// Afficher une page sur le module 15 touches.
     ShowPage(usize),
+    /// Passer sur un autre profil (nom exact).
+    SwitchProfile(String),
+    /// Lancer le mini-jeu caché.
+    StartGame,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,6 +53,10 @@ pub struct Status {
     /// État des touches à 2 états de la page affichée (true = second état).
     pub toggled: Vec<bool>,
     pub config_error: Option<String>,
+    /// Profil actif.
+    pub profile: String,
+    /// Partie de mini-jeu en cours.
+    pub game: bool,
 }
 
 pub type Notify = Box<dyn Fn(&Status) + Send>;
@@ -98,6 +108,14 @@ pub struct Engine {
     sampler: widgets::Sampler,
     widgets_due: Instant,
     widget_sig: HashMap<u8, String>,
+    /// Profil actif (partagé avec l'interface).
+    active: SharedActive,
+    /// Mini-jeu : partie en cours, images déjà envoyées, cache des images,
+    /// dernier état du chronomètre sur les LED des faders.
+    game: Option<Game>,
+    game_shown: [Option<game::Visual>; KEY_COUNT],
+    game_cache: HashMap<game::Visual, Arc<Vec<u8>>>,
+    game_leds: Option<[(u8, u8, u8); 5]>,
     faders: HashMap<String, [u8; FADER_COUNT]>,
     input: Input,
     audio: Audio,
@@ -119,9 +137,9 @@ fn kind_id(k: Kind) -> &'static str {
 }
 
 impl Engine {
-    pub fn new(cfg_path: PathBuf, cfg: Config, audio: Audio, notify: Notify) -> Result<Engine, String> {
+    pub fn new(cfg_dir: PathBuf, active: SharedActive, cfg: Config, audio: Audio, notify: Notify) -> Result<Engine, String> {
         let (mgr, events) = DeviceManager::new()?;
-        let cfg_dir = cfg_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let cfg_path = active.lock().unwrap().path.clone();
         let cfg_mtime = std::fs::metadata(&cfg_path).and_then(|m| m.modified()).ok();
         let mut e = Engine {
             mgr,
@@ -147,6 +165,11 @@ impl Engine {
             sampler: widgets::Sampler::default(),
             widgets_due: Instant::now(),
             widget_sig: HashMap::new(),
+            active,
+            game: None,
+            game_shown: [None; KEY_COUNT],
+            game_cache: HashMap::new(),
+            game_leds: None,
             faders: HashMap::new(),
             input: Input::new(),
             audio,
@@ -177,6 +200,8 @@ impl Engine {
             pressed: self.pressed.to_vec(),
             toggled: (0..KEY_COUNT as u8).map(|k| self.is_toggled(k)).collect(),
             config_error: self.config_error.clone(),
+            profile: self.active.lock().map(|a| a.name.clone()).unwrap_or_default(),
+            game: self.game.is_some(),
         }
     }
 
@@ -205,10 +230,12 @@ impl Engine {
                 self.message(m);
             }
             self.run_macro();
-            if Instant::now() >= self.widgets_due {
+            if self.game.is_some() {
+                self.tick_game();
+            } else if Instant::now() >= self.widgets_due {
                 self.update_widgets(false);
             }
-            let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() { 30 } else { 5 };
+            let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() && self.game.is_none() { 30 } else { 5 };
             match self.events.recv_timeout(Duration::from_millis(timeout)) {
                 Ok(ev) => {
                     self.handle(ev);
@@ -249,6 +276,8 @@ impl Engine {
                 self.cfg_mtime = std::fs::metadata(&self.cfg_path).and_then(|m| m.modified()).ok();
                 self.apply_config(*cfg);
             }
+            EngineMsg::SwitchProfile(name) => self.switch_profile(&name),
+            EngineMsg::StartGame => self.start_game(),
             EngineMsg::ShowPage(p) => {
                 if p < self.visuals.len() && p != self.page {
                     self.auto_from = None;
@@ -268,7 +297,8 @@ impl Engine {
 
     fn check_config(&mut self) {
         let mtime = std::fs::metadata(&self.cfg_path).and_then(|m| m.modified()).ok();
-        if mtime == self.cfg_mtime {
+        // Fichier absent (profil renommé à l'instant) : on garde la configuration.
+        if mtime.is_none() || mtime == self.cfg_mtime {
             return;
         }
         self.cfg_mtime = mtime;
@@ -331,6 +361,7 @@ impl Engine {
         let dir = self.cfg_dir.clone();
         let rot = self.keys_rot;
         self.widget_sig.clear();
+        self.game_cache.clear();
         self.visuals = self
             .cfg
             .pages
@@ -458,6 +489,11 @@ impl Engine {
     }
 
     fn show_page(&mut self) {
+        // Pendant le mini-jeu, c'est lui qui dessine (tout sera renvoyé).
+        if self.game.is_some() {
+            self.game_shown = [None; KEY_COUNT];
+            return;
+        }
         self.anims.clear();
         // Touches vivantes à jour avant l'envoi de la page.
         self.widget_sig.clear();
@@ -541,6 +577,10 @@ impl Engine {
         if (key as usize) >= KEY_COUNT {
             return;
         }
+        if let Some(g) = self.game.as_mut() {
+            g.press(key as usize, Instant::now());
+            return;
+        }
         self.pressed[key as usize] = true;
         if self.cfg.general.press_feedback {
             let jpeg = self.current_frame(key).pressed.clone();
@@ -573,7 +613,7 @@ impl Engine {
     }
 
     fn key_up(&mut self, key: u8) {
-        if (key as usize) >= KEY_COUNT {
+        if (key as usize) >= KEY_COUNT || self.game.is_some() {
             return;
         }
         self.pressed[key as usize] = false;
@@ -622,6 +662,138 @@ impl Engine {
                 self.change_page(target);
             }
             Action::Back => self.go_back(),
+            Action::Profile { to } => {
+                let current = self.active.lock().map(|a| a.name.clone()).unwrap_or_default();
+                match profiles::resolve(&self.cfg_dir, &current, to) {
+                    Some(name) => self.switch_profile(&name),
+                    None => log::warn!("profil inconnu : « {to} »"),
+                }
+            }
+            Action::Game => self.start_game(),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Profils
+    // ------------------------------------------------------------------
+
+    /// Charge un autre profil : touches, faders, molettes et LED changent.
+    fn switch_profile(&mut self, name: &str) {
+        let path = profiles::path(&self.cfg_dir, name);
+        let cfg = match config::load(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("profil « {name} » : {e}");
+                self.config_error = Some(format!("profil « {name} » : {e}"));
+                self.notify();
+                return;
+            }
+        };
+        if let Ok(mut a) = self.active.lock() {
+            a.name = name.to_string();
+            a.path = path.clone();
+        }
+        let mut st = profiles::load_settings(&self.cfg_dir);
+        st.profile = name.to_string();
+        profiles::save_settings(&self.cfg_dir, &st);
+        log::info!("profil « {name} »");
+        self.cfg_path = path;
+        self.cfg_mtime = std::fs::metadata(&self.cfg_path).and_then(|m| m.modified()).ok();
+        self.page = 0;
+        self.toggled.clear();
+        self.page_stack.clear();
+        self.auto_from = None;
+        self.last_fg = None;
+        self.macro_queue.clear();
+        // Toutes les LED sont renvoyées (couleurs du nouveau profil).
+        self.cfg.general.base_color.clear();
+        self.apply_config(cfg);
+        self.show_page();
+        self.notify();
+    }
+
+    // ------------------------------------------------------------------
+    // Mini-jeu caché
+    // ------------------------------------------------------------------
+
+    fn start_game(&mut self) {
+        if self.game.is_some() || !self.modules.values().any(|k| *k == Kind::Keys15) {
+            return;
+        }
+        let best = profiles::load_settings(&self.cfg_dir).game_best;
+        let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1);
+        log::info!("🎮 mini-jeu lancé (record : {best})");
+        self.anims.clear();
+        self.macro_queue.clear();
+        self.game = Some(Game::new(best, Instant::now(), seed));
+        self.game_shown = [None; KEY_COUNT];
+        self.game_leds = None;
+        if self.game_cache.is_empty() {
+            log::debug!("préparation des images du jeu");
+        }
+        self.notify();
+    }
+
+    fn game_image(&mut self, v: game::Visual) -> Arc<Vec<u8>> {
+        if let Some(j) = self.game_cache.get(&v) {
+            return j.clone();
+        }
+        let img = game::render(v);
+        let jpeg = render::visual_from_image(&img, self.keys_rot).frames[0].jpeg.clone();
+        self.game_cache.insert(v, jpeg.clone());
+        jpeg
+    }
+
+    fn tick_game(&mut self) {
+        let now = Instant::now();
+        let Some(g) = self.game.as_mut() else { return };
+        let was_over = g.is_over();
+        g.tick(now);
+        let visuals = g.visuals(now);
+        let left = g.time_left(now);
+        let (done, over, new_record, score, best) = (g.is_done(), g.is_over(), g.new_record, g.score, g.best);
+
+        for (k, v) in visuals.iter().enumerate() {
+            if self.game_shown[k] != Some(*v) {
+                let jpeg = self.game_image(*v);
+                self.send_image(k as u8, &jpeg);
+                self.game_shown[k] = Some(*v);
+            }
+        }
+        // Chronomètre sur les LED des faders.
+        let leds = game::timer_leds(left);
+        if self.game_leds != Some(leds) {
+            self.game_leds = Some(leds);
+            let colors: Vec<(u8, (u8, u8, u8))> = leds.iter().enumerate().map(|(i, c)| (i as u8, *c)).collect();
+            let faders: Vec<String> = self.modules.iter().filter(|(_, k)| **k == Kind::Faders5).map(|(s, _)| s.clone()).collect();
+            for s in faders {
+                self.setup_leds(&s, 1, &colors, 1);
+            }
+        }
+        if over && !was_over {
+            log::info!("🎮 fin de partie : {score} points (record : {best})");
+            if new_record {
+                let mut st = profiles::load_settings(&self.cfg_dir);
+                st.game_best = best;
+                profiles::save_settings(&self.cfg_dir, &st);
+                // Arc-en-ciel sur la base pour fêter ça.
+                let bases: Vec<String> = self.modules.iter().filter(|(_, k)| **k == Kind::BaseLed).map(|(s, _)| s.clone()).collect();
+                for s in bases {
+                    self.setup_leds(&s, 0, &[(0, (255, 255, 255))], 9);
+                }
+            }
+        }
+        if done {
+            self.game = None;
+            // Retour à la normale : LED du profil et page affichée.
+            let serials: Vec<(String, Kind)> = self.modules.iter().map(|(s, k)| (s.clone(), *k)).collect();
+            for (s, k) in serials {
+                if matches!(k, Kind::Faders5 | Kind::BaseLed) {
+                    self.setup_module(&s, k);
+                }
+            }
+            self.show_page();
+            self.notify();
         }
     }
 

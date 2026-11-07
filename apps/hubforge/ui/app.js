@@ -76,6 +76,7 @@ const LIBRARY = [
     { name: "Aller à la page 1", label: "Accueil", icon: "house", color: "#212121", action: { type: "page", to: "1" } },
     { name: "Nouveau dossier (sous-page)", label: "Dossier", icon: "folder", color: "#F4B400", action: { type: "folder", to: "" }, newFolder: true },
     { name: "Retour (fermer le dossier)", label: "Retour", icon: "arrow-left", color: "#212121", action: { type: "back" } },
+    { name: "Profil suivant", label: "Profil", icon: "users", color: "#5865F2", action: { type: "profile", to: "next" } },
     { name: "Ouvrir la configuration", label: "Config", icon: "file-cog", color: "#546E7A", action: { type: "open_config" } },
   ]},
 ];
@@ -86,6 +87,7 @@ const ACTION_TYPES = [
   ["media", "Multimédia"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
   ["macro", "Macro (plusieurs actions à la suite)"],
   ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
+  ["profile", "Changer de profil"],
 ];
 
 const SWATCHES = ["#FF3B30", "#FF7A1A", "#FFB300", "#FFD60A", "#3DDC84", "#1DB954", "#00C8FF", "#1E88E5",
@@ -93,6 +95,15 @@ const SWATCHES = ["#FF3B30", "#FF7A1A", "#FFB300", "#FFD60A", "#3DDC84", "#1DB95
 
 const WIDGETS = [["", "Aucune (image fixe)"], ["clock", "Horloge"], ["date", "Date"], ["cpu", "Processeur (CPU)"],
   ["ram", "Mémoire (RAM)"], ["volume", "Volume général"], ["mic", "État du micro"]];
+
+const WIDGET_STYLES = {
+  clock: [["digital", "Numérique"], ["analog", "À aiguilles"], ["big", "Grands chiffres"]],
+  date: [["classic", "Classique"], ["calendar", "Calendrier"]],
+  cpu: [["bar", "Barre"], ["gauge", "Jauge"], ["graph", "Graphique"]],
+  ram: [["bar", "Barre"], ["gauge", "Jauge"], ["graph", "Graphique"]],
+  volume: [["bar", "Barre"], ["gauge", "Jauge"]],
+  mic: [["classic", "Icône et texte"], ["icon", "Grande icône"]],
+};
 
 const FADER_TARGETS = [["master", "Volume général"], ["mic", "Micro"], ["app", "Application(s)"], ["none", "Rien"]];
 const ROLLER_MODES = [["volume", "Volume général"], ["scroll", "Défilement vertical"], ["hscroll", "Défilement horizontal"], ["zoom", "Zoom (Ctrl + molette)"], ["none", "Rien"]];
@@ -150,6 +161,9 @@ async function init() {
   S.page = Math.min(ini.status.page || 0, S.cfg.pages.length - 1);
   S.devicePage = S.page;
   S.configPath = ini.config_path;
+  S.profile = ini.profile;
+  S.profiles = ini.profiles || [];
+  S.gameBest = ini.game_best || 0;
   $("#version").textContent = "v" + ini.version;
   S.icons = (await invoke("list_icons")) || [];
 
@@ -161,6 +175,11 @@ async function init() {
   listen("autostart", (e) => { S.autostart = e.payload; if (S.sel.type === "settings") renderInspector(); });
 
   $("#btn-settings").onclick = () => select({ type: "settings" });
+  $("#profile-btn").onclick = (e) => { e.stopPropagation(); toggleProfileMenu(); };
+  document.addEventListener("click", (e) => { if (!e.target.closest(".profile-wrap")) $("#profile-menu").classList.add("hidden"); });
+  renderProfileButton();
+  setupEasterEgg();
+  setupTrashDrop();
   $("#lib-search").oninput = (e) => filterLibrary(e.target.value);
   document.addEventListener("keydown", onGlobalKey, true);
   fitDevice();
@@ -253,6 +272,28 @@ function renderPages() {
     );
     tab.onclick = () => goToPage(i);
     tab.ondblclick = () => renamePage(i);
+    tab.draggable = true;
+    tab.ondragstart = (e) => { e.dataTransfer.setData("text/hubforge-page", String(i)); e.dataTransfer.effectAllowed = "move"; tab.classList.add("dragging"); };
+    tab.ondragend = () => tab.classList.remove("dragging");
+    tab.ondragover = (e) => {
+      if (!e.dataTransfer.types.includes("text/hubforge-page")) return;
+      e.preventDefault();
+      const r = tab.getBoundingClientRect();
+      const left = e.clientX < r.left + r.width / 2;
+      tab.classList.toggle("drag-over-left", left);
+      tab.classList.toggle("drag-over-right", !left);
+    };
+    tab.ondragleave = () => tab.classList.remove("drag-over-left", "drag-over-right");
+    tab.ondrop = (e) => {
+      const from = Number(e.dataTransfer.getData("text/hubforge-page"));
+      if (Number.isNaN(from) || !e.dataTransfer.types.includes("text/hubforge-page")) return;
+      e.preventDefault();
+      const left = tab.classList.contains("drag-over-left");
+      tab.classList.remove("drag-over-left", "drag-over-right");
+      let to = left ? i : i + 1;
+      if (from < to) to--;
+      movePage(from, to);
+    };
     nav.append(tab);
   });
   nav.append(el("button", { class: "page-add", title: "Ajouter une page", onclick: addPage }, "+"));
@@ -356,8 +397,10 @@ function renderDevice() {
   base.innerHTML = "";
   const U = unit();
   const c = S.cfg.general.base_color || "#00C8FF";
-  base.append(el("div", { class: "base-glow", style: `box-shadow:0 0 0 2px ${c}55, 0 0 26px ${c}55` }));
-  base.append(el("div", { class: "base-led-hit", title: "LED de la base", onclick: (e) => { e.stopPropagation(); select({ type: "settings" }); } }));
+  const fx = S.cfg.general.base_effect;
+  base.classList.toggle("selected", S.sel.type === "base");
+  base.onclick = (e) => { if (!e.target.closest(".module")) select({ type: "base" }); };
+  if (fx !== 0) base.append(el("div", { class: `base-glow fx-${fx}`, style: `box-shadow:0 0 0 2px ${c}66, 0 0 26px ${c}66` }));
   for (const m of layout()) {
     const slot = el("div", { class: "slot", style: `left:${14 + m.box.col * U}px;top:${14 + m.box.row * U}px;width:${m.box.w * U}px;height:${m.box.h * U}px` });
     const mod = moduleElement(m.kind, !m.connected);
@@ -426,8 +469,18 @@ function keyElement(k) {
       : def && prev && prev.animated ? el("span", { class: "badge" }, "GIF") : null,
   );
   node.onclick = (e) => { e.stopPropagation(); S.editState = 0; select({ type: "key", key: k }); };
-  node.ondragstart = (e) => { e.dataTransfer.setData("text/hubforge-key", String(k)); e.dataTransfer.effectAllowed = "move"; node.classList.add("dragging"); };
-  node.ondragend = () => node.classList.remove("dragging");
+  node.ondragstart = (e) => {
+    e.dataTransfer.setData("text/hubforge-key", String(k));
+    e.dataTransfer.effectAllowed = "move";
+    node.classList.add("dragging");
+    S.draggingKey = k;
+    document.body.classList.add("dragging-key");
+  };
+  node.ondragend = () => {
+    node.classList.remove("dragging");
+    S.draggingKey = null;
+    document.body.classList.remove("dragging-key", "over-trash");
+  };
   node.ondragover = (e) => { e.preventDefault(); node.classList.add("drop"); };
   node.ondragleave = () => node.classList.remove("drop");
   node.ondrop = (e) => { e.preventDefault(); node.classList.remove("drop"); onDropOnKey(k, e.dataTransfer); };
@@ -678,6 +731,7 @@ function renderInspector() {
   else if (S.sel.type === "fader") box.append(...faderInspector(S.sel.index));
   else if (S.sel.type === "rollers") box.append(...rollersInspector());
   else if (S.sel.type === "page") box.append(...pageInspector());
+  else if (S.sel.type === "base") box.append(...baseInspector());
   else box.append(...settingsInspector());
 }
 
@@ -741,11 +795,21 @@ function keyInspector(k) {
   if (S.editState === 0) {
     const wsel = el("select", { class: "input" }, ...WIDGETS.map(([v, l]) => el("option", { value: v, selected: v === (def.widget || "") }, l)));
     wsel.onchange = () => {
+      delete def.widget_style;
       if (wsel.value) { def.widget = wsel.value; if (!def.color) def.color = "#1F2229"; } else delete def.widget;
       keyChanged(k, { immediate: true });
       renderInspector();
     };
     out.push(field("Touche vivante", wsel, live ? el("p", { class: "hint" }, "L'image se met à jour toute seule. L'action ci-dessous reste active quand on appuie.") : null));
+    if (live) {
+      const styles = WIDGET_STYLES[def.widget] || [];
+      const cur = def.widget_style || (styles[0] || [""])[0];
+      const row = el("div", { class: "chips" }, ...styles.map(([v, l]) => el("span", {
+        class: "chip" + (v === cur ? " on style-on" : " add"),
+        onclick: () => { if (v === styles[0][0]) delete def.widget_style; else def.widget_style = v; keyChanged(k, { immediate: true }); renderInspector(); },
+      }, l)));
+      out.push(field("Style", row));
+    }
   }
   out.push(field(live ? "Titre (facultatif)" : "Texte affiché", el("input", { id: "label-input", class: "input", value: st.label || "",
     placeholder: live ? "(titre par défaut)" : "(aucun)", oninput: (e) => upd((d) => { d.label = e.target.value; delete d._autoName; }) })));
@@ -843,6 +907,7 @@ const ACTION_DEFAULTS = {
   page: { type: "page", to: "next" }, lock: { type: "lock" }, open_config: { type: "open_config" },
   macro: { type: "macro", steps: [{ type: "hotkey", keys: "" }] }, wait: { type: "wait", ms: 500 },
   folder: { type: "folder", to: "" }, back: { type: "back" },
+  profile: { type: "profile", to: "next" }, game: { type: "game" },
 };
 
 /** Résumé d'une étape de macro (affiché dans son en-tête). */
@@ -858,6 +923,8 @@ function stepSummary(a) {
     case "wait": return `Pause ${(a.ms / 1000).toLocaleString("fr-FR")} s`;
     case "folder": { const p = S.cfg.pages[Number(a.to) - 1]; return `Ouvrir le dossier ${p ? "« " + p.name + " »" : a.to}`; }
     case "back": return "Retour (fermer le dossier)";
+    case "profile": return a.to === "next" ? "Profil suivant" : a.to === "previous" ? "Profil précédent" : `Profil « ${a.to} »`;
+    case "game": return "Mini-jeu";
     default: return "Aucune action";
   }
 }
@@ -869,9 +936,10 @@ function actionEditor(st, k, onChange, opts = {}) {
   const a = st.action;
   const nested = !!opts.nested;
   const upd = (fn) => { fn(st.action); onChange(); };
-  const types = nested
+  let types = nested
     ? [...ACTION_TYPES.filter(([v]) => v !== "macro"), ["wait", "Attendre (pause)"]]
     : ACTION_TYPES;
+  if (S.gameBest > 0 || a.type === "game") types = [...types, ["game", "🎮 Mini-jeu tape-taupe"]];
   const typeSel = el("select", { class: "input" }, ...types.map(([v, l]) => el("option", { value: v, selected: v === actionTypeId(a) }, l)));
   typeSel.onchange = () => {
     st.action = clone(ACTION_DEFAULTS[typeSel.value]);
@@ -983,6 +1051,14 @@ function actionEditor(st, k, onChange, opts = {}) {
       out.push(el("button", { class: "btn", style: "width:100%", onclick: () => goToPage(cur) }, "Ouvrir le dossier pour le remplir"));
       out.push(el("p", { class: "hint" }, "Un dossier est une page à part, absente de « page suivante / précédente ». Sa touche Retour ramène à la page d'où on l'a ouvert."));
     }
+  } else if (t === "profile") {
+    const opts3 = [["next", "Profil suivant"], ["previous", "Profil précédent"], ...(S.profiles || []).map((n) => [n, n])];
+    if (a.to && !opts3.some(([v]) => v === a.to)) opts3.push([a.to, `${a.to} (introuvable)`]);
+    out.push(field("Passer sur", el("select", { class: "input", onchange: (e) => upd((x) => { x.to = e.target.value; }) },
+      ...opts3.map(([v, l]) => el("option", { value: v, selected: v === a.to }, l))),
+      nested ? null : el("p", { class: "hint" }, "Change tout : touches, faders, molettes et LED. Mets cette touche dans chaque profil pour pouvoir revenir.")));
+  } else if (t === "game") {
+    if (!nested) out.push(el("p", { class: "hint" }, "Tape les taupes avant qu'elles repartent ! Dorée = +3, bombe = −3. Record : " + (S.gameBest || 0) + " points."));
   } else if (t === "back") {
     if (!nested) out.push(el("p", { class: "hint" }, "Revient à la page d'où le dossier a été ouvert."));
   }
@@ -1210,17 +1286,195 @@ function pageInspector() {
 let pagesTimer = null;
 function renderPagesSoon() { clearTimeout(pagesTimer); pagesTimer = setTimeout(renderPages, 250); }
 
+// --- LED de la base ---
+function baseInspector() {
+  const g = S.cfg.general;
+  const out = [title("LED de la base", "Profil " + (S.profile || ""))];
+  const prev = el("div", { class: "led-preview" });
+  const paint = () => {
+    const off = g.base_effect === 0;
+    prev.style.background = off ? "#0b0c10" : `linear-gradient(90deg, ${g.base_color}22, ${g.base_color}, ${g.base_color}22)`;
+    prev.className = "led-preview" + (off ? "" : ` fx-${g.base_effect}`);
+  };
+  paint();
+  out.push(prev);
+  out.push(colorField("Couleur", g.base_color, (v) => { if (!v) return; g.base_color = v; paint(); renderDevice(); changed(); }));
+  out.push(field("Effet", el("select", { class: "input", onchange: (e) => { g.base_effect = Number(e.target.value); paint(); renderDevice(); changed(); } },
+    ...BASE_EFFECTS.map(([v, l]) => el("option", { value: v, selected: v === g.base_effect }, l))),
+    el("p", { class: "hint" }, "Les effets animés (respiration, arc-en-ciel…) ne fonctionnent que sur la base ; les LED des faders restent en couleur fixe.")));
+  out.push(rangeField("Luminosité des LED (base et faders)", g.led_brightness, 0, 100, " %", (v) => { g.led_brightness = v; changed(); }));
+  out.push(el("p", { class: "hint" }, "La couleur de chaque fader se règle en cliquant sur le fader."));
+  return out;
+}
+
+// --- Profils ---
+function renderProfileButton() {
+  $("#profile-name").textContent = S.profile || "Profil";
+}
+
+async function toggleProfileMenu(forceOpen) {
+  const m = $("#profile-menu");
+  if (!forceOpen && !m.classList.contains("hidden")) { m.classList.add("hidden"); return; }
+  try { S.profiles = (await invoke("list_profiles")) || S.profiles; } catch (_) {}
+  m.innerHTML = "";
+  m.append(el("div", { class: "pm-title" }, "Profils"));
+  for (const name of S.profiles) {
+    const on = name === S.profile;
+    const item = el("div", { class: "pm-item" + (on ? " on" : ""), title: on ? "Profil actif" : "Passer sur ce profil" },
+      el("span", { class: "check" }, on ? "✓" : ""),
+      el("span", { class: "grow" }, name),
+      on ? null : el("span", { class: "del", title: "Supprimer ce profil", onclick: async (e) => {
+        e.stopPropagation();
+        if (!(await confirm_(`Supprimer le profil « ${name} » ? (une copie est gardée dans profiles-supprimes)`))) return;
+        try { await invoke("delete_profile", { name }); toast(`Profil « ${name} » supprimé.`); toggleProfileMenu(true); }
+        catch (err) { toast(String(err), true); }
+      } }, "×"));
+    item.onclick = () => { m.classList.add("hidden"); if (!on) switchProfile(name); };
+    m.append(item);
+  }
+  m.append(el("div", { class: "pm-sep" }));
+  const action = (label, fn) => { const it = el("div", { class: "pm-item pm-action" }, el("span", { class: "check" }, ""), el("span", { class: "grow" }, label)); it.onclick = () => { m.classList.add("hidden"); fn(); }; return it; };
+  m.append(action("+ Nouveau profil vierge…", () => newProfile(null)));
+  m.append(action("⧉ Dupliquer « " + (S.profile || "") + " »…", () => newProfile(S.profile)));
+  m.append(action("✎ Renommer « " + (S.profile || "") + " »…", renameProfile));
+  m.classList.remove("hidden");
+}
+
+async function switchProfile(name) {
+  try { await invoke("switch_profile", { name }); toast(`Profil « ${name} »`); }
+  catch (e) { toast(String(e), true); }
+}
+
+async function newProfile(copyFrom) {
+  const def = copyFrom ? `${copyFrom} (copie)` : "Nouveau profil";
+  const name = await prompt_(copyFrom ? `Nom de la copie de « ${copyFrom} » :` : "Nom du nouveau profil (ex. Laura, Streaming, Création) :", def);
+  if (!name) return;
+  try { const n = await invoke("create_profile", { name, copyFrom }); toast(`Profil « ${n} » créé.`); }
+  catch (e) { toast(String(e), true); }
+}
+
+async function renameProfile() {
+  const name = await prompt_("Nouveau nom du profil :", S.profile);
+  if (!name || name === S.profile) return;
+  try { await invoke("rename_profile", { old: S.profile, new: name }); }
+  catch (e) { toast(String(e), true); }
+}
+
+/** Le profil a changé (depuis l'interface ou une touche) : on recharge tout. */
+async function reloadProfile() {
+  clearTimeout(S.saveTimer);
+  const ini = await invoke("get_initial");
+  S.cfg = normalize(ini.config);
+  S.profile = ini.profile;
+  S.profiles = ini.profiles || [];
+  S.configPath = ini.config_path;
+  S.previews = {};
+  S.page = Math.min(ini.status.page || 0, S.cfg.pages.length - 1);
+  S.devicePage = S.page;
+  S.sel = { type: "settings" };
+  renderProfileButton();
+  renderAll();
+  await refreshPreviews(S.page);
+}
+
+// --- Supprimer une touche en la glissant hors du MasterHUB ---
+function setupTrashDrop() {
+  const outside = (e) => S.draggingKey && !e.target.closest("#keys");
+  document.addEventListener("dragover", (e) => {
+    if (!S.draggingKey) return;
+    const out = outside(e);
+    document.body.classList.toggle("over-trash", out);
+    if (out) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }
+  });
+  document.addEventListener("drop", (e) => {
+    if (!outside(e)) return;
+    e.preventDefault();
+    const k = S.draggingKey;
+    const def = keyDef(k);
+    if (!def) return;
+    const page = S.page;
+    const backup = clone(def);
+    setKeyDef(k, null);
+    delete S.previews[`${page}:${k}:0`]; delete S.previews[`${page}:${k}:1`];
+    updateKeyNode(k);
+    if (S.sel.type === "key" && S.sel.key === k) renderInspector();
+    changed();
+    toast(`Touche ${k} supprimée.`, false, { label: "Annuler", fn: () => {
+      const keys = S.cfg.pages[page] && S.cfg.pages[page].keys;
+      if (!keys || keys.some((d) => d.key === k)) return;
+      keys.push(backup);
+      keys.sort((a, b) => a.key - b.key);
+      changed();
+      if (S.page === page) refreshPreviews(page, k);
+    } });
+  });
+}
+
+// --- Réordonner les onglets de pages ---
+function movePage(from, to) {
+  if (from === to || from < 0 || to < 0 || from >= S.cfg.pages.length || to >= S.cfg.pages.length) return;
+  // Nouvel ordre : order[nouvel index] = ancien index
+  const order = S.cfg.pages.map((_, i) => i);
+  order.splice(to, 0, order.splice(from, 1)[0]);
+  const newIndex = (old) => order.indexOf(old);
+  const fix = (a) => {
+    if (!a) return a;
+    if (a.type === "macro") { (a.steps || []).forEach(fix); return a; }
+    if ((a.type === "page" || a.type === "folder") && /^\d+$/.test(a.to || "")) {
+      const old = Number(a.to) - 1;
+      if (old >= 0 && old < order.length) a.to = String(newIndex(old) + 1);
+    }
+    return a;
+  };
+  S.cfg.pages = order.map((i) => S.cfg.pages[i]);
+  for (const p of S.cfg.pages) for (const d of p.keys) { fix(d.action); if (d.toggle) fix(d.toggle.action); }
+  // Les aperçus suivent leur page.
+  const prev = S.previews; S.previews = {};
+  for (const [key, v] of Object.entries(prev)) {
+    const [p, ...rest] = key.split(":");
+    S.previews[[newIndex(Number(p)), ...rest].join(":")] = v;
+  }
+  S.page = newIndex(S.page);
+  S.devicePage = newIndex(S.devicePage);
+  changed({ immediate: true });
+  invoke("show_page", { index: S.page });
+  renderPages();
+}
+
+// --- 🎮 ---
+function setupEasterEgg() {
+  const code = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a"];
+  let pos = 0;
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || S.capturing) return;
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    pos = k === code[pos] ? pos + 1 : k === code[0] ? 1 : 0;
+    if (pos === code.length) { pos = 0; launchGame(); }
+  });
+  let clicks = 0, timer = null;
+  $(".brand-logo").addEventListener("click", () => {
+    clicks++;
+    clearTimeout(timer);
+    timer = setTimeout(() => { clicks = 0; }, 1500);
+    if (clicks >= 7) { clicks = 0; launchGame(); }
+  });
+}
+
+function launchGame() {
+  if (!S.status.modules.some((m) => m.kind === "keys15")) { toast("🎮 Branche le module 15 touches pour jouer…", true); return; }
+  invoke("start_game");
+  toast("🎮 Tape-taupe ! Tape les taupes sur le MasterHUB (dorée = +3, bombe = −3).");
+}
+
 // --- Réglages généraux ---
 function settingsInspector() {
   const g = S.cfg.general;
   const out = [title("Réglages généraux")];
   out.push(rangeField("Luminosité des écrans", g.brightness, 0, 100, " %", (v) => { g.brightness = v; changed(); }));
   out.push(rangeField("Luminosité des LED", g.led_brightness, 0, 100, " %", (v) => { g.led_brightness = v; changed(); }));
-  out.push(el("h2", { style: "margin-top:6px" }, "LED de la base"));
-  out.push(colorField("Couleur", g.base_color, (v) => { if (!v) return; g.base_color = v; renderDevice(); changed(); }));
-  out.push(field("Effet", el("select", { class: "input", onchange: (e) => { g.base_effect = Number(e.target.value); changed(); } },
-    ...BASE_EFFECTS.map(([v, l]) => el("option", { value: v, selected: v === g.base_effect }, l))),
-    el("p", { class: "hint" }, "Les effets animés ne fonctionnent que sur la base ; les faders restent en couleur fixe.")));
+  out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => select({ type: "base" }) }, "Régler la LED de la base…"));
+  out.push(el("p", { class: "hint", style: "margin-top:0" }, "Astuce : tu peux aussi cliquer directement sur la base dans le dessin."));
   out.push(el("div", { class: "sep" }));
   out.push(switchRow("Assombrir la touche pendant l'appui", g.press_feedback, (v) => { g.press_feedback = v; changed(); }));
   out.push(switchRow("Pages automatiques selon l'application", g.auto_pages, (v) => { g.auto_pages = v; changed(); }));
@@ -1258,7 +1512,11 @@ function rangeField(label, value, min, max, unit, onChange, hint) {
 function buildLibrary() {
   const box = $("#library");
   box.innerHTML = "";
-  for (const cat of LIBRARY) {
+  const cats = clone(LIBRARY);
+  // Débloqué après une première partie 😉
+  if (S.gameBest > 0) cats.find((c) => c.cat === "HubForge").items.push(
+    { name: "Mini-jeu tape-taupe", label: "Jouer", icon: "gamepad-2", color: "#2E7D32", action: { type: "game" } });
+  for (const cat of cats) {
     const items = el("div", { class: "lib-items" });
     for (const it of cat.items) {
       const sw = el("span", { class: "lib-swatch", style: `background:${it.color};color:#fff`, html: svgIcon(it.icon) });
@@ -1296,6 +1554,17 @@ function filterLibrary(q) {
 // ---------------------------------------------------------------------------
 function onStatus(st) {
   const prev = S.status;
+  if (st.profile && S.profile && st.profile !== S.profile) {
+    S.status = st;
+    reloadProfile();
+    return;
+  }
+  if (st.game !== prev.game) {
+    const stage = $(".stage");
+    const b = stage.querySelector(".game-banner");
+    if (st.game && !b) stage.append(el("div", { class: "game-banner" }, "🎮 Partie de tape-taupe en cours sur le MasterHUB…"));
+    if (!st.game && b) { b.remove(); invoke("get_initial").then((ini) => { if (ini.game_best > (S.gameBest || 0)) toast(`🏆 Nouveau record : ${ini.game_best} points !`); S.gameBest = ini.game_best; buildLibrary(); }); }
+  }
   const sig = (s) => JSON.stringify((s.modules || []).map((m) => [m.kind, m.port]));
   const layoutChanged = sig(prev) !== sig(st);
   const pageChanged = st.page !== S.devicePage;
@@ -1354,12 +1623,14 @@ const prompt_ = (t, v) => modal(t, true, v);
 const confirm_ = (t) => modal(t, false);
 
 let toastTimer = null;
-function toast(msg, isError) {
+function toast(msg, isError, action) {
   const t = $("#toast");
-  t.textContent = msg;
+  t.innerHTML = "";
+  t.append(document.createTextNode(msg));
+  if (action) t.append(el("span", { class: "toast-action", onclick: () => { t.classList.add("hidden"); action.fn(); } }, action.label));
   t.className = "toast" + (isError ? " error" : "");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add("hidden"), isError ? 6000 : 2500);
+  toastTimer = setTimeout(() => t.classList.add("hidden"), isError || action ? 6000 : 2500);
 }
 
 // ---------------------------------------------------------------------------
@@ -1378,8 +1649,9 @@ async function mockInvoke(cmd, args) {
     : [{ kind: "keys15", port: "24", placement: { col: 0, row: 0, rot: 0 } }, { kind: "faders5", port: "41", placement: { col: 0, row: 3, rot: 0 } },
        { kind: "rollers2", port: "121", placement: { col: 0, row: 5, rot: 0 } }, { kind: "base" }];
   switch (cmd) {
+    case "list_profiles": return ["Benjamin", "Laura", "Streaming"];
     case "get_initial":
-      return { config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.5.0",
+      return { profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.6.0",
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;

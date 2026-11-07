@@ -15,6 +15,8 @@ mod engine;
 mod foreground;
 mod icons_data;
 mod logging;
+mod game;
+mod profiles;
 mod render;
 mod topology;
 mod ui;
@@ -61,13 +63,10 @@ fn main() {
     };
 
     log::info!("HubForge v{} démarre", env!("CARGO_PKG_VERSION"));
-    let cfg_path = dir.join("config.toml");
-    if !cfg_path.exists() {
-        match std::fs::write(&cfg_path, config::DEFAULT_CONFIG) {
-            Ok(()) => log::info!("configuration d'exemple créée"),
-            Err(e) => log::error!("impossible de créer la configuration : {e}"),
-        }
-    }
+    let active = profiles::init(&dir);
+    log::info!("profil « {} »", active.name);
+    let cfg_path = active.path.clone();
+    let active: profiles::SharedActive = Arc::new(Mutex::new(active));
     let demo = dir.join("demo.gif");
     if !demo.exists() {
         if let Err(e) = render::write_demo_gif(&demo) {
@@ -82,16 +81,19 @@ fn main() {
         }
     };
 
-    let status = Arc::new(Mutex::new(Status { config_error: cfg_error, ..Default::default() }));
+    let status = Arc::new(Mutex::new(Status {
+        config_error: cfg_error,
+        profile: active.lock().unwrap().name.clone(),
+        ..Default::default()
+    }));
     let audio = audio::Audio::start();
     let stop = Arc::new(AtomicBool::new(false));
     let (engine_tx, engine_rx) = mpsc::channel::<EngineMsg>();
     let engine_thread: Arc<Mutex<Option<JoinHandle<()>>>> = Arc::new(Mutex::new(None));
 
     let state = ui::AppState {
-        cfg_path: cfg_path.clone(),
+        active: active.clone(),
         cfg_dir: dir.clone(),
-        cfg: Mutex::new(cfg.clone()),
         engine: Mutex::new(engine_tx),
         status: status.clone(),
         audio: audio.clone(),
@@ -102,6 +104,12 @@ fn main() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             ui::get_initial,
+            ui::list_profiles,
+            ui::switch_profile,
+            ui::create_profile,
+            ui::rename_profile,
+            ui::delete_profile,
+            ui::start_game,
             ui::app_info,
             ui::list_running_apps,
             ui::apply_config,
@@ -128,6 +136,8 @@ fn main() {
                     let handle = handle.clone();
                     let status = status.clone();
                     let stop = stop.clone();
+                    let engine_dir = dir.clone();
+                    let engine_active = active.clone();
                     let t = std::thread::Builder::new()
                         .name("moteur".into())
                         .spawn(move || {
@@ -137,7 +147,7 @@ fn main() {
                                 *notify_status.lock().unwrap() = s.clone();
                                 let _ = notify_handle.emit("status", s);
                             });
-                            match Engine::new(cfg_path, cfg, audio, notify) {
+                            match Engine::new(engine_dir, engine_active, cfg, audio, notify) {
                                 Ok(mut e) => {
                                     log::info!("en attente des modules…");
                                     e.run(stop, engine_rx);

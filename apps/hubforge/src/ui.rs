@@ -4,6 +4,7 @@ use crate::audio::Audio;
 use crate::autostart;
 use crate::config::{self, Config, KeyDef};
 use crate::engine::{EngineMsg, Status};
+use crate::profiles::{self, SharedActive};
 use crate::render;
 use base64::Engine as _;
 use serde::Serialize;
@@ -14,9 +15,9 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
 pub struct AppState {
-    pub cfg_path: PathBuf,
+    /// Profil actif (partagé avec le moteur).
+    pub active: SharedActive,
     pub cfg_dir: PathBuf,
-    pub cfg: Mutex<Config>,
     pub engine: Mutex<Sender<EngineMsg>>,
     pub status: Arc<Mutex<Status>>,
     pub audio: Audio,
@@ -26,6 +27,9 @@ pub struct AppState {
 pub struct Initial {
     config: Config,
     config_path: String,
+    profile: String,
+    profiles: Vec<String>,
+    game_best: u32,
     status: Status,
     autostart: bool,
     version: String,
@@ -38,23 +42,88 @@ pub struct Preview {
 }
 
 #[tauri::command]
-pub fn get_initial(state: State<AppState>) -> Initial {
-    Initial {
-        config: state.cfg.lock().unwrap().clone(),
-        config_path: state.cfg_path.display().to_string(),
+pub fn get_initial(state: State<AppState>) -> Result<Initial, String> {
+    let active = state.active.lock().unwrap().clone();
+    let config = config::load(&active.path).unwrap_or_else(|e| {
+        log::error!("{e}");
+        profiles::blank_config()
+    });
+    Ok(Initial {
+        config,
+        config_path: active.path.display().to_string(),
+        profile: active.name,
+        profiles: profiles::list(&state.cfg_dir),
+        game_best: profiles::load_settings(&state.cfg_dir).game_best,
         status: state.status.lock().unwrap().clone(),
         autostart: autostart::is_enabled(),
         version: env!("CARGO_PKG_VERSION").into(),
-    }
+    })
 }
 
 /// Enregistre la configuration et l'applique immédiatement.
 #[tauri::command]
 pub fn apply_config(state: State<AppState>, config: Config) -> Result<(), String> {
-    config::save(&state.cfg_path, &config)?;
-    *state.cfg.lock().unwrap() = config.clone();
+    let path = state.active.lock().unwrap().path.clone();
+    config::save(&path, &config)?;
     let _ = state.engine.lock().unwrap().send(EngineMsg::ApplyConfig(Box::new(config)));
     Ok(())
+}
+
+// ----------------------------------------------------------------------
+// Profils
+// ----------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_profiles(state: State<AppState>) -> Vec<String> {
+    profiles::list(&state.cfg_dir)
+}
+
+/// Le moteur charge le profil puis prévient l'interface (événement « status »).
+#[tauri::command]
+pub fn switch_profile(state: State<AppState>, name: String) -> Result<(), String> {
+    if !profiles::list(&state.cfg_dir).contains(&name) {
+        return Err(format!("profil « {name} » introuvable"));
+    }
+    let _ = state.engine.lock().unwrap().send(EngineMsg::SwitchProfile(name));
+    Ok(())
+}
+
+/// Crée un profil (vierge ou copie de `copy_from`) et passe dessus.
+#[tauri::command]
+pub fn create_profile(state: State<AppState>, name: String, copy_from: Option<String>) -> Result<String, String> {
+    let name = profiles::create(&state.cfg_dir, &name, copy_from.as_deref())?;
+    let _ = state.engine.lock().unwrap().send(EngineMsg::SwitchProfile(name.clone()));
+    Ok(name)
+}
+
+#[tauri::command]
+pub fn rename_profile(state: State<AppState>, old: String, new: String) -> Result<String, String> {
+    let is_active = state.active.lock().unwrap().name == old;
+    let new = profiles::rename(&state.cfg_dir, &old, &new)?;
+    if is_active {
+        // Le fichier a changé de nom : le moteur suit.
+        {
+            let mut a = state.active.lock().unwrap();
+            a.name = new.clone();
+            a.path = profiles::path(&state.cfg_dir, &new);
+        }
+        let _ = state.engine.lock().unwrap().send(EngineMsg::SwitchProfile(new.clone()));
+    }
+    Ok(new)
+}
+
+#[tauri::command]
+pub fn delete_profile(state: State<AppState>, name: String) -> Result<(), String> {
+    if state.active.lock().unwrap().name == name {
+        return Err("passe d'abord sur un autre profil pour supprimer celui-ci".into());
+    }
+    profiles::delete(&state.cfg_dir, &name)
+}
+
+/// 🎮
+#[tauri::command]
+pub fn start_game(state: State<AppState>) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::StartGame);
 }
 
 /// Aperçus des touches (JPEG en base64) ; `None` = touche vide.

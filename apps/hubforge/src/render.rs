@@ -374,6 +374,25 @@ pub(crate) fn draw_builtin_at(img: &mut RgbImage, name: &str, color: Rgb<u8>, si
     }
 }
 
+/// Dessine un SVG de 72×72 par-dessus l'image (formes des touches vivantes).
+pub(crate) fn draw_svg(img: &mut RgbImage, svg: &str) {
+    let Ok(tree) = resvg::usvg::Tree::from_str(svg, &resvg::usvg::Options::default()) else {
+        log::debug!("SVG invalide");
+        return;
+    };
+    let Some(mut pm) = resvg::tiny_skia::Pixmap::new(S, S) else { return };
+    let ts = tree.size();
+    let scale = S as f32 / ts.width().max(ts.height());
+    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
+    for (i, px) in pm.pixels().iter().enumerate() {
+        if px.alpha() == 0 {
+            continue;
+        }
+        let c = px.demultiply();
+        blend(img, i as u32 % S, i as u32 / S, Rgba([c.red(), c.green(), c.blue(), px.alpha()]));
+    }
+}
+
 /// Visuel d'une seule image (touches vivantes), tourné comme le module.
 pub(crate) fn visual_from_image(img: &RgbImage, rot: u16) -> KeyVisual {
     let f = make_frame(img, Duration::ZERO, 90);
@@ -437,6 +456,7 @@ mod tests {
             action: Action::None,
             toggle: None,
             widget: None,
+            widget_style: None,
         }
     }
 
