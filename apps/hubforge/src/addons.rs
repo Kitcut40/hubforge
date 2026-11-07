@@ -678,4 +678,61 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
         assert!(install_bytes(&d, b"pas un zip").is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
+
+    /// Les addons d'exemple du dépôt (examples/addons/*) sont valides, et
+    /// toutes leurs touches se dessinent.
+    #[test]
+    fn example_addons_are_valid() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/addons");
+        let Ok(rd) = std::fs::read_dir(&root) else { return };
+        for e in rd.flatten() {
+            let d = e.path();
+            let text = std::fs::read_to_string(d.join("manifest.toml")).unwrap();
+            let a = parse_manifest(&text, &d).unwrap_or_else(|err| panic!("{} : {err}", d.display()));
+            assert_eq!(a.id, e.file_name().to_string_lossy(), "dossier ≠ id");
+            assert!(!a.build_pages(0).is_empty());
+        }
+    }
+
+    /// Planche d'un addon d'exemple : cargo test -p hubforge example_sheet -- --ignored
+    #[test]
+    #[ignore]
+    fn example_sheet() {
+        use hubforge_device::KEY_IMAGE_SIZE as S;
+        let cfg = tmp("sheet");
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/addons/discord");
+        let dst = dir(&cfg).join("discord");
+        std::fs::create_dir_all(dst.join("icons")).unwrap();
+        for e in std::fs::read_dir(src.join("icons")).unwrap().flatten() {
+            std::fs::copy(e.path(), dst.join("icons").join(e.file_name())).unwrap();
+        }
+        std::fs::copy(src.join("manifest.toml"), dst.join("manifest.toml")).unwrap();
+        let a = scan(&cfg).remove(0).addon.unwrap();
+        let pages = a.build_pages(0);
+        let mut sheet = image::RgbImage::from_pixel(5 * (S + 6) + 6, 2 * (3 * (S + 6) + 12), image::Rgb([14, 15, 19]));
+        for (pi, p) in pages.iter().enumerate() {
+            for k in &p.keys {
+                let v = crate::render::render_key(k, &cfg);
+                let img = image::load_from_memory(&v.frames[0].jpeg).unwrap().to_rgb8();
+                let i = (k.key - 1) as u32;
+                image::imageops::overlay(&mut sheet, &img, (6 + (i % 5) * (S + 6)) as i64, (6 + pi as u32 * (3 * (S + 6) + 12) + (i / 5) * (S + 6)) as i64);
+            }
+        }
+        let big = image::imageops::resize(&sheet, sheet.width() * 2, sheet.height() * 2, image::imageops::FilterType::Lanczos3);
+        big.save("/tmp/hubforge-discord.png").unwrap();
+    }
+
+    /// Vérifie un vrai fichier .forge : HUBFORGE_FORGE=chemin cargo test -p hubforge forge_file -- --ignored
+    #[test]
+    #[ignore]
+    fn forge_file() {
+        let Ok(path) = std::env::var("HUBFORGE_FORGE") else { return };
+        let d = tmp("forge-file");
+        let id = install_bytes(&d, &std::fs::read(&path).unwrap()).unwrap();
+        let list = scan(&d);
+        let e = list.iter().find(|e| e.folder == id).unwrap();
+        assert!(e.error.is_none(), "{:?}", e.error);
+        println!("OK : addon « {id} », {} actions", e.addon.as_ref().unwrap().actions.len());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
