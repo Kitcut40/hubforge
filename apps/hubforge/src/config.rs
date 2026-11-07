@@ -33,6 +33,9 @@ pub struct General {
     /// Effet des LED de la base : 1 fixe, 2 respiration, 3 stroboscope,
     /// 5 cycle, 6 aléatoire, 7 vague, 8 eau, 9 arc-en-ciel, 0 éteint.
     pub base_effect: u8,
+    /// Changer de page tout seul quand une application liée à une page
+    /// passe au premier plan.
+    pub auto_pages: bool,
 }
 
 impl Default for General {
@@ -44,6 +47,7 @@ impl Default for General {
             press_feedback: true,
             gif_max_fps: 28,
             base_effect: 1,
+            auto_pages: true,
         }
     }
 }
@@ -90,6 +94,10 @@ impl Default for Rollers {
 pub struct Page {
     #[serde(default)]
     pub name: String,
+    /// Applications (ex. "fusion360.exe") qui affichent cette page
+    /// automatiquement quand elles passent au premier plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<String>,
     #[serde(default)]
     pub keys: Vec<KeyDef>,
 }
@@ -261,6 +269,7 @@ base_effect = 1          # effet de la base : 1 fixe, 2 respiration, 3 strobosco
                          # 6 aléatoire, 7 vague, 8 eau, 9 arc-en-ciel, 0 éteint
 press_feedback = true    # la touche s'assombrit pendant l'appui
 gif_max_fps = 28         # images par seconde max pour les GIF (toutes touches confondues)
+auto_pages = true        # afficher tout seul la page liée à l'application au premier plan
 
 # ---------------------------------------------------------------------
 #  Faders, de gauche à droite.
@@ -424,6 +433,7 @@ action = { type = "page", to = "next" }
 
 [[pages]]
 name = "Page 2"
+# apps = ["notepad.exe"]   # décommente : cette page s'affiche quand le Bloc-notes est au premier plan
 
 [[pages.keys]]
 key = 1

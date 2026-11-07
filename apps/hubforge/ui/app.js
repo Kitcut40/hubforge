@@ -152,7 +152,7 @@ async function init() {
 }
 
 function normalize(cfg) {
-  cfg.general = Object.assign({ brightness: 80, led_brightness: 100, base_color: "#00C8FF", press_feedback: true, gif_max_fps: 28, base_effect: 1 }, cfg.general || {});
+  cfg.general = Object.assign({ brightness: 80, led_brightness: 100, base_color: "#00C8FF", press_feedback: true, gif_max_fps: 28, base_effect: 1, auto_pages: true }, cfg.general || {});
   cfg.pages = cfg.pages && cfg.pages.length ? cfg.pages : [{ name: "Accueil", keys: [] }];
   cfg.faders = cfg.faders || [];
   while (cfg.faders.length < 5) cfg.faders.push({ target: "none", color: "#FFFFFF" });
@@ -223,9 +223,13 @@ function renderPages() {
   const nav = $("#pages");
   nav.innerHTML = "";
   S.cfg.pages.forEach((p, i) => {
+    const apps = p.apps || [];
     const tab = el("div", { class: "page-tab" + (i === S.page ? " active" : ""), title: "Double-clic pour renommer" },
       i === S.devicePage ? el("span", { class: "on-device", title: "Page affichée sur le MasterHUB" }) : null,
       el("span", {}, p.name || `Page ${i + 1}`),
+      apps.length ? el("span", { class: "auto", title: "S'affiche toute seule avec : " + apps.join(", "), html: svgIcon("app-window") }) : null,
+      i === S.page ? el("span", { class: "opts", title: "Réglages de la page", html: svgIcon("settings"),
+        onclick: (e) => { e.stopPropagation(); select({ type: "page" }); } }) : null,
       S.cfg.pages.length > 1 ? el("span", { class: "close", title: "Supprimer la page", onclick: (e) => { e.stopPropagation(); deletePage(i); } }, "×") : null,
     );
     tab.onclick = () => goToPage(i);
@@ -446,20 +450,60 @@ function keyChanged(k, opts = {}) {
   previewTimer = setTimeout(() => refreshPreviews(S.page, k), opts.immediate ? 0 : 200);
 }
 
-/** Récupère l'icône d'une application et l'applique à l'état donné. */
-async function applyAppIcon(k, st, target, quiet) {
+/** Textes génériques qu'on peut remplacer par le vrai nom de l'application. */
+const GENERIC_LABELS = ["", "appli", "nouvelle touche", "dossier", "fichier", "site web", "raccourci", "état 1", "état 2"];
+
+function labelIsGeneric(st) {
+  const l = (st.label || "").trim().toLowerCase();
+  return GENERIC_LABELS.includes(l) || (st._autoName && st.label === st._autoName);
+}
+
+/** Nom affichable d'un site : « https://www.github.com/x » → « Github ». */
+function siteName(url) {
   try {
-    const rel = await invoke("extract_app_icon", { target });
-    if (!rel) return false;
-    st.icon = rel;
-    if (!st.color || st.color === "#00897B") st.color = "#1F2229";
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    const first = host.split(".")[0];
+    return first ? first.charAt(0).toUpperCase() + first.slice(1) : "";
+  } catch (_) { return ""; }
+}
+
+/** Récupère l'icône et le nom d'une application et les applique à l'état donné.
+    opts.quiet : pas de message d'erreur ; opts.keepLabel / opts.keepIcon : ne touche pas au texte / à l'image ;
+    opts.forceLabel : remplace le texte même s'il a été personnalisé. */
+async function applyAppIcon(k, st, target, opts = {}) {
+  try {
+    const info = await invoke("app_info", { target });
+    if (!info) return false;
+    let done = false;
+    if (info.icon && !opts.keepIcon) {
+      st.icon = info.icon;
+      if (!st.color || st.color === "#00897B") st.color = "#1F2229";
+      done = true;
+    }
+    if (info.name && !opts.keepLabel && (opts.forceLabel || labelIsGeneric(st))) {
+      st.label = info.name;
+      st._autoName = info.name;
+      done = true;
+    }
+    if (!done) { if (!opts.quiet) toast("Rien trouvé pour cette application.", true); return false; }
     keyChanged(k, { immediate: true });
     if (S.sel.type === "key" && S.sel.key === k) renderInspector();
     return true;
   } catch (e) {
-    if (!quiet) toast("Icône introuvable : " + e, true);
+    if (!opts.quiet) toast("Icône introuvable : " + e, true);
     return false;
   }
+}
+
+/** Met le nom du site comme texte de la touche si le texte est générique. */
+function applySiteName(k, st) {
+  const n = siteName((st.action || {}).target || "");
+  if (!n || !labelIsGeneric(st)) return;
+  st.label = n;
+  st._autoName = n;
+  keyChanged(k);
+  const inp = document.querySelector("#label-input");
+  if (inp) inp.value = n;
 }
 
 async function onDropOnKey(k, dt) {
@@ -490,7 +534,7 @@ async function onDropOnKey(k, dt) {
     S.editState = 0;
     select({ type: "key", key: k });
     keyChanged(k, { immediate: true });
-    if (item.appIcon) applyAppIcon(k, keyDef(k), item.action.target, true);
+    if (item.appIcon) applyAppIcon(k, keyDef(k), item.action.target, { quiet: true, keepLabel: true });
     return;
   }
   if (dt.files && dt.files.length) {
@@ -584,6 +628,7 @@ function renderInspector() {
   if (S.sel.type === "key") box.append(...keyInspector(S.sel.key));
   else if (S.sel.type === "fader") box.append(...faderInspector(S.sel.index));
   else if (S.sel.type === "rollers") box.append(...rollersInspector());
+  else if (S.sel.type === "page") box.append(...pageInspector());
   else box.append(...settingsInspector());
 }
 
@@ -643,7 +688,7 @@ function keyInspector(k) {
   const st = S.editState === 1 && def.toggle ? def.toggle : def;
   const upd = (fn, opts) => { fn(st); keyChanged(k, opts); };
 
-  out.push(field("Texte affiché", el("input", { class: "input", value: st.label || "", placeholder: "(aucun)", oninput: (e) => upd((d) => { d.label = e.target.value; }) })));
+  out.push(field("Texte affiché", el("input", { id: "label-input", class: "input", value: st.label || "", placeholder: "(aucun)", oninput: (e) => upd((d) => { d.label = e.target.value; delete d._autoName; }) })));
   out.push(iconField(k, st, upd));
   out.push(colorField("Couleur de fond", st.color, (v) => upd((d) => { if (v) d.color = v; else delete d.color; })));
   out.push(colorField("Couleur du texte et de l'icône", st.text_color || "#FFFFFF", (v) => upd((d) => { if (v) d.text_color = v; else delete d.text_color; })));
@@ -696,7 +741,7 @@ function iconField(k, st, upd) {
       try { const rel = await invoke("import_image", { path: p }); upd((d) => { d.icon = rel; }, { immediate: true }); renderInspector(); }
       catch (e) { toast(String(e), true); }
     } }, "Image / GIF…"),
-    appTarget ? el("button", { class: "btn small", title: "Utilise l'icône de l'application ou du dossier", onclick: () => applyAppIcon(k, st, appTarget) }, "Icône de l'appli") : null,
+    appTarget ? el("button", { class: "btn small", title: "Reprend l'icône et le nom de l'application ou du dossier", onclick: () => applyAppIcon(k, st, appTarget, { forceLabel: true }) }, "Icône et nom de l'appli") : null,
     icon ? el("button", { class: "btn small", onclick: () => { upd((d) => { delete d.icon; }, { immediate: true }); renderInspector(); } }, "Retirer") : null);
 
   const out = field("Icône ou image", el("div", { class: "icon-current" }, current, el("span", { style: "color:var(--muted)" }, name)), buttons);
@@ -780,16 +825,24 @@ function actionEditor(st, k, onChange) {
       const p = await invoke("pick_file", { kind: "program" });
       if (!p) return;
       inp.value = p; upd((x) => { x.target = p; });
-      // Icône automatique si la touche n'a pas déjà sa propre image.
-      if (!st.icon || st.icon.startsWith("builtin:")) applyAppIcon(k, st, p, true); else renderInspector();
+      // Icône et nom automatiques (l'icône seulement si la touche n'a pas déjà sa propre image).
+      const ownImage = st.icon && !st.icon.startsWith("builtin:") && !st.icon.startsWith("icons/app-");
+      applyAppIcon(k, st, p, { quiet: true, keepIcon: ownImage }).then((ok) => { if (!ok) renderInspector(); });
     } }, "Parcourir…"))));
     out.push(field("Arguments (facultatif)", el("input", { class: "input", value: (a.args || []).join(" "), placeholder: "ex. --nouvelle-fenetre",
       oninput: (e) => upd((x) => { const v = e.target.value.trim(); if (v) x.args = v.split(/\s+/); else delete x.args; }) })));
   } else if (t === "launch:url") {
-    out.push(field("Adresse du site", el("input", { class: "input", value: a.target || "https://", spellcheck: "false", oninput: (e) => upd((x) => { x.target = e.target.value; }) })));
+    out.push(field("Adresse du site", el("input", { class: "input", value: a.target || "https://", spellcheck: "false",
+      oninput: (e) => upd((x) => { x.target = e.target.value; }), onchange: () => applySiteName(k, st) }),
+      el("p", { class: "hint" }, "Le nom du site devient le texte de la touche s'il n'a pas été personnalisé.")));
   } else if (t === "launch:path") {
     const inp = el("input", { class: "input", value: a.target || "", placeholder: "C:\\Users\\…", spellcheck: "false", oninput: (e) => upd((x) => { x.target = e.target.value; }) });
-    const choose = async (p) => { if (!p) return; inp.value = p; upd((x) => { x.target = p; }); if (!st.icon || st.icon.startsWith("builtin:")) applyAppIcon(k, st, p, true); };
+    const choose = async (p) => {
+      if (!p) return;
+      inp.value = p; upd((x) => { x.target = p; });
+      const ownImage = st.icon && !st.icon.startsWith("builtin:") && !st.icon.startsWith("icons/app-");
+      applyAppIcon(k, st, p, { quiet: true, keepIcon: ownImage }).then((ok) => { if (!ok) renderInspector(); });
+    };
     out.push(field("Dossier ou fichier", inp, el("div", { class: "row", style: "margin-top:8px" },
       el("button", { class: "btn grow", onclick: async () => choose(await invoke("pick_folder")) }, "Choisir un dossier…"),
       el("button", { class: "btn grow", onclick: async () => choose(await invoke("pick_file", { kind: "any" })) }, "Choisir un fichier…"))));
@@ -874,6 +927,72 @@ function rollersInspector() {
   return out;
 }
 
+// --- Page ---
+function pageInspector() {
+  const p = currentPage();
+  if (!p.apps) p.apps = [];
+  const out = [title(`Page ${S.page + 1}`, "Réglages de la page")];
+  out.push(field("Nom", el("input", { class: "input", value: p.name || "", oninput: (e) => { p.name = e.target.value; changed(); renderPagesSoon(); } })));
+
+  out.push(el("h2", { style: "margin-top:6px" }, "Page automatique"));
+  out.push(el("p", { class: "hint", style: "margin:-4px 0 12px" },
+    "Quand une de ces applications passe au premier plan, le MasterHUB affiche cette page tout seul. ",
+    "En la quittant, il revient à la page d'avant."));
+  const setApps = (list) => {
+    p.apps = list;
+    if (!list.length) delete p.apps;
+    changed();
+    renderPages();
+    renderInspector();
+  };
+  const apps = p.apps || [];
+  const addIt = (name) => {
+    name = (name || "").trim().split(/[\\/]/).pop().toLowerCase();
+    if (!name) return;
+    if (!/\.exe$/.test(name)) name += ".exe";
+    if (apps.includes(name)) return;
+    // Une appli ne peut être liée qu'à une seule page.
+    const other = S.cfg.pages.findIndex((q, i) => i !== S.page && (q.apps || []).includes(name));
+    if (other >= 0) {
+      S.cfg.pages[other].apps = S.cfg.pages[other].apps.filter((x) => x !== name);
+      if (!S.cfg.pages[other].apps.length) delete S.cfg.pages[other].apps;
+      toast(`${name} était lié à la page « ${S.cfg.pages[other].name} » : déplacé ici.`);
+    }
+    setApps([...apps, name]);
+  };
+  const chips = apps.length
+    ? el("div", { class: "chips" }, ...apps.map((a) => el("span", { class: "chip removable", title: "Retirer", onclick: () => setApps(apps.filter((x) => x !== a)) }, a, " ×")))
+    : el("p", { class: "hint", style: "margin:0" }, "Aucune application liée : cette page ne change qu'à la main.");
+  const add = el("input", { class: "input grow", placeholder: "ex. fusion360.exe", spellcheck: "false" });
+  add.onkeydown = (e) => { if (e.key === "Enter") addIt(add.value); };
+  out.push(field("Applications liées", chips,
+    el("div", { class: "row", style: "margin-top:10px" }, add, el("button", { class: "btn", onclick: () => addIt(add.value) }, "Ajouter")),
+    el("button", { class: "btn", style: "width:100%;margin-top:8px", onclick: async () => {
+      const f = await invoke("pick_file", { kind: "program" });
+      if (f) addIt(f);
+    } }, "Choisir un programme…")));
+
+  const running = el("div", { class: "chips" }, el("span", { class: "hint", style: "margin:0" }, "Recherche des applications ouvertes…"));
+  invoke("list_running_apps").then((list) => {
+    running.innerHTML = "";
+    const others = (list || []).filter((x) => !apps.includes(x));
+    if (!others.length) running.append(el("span", { class: "hint", style: "margin:0" }, "Aucune autre application ouverte."));
+    for (const a of others) running.append(el("span", { class: "chip add", onclick: () => addIt(a) }, "+ " + a));
+  });
+  out.push(field("Applications ouvertes en ce moment", running,
+    el("p", { class: "hint" }, "Ouvre l'application, puis reviens ici et clique dessus.")));
+
+  if (!S.cfg.general.auto_pages) {
+    out.push(el("p", { class: "hint", style: "color:var(--warn, #ffb74d)" }, "Les pages automatiques sont désactivées dans les réglages généraux."));
+  }
+  out.push(el("div", { class: "sep" }));
+  out.push(el("button", { class: "btn", style: "width:100%", onclick: () => renamePage(S.page) }, "Renommer…"));
+  return out;
+}
+
+let pagesTimer = null;
+function renderPagesSoon() { clearTimeout(pagesTimer); pagesTimer = setTimeout(renderPages, 250); }
+
 // --- Réglages généraux ---
 function settingsInspector() {
   const g = S.cfg.general;
@@ -887,6 +1006,8 @@ function settingsInspector() {
     el("p", { class: "hint" }, "Les effets animés ne fonctionnent que sur la base ; les faders restent en couleur fixe.")));
   out.push(el("div", { class: "sep" }));
   out.push(switchRow("Assombrir la touche pendant l'appui", g.press_feedback, (v) => { g.press_feedback = v; changed(); }));
+  out.push(switchRow("Pages automatiques selon l'application", g.auto_pages, (v) => { g.auto_pages = v; changed(); }));
+  out.push(el("p", { class: "hint", style: "margin-top:-4px" }, "Lie une page à une application avec le bouton ⚙ de l'onglet de la page."));
   out.push(rangeField("Fluidité max. des GIF", g.gif_max_fps, 5, 40, " i/s", (v) => { g.gif_max_fps = v; changed(); },
     "Partagée entre toutes les touches animées."));
   out.push(el("div", { class: "sep" }));
@@ -1041,11 +1162,13 @@ async function mockInvoke(cmd, args) {
        { kind: "rollers2", port: "121", placement: { col: 0, row: 5, rot: 0 } }, { kind: "base" }];
   switch (cmd) {
     case "get_initial":
-      return { config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.3.0",
+      return { config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.4.0",
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;
     case "list_audio_apps": return ["chrome.exe", "discord.exe", "spotify.exe"];
+    case "list_running_apps": return ["chrome.exe", "explorer.exe", "fusion360.exe", "obs64.exe", "prusa-slicer.exe"];
+    case "app_info": return { icon: null, name: (args.target.split(/[\\/]/).pop() || "").replace(/\.exe$/i, "") };
     default: return null;
   }
 }

@@ -172,3 +172,24 @@ pub async fn extract_app_icon(state: State<'_, AppState>, target: String) -> Res
     let dir = state.cfg_dir.clone();
     crate::appicon::extract_to(&target, &dir)
 }
+
+/// Icône (chemin relatif, si trouvée) et nom lisible d'une application.
+#[derive(Serialize)]
+pub struct AppInfo {
+    icon: Option<String>,
+    name: Option<String>,
+}
+
+#[tauri::command]
+pub async fn app_info(state: State<'_, AppState>, target: String) -> Result<AppInfo, String> {
+    let dir = state.cfg_dir.clone();
+    let icon = crate::appicon::extract_to(&target, &dir).ok();
+    let name = crate::appicon::app_name(&target);
+    Ok(AppInfo { icon, name })
+}
+
+/// Programmes qui ont une fenêtre ouverte (pour lier une page à une appli).
+#[tauri::command]
+pub async fn list_running_apps() -> Vec<String> {
+    crate::foreground::running_apps()
+}

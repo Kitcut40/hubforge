@@ -6,6 +6,7 @@ use crate::actions::{self, Input};
 use crate::audio::{Audio, AudioCmd};
 use crate::config::{self, parse_color, Action, Config, KeyDef};
 use crate::render::{self, KeyVisual};
+use crate::foreground;
 use crate::topology::{self, Placement};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
 use serde::Serialize;
@@ -79,6 +80,10 @@ pub struct Engine {
     modules_changed: bool,
     /// Rotation du module de touches sur la base (degrés, sens horaire).
     keys_rot: u16,
+    /// Page affichée avant un changement automatique (pour y revenir).
+    auto_from: Option<usize>,
+    /// Dernière application vue au premier plan.
+    last_fg: Option<String>,
     faders: HashMap<String, [u8; FADER_COUNT]>,
     input: Input,
     audio: Audio,
@@ -120,6 +125,8 @@ impl Engine {
             ports: HashMap::new(),
             modules_changed: false,
             keys_rot: 0,
+            auto_from: None,
+            last_fg: None,
             faders: HashMap::new(),
             input: Input::new(),
             audio,
@@ -160,7 +167,12 @@ impl Engine {
     pub fn run(&mut self, stop: Arc<AtomicBool>, msgs: Receiver<EngineMsg>) {
         let mut last_scan = Instant::now() - Duration::from_secs(10);
         let mut last_cfg_check = Instant::now();
+        let mut last_fg_check = Instant::now();
         while !stop.load(Ordering::Relaxed) {
+            if last_fg_check.elapsed() >= Duration::from_millis(250) {
+                self.check_foreground();
+                last_fg_check = Instant::now();
+            }
             if last_scan.elapsed() >= Duration::from_secs(2) {
                 self.mgr.scan();
                 last_scan = Instant::now();
@@ -215,6 +227,7 @@ impl Engine {
             }
             EngineMsg::ShowPage(p) => {
                 if p < self.visuals.len() && p != self.page {
+                    self.auto_from = None;
                     self.page = p;
                     self.pressed = [false; KEY_COUNT];
                     self.show_page();
@@ -499,10 +512,75 @@ impl Engine {
                 };
                 // Évite de laisser une touche « enfoncée » assombrie.
                 self.pressed = [false; KEY_COUNT];
+                // Choix manuel : pas de retour automatique.
+                self.auto_from = None;
                 self.page = target;
                 self.show_page();
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Pages automatiques
+    // ------------------------------------------------------------------
+
+    /// Page liée à un programme (champ `apps` des pages).
+    fn page_for_app(&self, exe: &str) -> Option<usize> {
+        self.cfg
+            .pages
+            .iter()
+            .position(|p| p.apps.iter().any(|a| foreground::normalize(a) == exe))
+            .filter(|&i| i < self.visuals.len())
+    }
+
+    fn page_has_apps(&self, page: usize) -> bool {
+        self.cfg.pages.get(page).map(|p| !p.apps.is_empty()).unwrap_or(false)
+    }
+
+    /// Affiche la page de l'application au premier plan ; en sortant de
+    /// l'application, revient à la page affichée avant.
+    fn check_foreground(&mut self) {
+        if !self.cfg.general.auto_pages {
+            self.auto_from = None;
+            return;
+        }
+        let fg = foreground::foreground_exe();
+        if fg == self.last_fg {
+            return;
+        }
+        self.last_fg = fg.clone();
+        let Some(exe) = fg else { return };
+        // La fenêtre de HubForge ne change rien : on peut éditer tranquillement.
+        if exe == "hubforge.exe" {
+            return;
+        }
+        match self.page_for_app(&exe) {
+            Some(p) if p != self.page => {
+                if self.auto_from.is_none() {
+                    self.auto_from = Some(self.page);
+                }
+                log::info!("{exe} au premier plan → page {}", p + 1);
+                self.set_page(p);
+            }
+            Some(_) => {}
+            None => {
+                if let Some(prev) = self.auto_from.take() {
+                    // Seulement si on est encore sur une page d'application
+                    // (sinon, l'utilisateur a choisi une autre page entre-temps).
+                    if self.page_has_apps(self.page) && prev < self.visuals.len() && prev != self.page {
+                        log::info!("retour à la page {}", prev + 1);
+                        self.set_page(prev);
+                    }
+                }
+            }
+        }
+    }
+
+    fn set_page(&mut self, p: usize) {
+        self.pressed = [false; KEY_COUNT];
+        self.page = p;
+        self.show_page();
+        self.notify();
     }
 
     fn tick_animations(&mut self) {

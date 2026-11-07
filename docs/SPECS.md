@@ -209,7 +209,7 @@ Priorité : **P1** = version 1 indispensable · **P2** = version 1 si possible �
 ### 5.2 Profils, pages et dossiers
 - **P1** Profils multiples (un profil = configuration de tous les modules)
 - **P1** Pages par profil, **sans la limite de 5 pages** du logiciel officiel
-- **P1** **Changement automatique de profil selon l'application au premier plan**
+- **P1** **Changement automatique de profil selon l'application au premier plan** — ✅ v0.4 : une page liée à des programmes (`apps = ["fusion360.exe"]`) s'affiche quand l'un d'eux passe au premier plan, retour à la page précédente en le quittant
 - **P1** Dossiers sur les touches (une touche ouvre une sous-grille)
 - **P2** Import / export de profils
 - **P2** Sauvegarde automatique de la config + restauration
@@ -217,10 +217,10 @@ Priorité : **P1** = version 1 indispensable · **P2** = version 1 si possible �
 
 ### 5.3 Touches à écran (15 touches)
 - **P1** Image, icône ou texte par touche (JPEG 72×72 envoyé au module — ✅ validé sur le matériel)
-- **P1** **Import automatique de l'icône d'une application**
+- **P1** **Import automatique de l'icône d'une application** — ✅ v0.3 (icône) / v0.4 (nom, depuis la description de l'exe)
 - **P1** **GIF animés sur les touches** — voir 5.3.1
 - **P2** Éditeur d'icône intégré : fond, couleur, texte, emoji, bibliothèque d'icônes
-- **P2** Touches dynamiques : l'image change selon un état (micro coupé, lecture en pause…)
+- **P2** Touches dynamiques : l'image change selon un état (micro coupé, lecture en pause…) — ✅ v0.3 : touches à 2 états
 - **P2** Touches « widget » qui se mettent à jour seules (voir 5.4, catégorie Infos)
 - **P2** Effet visuel à l'appui (touche qui s'assombrit ou clignote brièvement)
 - **P3** Une image ou un GIF découpé sur plusieurs touches (grand visuel sur la grille)

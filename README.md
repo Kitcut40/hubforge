@@ -12,8 +12,9 @@ Le MasterHUB est un excellent contrôleur modulaire (touches à écran, faders, 
 |---|---|---|
 | 0 | Analyse et validation du protocole USB | ✅ terminée |
 | 1 | Service d'arrière-plan : touches, profils, raccourcis, macros | ✅ v0.1 validée sur le matériel |
-| 2 | Interface de configuration | 🔧 v0.2 en test |
-| 3 | Faders, molettes, audio par application | ⏳ |
+| 2 | Interface de configuration | ✅ v0.2 → v0.3 (disposition réelle des modules, icônes, touches à 2 états) |
+| 3 | Faders, molettes, audio par application | ✅ v0.2 |
+| 3b | Noyau avancé : pages automatiques par application ✅ v0.4, macros, dossiers, touches vivantes, appui long | 🔧 |
 | 4 | Système d'addons `.forge` | ⏳ |
 | 5 | Linux, installeurs, publication v1.0 | ⏳ |
 

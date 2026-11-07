@@ -91,6 +91,7 @@ pub fn preview(def: &KeyDef, base_dir: &Path) -> (Vec<u8>, bool) {
     (v.frames[0].jpeg.as_ref().clone(), animated)
 }
 
+#[allow(dead_code)]
 pub fn render_key(def: &KeyDef, base_dir: &Path) -> KeyVisual {
     render_key_rot(def, base_dir, 0)
 }

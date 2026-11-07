@@ -53,6 +53,13 @@ input, select, textarea, button { font: inherit; color: inherit; }
 .page-tab .on-device { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .page-tab .close { opacity: 0; color: var(--faint); font-size: 15px; line-height: 1; padding: 0 2px; border-radius: 4px; }
 .page-tab:hover .close { opacity: 1; }
+.page-tab .auto { display: inline-flex; color: var(--accent-2); }
+.page-tab .auto svg { width: 13px; height: 13px; }
+.page-tab .opts { display: inline-flex; color: var(--faint); border-radius: 4px; padding: 1px; }
+.page-tab .opts svg { width: 14px; height: 14px; }
+.page-tab .opts:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.app-chip-icon { width: 14px; height: 14px; display: inline-flex; }
+.app-chip-icon svg { width: 14px; height: 14px; }
 .page-tab .close:hover { color: var(--err); }
 .page-add { width: 30px; height: 30px; border-radius: 8px; border: 1px dashed var(--line-2); background: none; color: var(--muted); cursor: pointer; font-size: 17px; }
 .page-add:hover { color: var(--accent); border-color: var(--accent); }

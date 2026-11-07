@@ -1,12 +1,12 @@
-//! Récupère l'icône d'une application (ou d'un dossier / fichier) et
-//! l'enregistre en PNG dans le dossier `icons/` de la configuration.
+//! Récupère l'icône et le nom d'une application (ou d'un dossier / fichier).
+//! L'icône est enregistrée en PNG dans le dossier `icons/` de la configuration.
 
 use std::path::Path;
 
 /// Retourne le chemin relatif de l'icône enregistrée (ex. "icons/app-notepad.png").
 pub fn extract_to(target: &str, cfg_dir: &Path) -> Result<String, String> {
     let t = target.trim();
-    if t.is_empty() || t.starts_with("http://") || t.starts_with("https://") {
+    if t.is_empty() || is_url(t) {
         return Err("pas d'icône pour une adresse web".into());
     }
     let rgba = imp::icon_rgba(t)?;
@@ -23,6 +23,44 @@ pub fn extract_to(target: &str, cfg_dir: &Path) -> Result<String, String> {
     let name = format!("app-{}.png", stem.to_lowercase());
     img.save(dir.join(&name)).map_err(|e| e.to_string())?;
     Ok(format!("icons/{name}"))
+}
+
+/// Nom lisible d'une application, d'un raccourci, d'un dossier ou d'un fichier.
+/// Pour un programme : la description de l'exe (ex. « Bloc-notes »,
+/// « Google Chrome »), sinon son nom de fichier.
+pub fn app_name(target: &str) -> Option<String> {
+    let t = target.trim();
+    if t.is_empty() || is_url(t) {
+        return None;
+    }
+    let name = imp::display_name(t).unwrap_or_else(|| fallback_name(t));
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn is_url(t: &str) -> bool {
+    let l = t.to_lowercase();
+    l.starts_with("http://") || l.starts_with("https://")
+}
+
+/// « C:\\…\\fusion360.exe » → « Fusion360 » ; « D:\\Photos » → « Photos ».
+fn fallback_name(t: &str) -> String {
+    // Découpe à la main : « \\ » n'est pas un séparateur sous Linux.
+    let last = t.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or(t).to_string();
+    let lower = last.to_lowercase();
+    let s = match lower.rfind('.') {
+        Some(i) if matches!(&lower[i + 1..], "exe" | "lnk" | "bat" | "cmd" | "msc") => last[..i].to_string(),
+        _ => last,
+    };
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => s,
+    }
 }
 
 /// Retire les bords transparents (les petites icônes sont souvent placées
@@ -51,7 +89,9 @@ mod imp {
         DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
         DIB_RGB_COLORS, HGDIOBJ,
     };
-    use windows::Win32::Storage::FileSystem::{SearchPathW, FILE_FLAGS_AND_ATTRIBUTES};
+    use windows::Win32::Storage::FileSystem::{
+        GetFileVersionInfoSizeW, GetFileVersionInfoW, SearchPathW, VerQueryValueW, FILE_FLAGS_AND_ATTRIBUTES,
+    };
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
     use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
     use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
@@ -78,6 +118,65 @@ mod imp {
             String::from_utf16_lossy(&out[..n])
         } else {
             expanded
+        }
+    }
+
+    /// Nom à afficher : description de l'exe, sinon nom du produit,
+    /// sinon nom du raccourci / dossier / fichier.
+    pub fn display_name(target: &str) -> Option<String> {
+        let path = resolve(target);
+        let p = std::path::Path::new(&path);
+        let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if p.is_dir() || ext == "lnk" || !p.exists() {
+            return None; // le nom du dossier / raccourci convient
+        }
+        if ext != "exe" {
+            return None;
+        }
+        version_string(&path, "FileDescription")
+            .filter(|s| !s.trim().is_empty() && !s.to_lowercase().ends_with(".exe"))
+            .or_else(|| version_string(&path, "ProductName"))
+            .filter(|s| !s.trim().is_empty())
+    }
+
+    fn version_string(path: &str, key: &str) -> Option<String> {
+        unsafe {
+            let w = wide(path);
+            let size = GetFileVersionInfoSizeW(PCWSTR(w.as_ptr()), None);
+            if size == 0 {
+                return None;
+            }
+            let mut data = vec![0u8; size as usize];
+            GetFileVersionInfoW(PCWSTR(w.as_ptr()), None, size, data.as_mut_ptr() as *mut _).ok()?;
+
+            // Langue et page de code déclarées par le fichier (la première).
+            let mut ptr: *mut core::ffi::c_void = std::ptr::null_mut();
+            let mut len: u32 = 0;
+            let q = wide("\\VarFileInfo\\Translation");
+            let mut candidates: Vec<String> = Vec::new();
+            if VerQueryValueW(data.as_ptr() as *const _, PCWSTR(q.as_ptr()), &mut ptr, &mut len).as_bool() && len >= 4 {
+                let pairs = std::slice::from_raw_parts(ptr as *const u16, (len / 2) as usize);
+                for c in pairs.chunks_exact(2) {
+                    candidates.push(format!("{:04x}{:04x}", c[0], c[1]));
+                }
+            }
+            // Valeurs courantes si la table de traduction est absente ou fausse.
+            candidates.extend(["040c04b0", "040904b0", "040904e4", "000004b0"].iter().map(|s| s.to_string()));
+
+            for lang in candidates {
+                let q = wide(&format!("\\StringFileInfo\\{lang}\\{key}"));
+                let mut p: *mut core::ffi::c_void = std::ptr::null_mut();
+                let mut n: u32 = 0;
+                if VerQueryValueW(data.as_ptr() as *const _, PCWSTR(q.as_ptr()), &mut p, &mut n).as_bool() && n > 1 {
+                    let s = std::slice::from_raw_parts(p as *const u16, n as usize);
+                    let end = s.iter().position(|&c| c == 0).unwrap_or(s.len());
+                    let v = String::from_utf16_lossy(&s[..end]).trim().to_string();
+                    if !v.is_empty() {
+                        return Some(v);
+                    }
+                }
+            }
+            None
         }
     }
 
@@ -146,5 +245,23 @@ mod imp {
 mod imp {
     pub fn icon_rgba(_target: &str) -> Result<image::RgbaImage, String> {
         Err("récupération d'icône disponible uniquement sous Windows".into())
+    }
+
+    pub fn display_name(_target: &str) -> Option<String> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_names() {
+        assert_eq!(fallback_name("C:\\Program Files\\Autodesk\\fusion360.exe"), "Fusion360");
+        assert_eq!(fallback_name("D:\\Photos\\"), "Photos");
+        assert_eq!(fallback_name("C:\\Users\\benja\\Desktop\\OBS Studio.lnk"), "OBS Studio");
+        assert_eq!(fallback_name("notes.txt"), "Notes.txt");
+        assert_eq!(app_name("https://github.com"), None);
     }
 }

@@ -12,6 +12,7 @@ mod audio;
 mod autostart;
 mod config;
 mod engine;
+mod foreground;
 mod icons_data;
 mod logging;
 mod render;
@@ -100,6 +101,8 @@ fn main() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             ui::get_initial,
+            ui::app_info,
+            ui::list_running_apps,
             ui::apply_config,
             ui::render_keys,
             ui::show_page,
