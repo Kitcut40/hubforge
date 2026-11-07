@@ -22,11 +22,17 @@ pub const FORMAT: i64 = 1;
 const MAX_ARCHIVE_FILES: usize = 2000;
 const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
 
+/// Dossier de la bibliothèque. `parent` = id d'un autre dossier de l'addon
+/// (sous-dossier), sinon le dossier est directement dans celui de l'addon.
 #[derive(Debug, Clone, Serialize)]
 pub struct Category {
     pub id: String,
     pub name: String,
+    pub parent: Option<String>,
 }
+
+/// Profondeur maximale des sous-dossiers.
+const MAX_DEPTH: usize = 4;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AddonAction {
@@ -195,7 +201,26 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
     for c in tables(&root, "category")? {
         let cid = req_str(c, "id", "[[category]]")?;
         let cname = get_str(c, "name").unwrap_or_else(|| cid.clone());
-        categories.push(Category { id: cid, name: cname });
+        if categories.iter().any(|x: &Category| x.id == cid) {
+            return Err(format!("catégorie « {cid} » en double"));
+        }
+        let parent = get_str(c, "parent").filter(|p| !p.is_empty());
+        categories.push(Category { id: cid, name: cname, parent });
+    }
+    // Sous-dossiers : le parent existe, pas de boucle, pas trop profond.
+    for c in &categories {
+        let mut depth = 0;
+        let mut cur = c.parent.clone();
+        while let Some(p) = cur {
+            depth += 1;
+            if depth > MAX_DEPTH {
+                return Err(format!("catégorie « {} » : sous-dossiers trop imbriqués (boucle ou plus de {MAX_DEPTH} niveaux)", c.id));
+            }
+            let Some(parent) = categories.iter().find(|x| x.id == p) else {
+                return Err(format!("catégorie « {} » : dossier parent « {p} » inconnu", c.id));
+            };
+            cur = parent.parent.clone();
+        }
     }
 
     let mut actions: Vec<AddonAction> = Vec::new();
@@ -558,6 +583,11 @@ windows = ["Demo.exe"]
 id = "base"
 name = "Base"
 
+[[category]]
+id = "sub"
+name = "Sous-dossier"
+parent = "base"
+
 [[action]]
 id = "save"
 name = "Enregistrer"
@@ -590,6 +620,7 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
         let d = tmp("parse");
         let a = parse_manifest(MANIFEST, &d).unwrap();
         assert_eq!(a.id, "demo");
+        assert_eq!(a.categories[1].parent.as_deref(), Some("base"));
         assert_eq!(a.actions.len(), 2);
         assert_eq!(a.actions[0].action, Action::Hotkey { keys: "ctrl+s".into() });
         assert!(matches!(a.actions[1].action, Action::Macro { .. }));
@@ -615,6 +646,8 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
         assert!(err("[addon]\nid = \"a\"\nname = \"x\"\n[[action]]\nid = \"b\"\nname = \"B\"\ntype = \"hotkey\"").contains("action « b »"));
         assert!(err("[addon]\nid = \"a\"\nname = \"x\"\n[[action]]\nid = \"b\"\nname = \"B\"\ntype = \"none\"\nicon = \"../x.png\"").contains("chemin"));
         assert!(err("[addon]\nid = \"a\"\nname = \"x\"\nformat = 99").contains("mets HubForge à jour"));
+        assert!(err("[addon]\nid = \"a\"\nname = \"x\"\n[[category]]\nid = \"c\"\nparent = \"zz\"").contains("parent"));
+        assert!(err("[addon]\nid = \"a\"\nname = \"x\"\n[[category]]\nid = \"c\"\nparent = \"d\"\n[[category]]\nid = \"d\"\nparent = \"c\"").contains("boucle"));
         let _ = std::fs::remove_dir_all(&d);
     }
 

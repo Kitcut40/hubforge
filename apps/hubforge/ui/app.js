@@ -1660,63 +1660,132 @@ function rangeField(label, value, min, max, unit, onChange, hint) {
 // ---------------------------------------------------------------------------
 // Bibliothèque
 // ---------------------------------------------------------------------------
+// Dossiers ouverts / fermés de la bibliothèque (retenus d'une fois sur l'autre).
+const LIB_STATE_KEY = "hubforge.library.folders";
+function libState() {
+  if (!S.libState) {
+    try { S.libState = JSON.parse(localStorage.getItem(LIB_STATE_KEY) || "{}"); } catch (_) { S.libState = {}; }
+  }
+  return S.libState;
+}
+function saveLibState() {
+  try { localStorage.setItem(LIB_STATE_KEY, JSON.stringify(S.libState || {})); } catch (_) { /* rien */ }
+}
+
+/** Élément de la bibliothèque (glissable sur une touche, double-clic = touche sélectionnée). */
+function libItem(it, path) {
+  const sw = el("span", { class: "lib-swatch", style: `background:${it.color};color:#fff`, html: it.preview ? (it.preview.svg || "") : svgIcon(it.icon) });
+  if (it.preview && it.preview.src) sw.append(el("img", { src: it.preview.src, alt: "" }));
+  const node = el("div", { class: "lib-item", draggable: "true", title: it.description || "", "data-search": (it.name + " " + path).toLowerCase() }, sw, el("span", {}, it.name));
+  const payload = () => {
+    const p = clone(it);
+    if (it.kind === "path") p.action._kind = "path";
+    delete p.preview;
+    return JSON.stringify(p);
+  };
+  node.ondragstart = (e) => { e.dataTransfer.setData("text/hubforge-action", payload()); e.dataTransfer.effectAllowed = "copy"; };
+  node.ondblclick = () => {
+    if (S.sel.type !== "key") { toast("Sélectionne d'abord une touche, ou glisse l'action dessus."); return; }
+    onDropOnKey(S.sel.key, { getData: (t) => (t === "text/hubforge-action" ? payload() : "") });
+  };
+  return node;
+}
+
+/** Dossier repliable de la bibliothèque. `level` 0 = racine. */
+function libFolder({ key, title, icon, count, level, defaultOpen, cls, children }) {
+  const st = libState();
+  const open = key in st ? st[key] : defaultOpen;
+  const body = el("div", { class: "lib-folder-body" }, ...children);
+  const head = el("div", { class: "lib-folder-title" },
+    el("span", { class: "caret" }, "▾"),
+    icon || null,
+    el("span", { class: "grow" }, title),
+    count ? el("span", { class: "lib-count" }, String(count)) : null);
+  const f = el("div", { class: `lib-folder level-${Math.min(level, 3)}` + (cls ? " " + cls : "") + (open ? "" : " closed"), "data-key": key }, head, body);
+  head.onclick = () => {
+    f.classList.toggle("closed");
+    libState()[key] = !f.classList.contains("closed");
+    saveLibState();
+  };
+  return f;
+}
+
+/** Arborescence d'un addon : ses dossiers (et sous-dossiers), puis ses actions sans dossier. */
+function addonFolder(ad) {
+  const a = ad.addon;
+  const toItem = (x) => ({
+    name: x.name, color: x.color || "#37474F", preview: x.preview, description: x.description,
+    addonKey: { label: x.label, icon: x.icon || undefined, color: x.color || undefined, text_color: x.text_color || undefined, action: x.action },
+  });
+  const known = new Set(a.categories.map((c) => c.id));
+  const countIn = (cid) => {
+    const subs = a.categories.filter((c) => c.parent === cid).map((c) => c.id);
+    return ad.actions.filter((x) => x.category === cid).length + subs.reduce((n, sid) => n + countIn(sid), 0);
+  };
+  const build = (parent, level, path) => {
+    const out = [];
+    for (const c of a.categories.filter((c) => (c.parent || null) === parent)) {
+      const n = countIn(c.id);
+      if (!n) continue;
+      const p = `${path} ${c.name}`;
+      out.push(libFolder({
+        key: `addon:${ad.folder}/${c.id}`, title: c.name, count: n, level, defaultOpen: false,
+        children: [...build(c.id, level + 1, p), ...ad.actions.filter((x) => x.category === c.id).map((x) => libItem(toItem(x), p))],
+      }));
+    }
+    return out;
+  };
+  const loose = ad.actions.filter((x) => !x.category || !known.has(x.category));
+  return libFolder({
+    key: `addon:${ad.folder}`, title: a.name, icon: addonIcon(ad, 20), count: ad.actions.length, level: 0, defaultOpen: false, cls: "addon-root",
+    children: [...build(null, 1, a.name), ...loose.map((x) => libItem(toItem(x), a.name))],
+  });
+}
+
 function buildLibrary() {
   const box = $("#library");
   box.innerHTML = "";
+  // Un dossier par addon activé, en premier.
+  const addons = (S.addons || []).filter((x) => x.enabled && x.addon && x.actions.length);
+  if (addons.length) {
+    box.append(el("div", { class: "lib-section" }, "Addons"));
+    for (const ad of addons) box.append(addonFolder(ad));
+    box.append(el("div", { class: "lib-section" }, "Actions de base"));
+  }
   const cats = clone(LIBRARY);
   // Débloqué après une première partie 😉
   if (S.gameBest > 0) cats.find((c) => c.cat === "HubForge").items.push(
     { name: "Mini-jeu tape-taupe", label: "Jouer", icon: "gamepad-2", color: "#2E7D32", action: { type: "game" } });
-  // Catégories des addons activés, en premier.
-  for (const ad of (S.addons || []).filter((x) => x.enabled && x.addon)) {
-    const a = ad.addon;
-    const groups = a.categories.length ? a.categories.map((c) => [c.id, c.name]) : [["", ""]];
-    if (a.actions.some((x) => !x.category) && a.categories.length) groups.push(["", "Autres"]);
-    for (const [cid, cname] of groups) {
-      const acts = ad.actions.filter((x) => (x.category || "") === cid);
-      if (!acts.length) continue;
-      cats.unshift({ cat: cname ? `${a.name} · ${cname}` : a.name, addon: true, items: acts.map((x) => ({
-        name: x.name, color: x.color || "#37474F", preview: x.preview, addonKey: {
-          label: x.label, icon: x.icon || undefined, color: x.color || undefined, text_color: x.text_color || undefined, action: x.action,
-        }, description: x.description,
-      })) });
-    }
-  }
-  // unshift a inversé l'ordre des addons : on le rétablit.
-  const nAddonCats = cats.filter((c) => c.addon).length;
-  cats.splice(0, nAddonCats, ...cats.slice(0, nAddonCats).reverse());
   for (const cat of cats) {
-    const items = el("div", { class: "lib-items" });
-    for (const it of cat.items) {
-      const sw = el("span", { class: "lib-swatch", style: `background:${it.color};color:#fff`, html: it.preview ? (it.preview.svg || "") : svgIcon(it.icon) });
-      if (it.preview && it.preview.src) sw.append(el("img", { src: it.preview.src, alt: "" }));
-      const node = el("div", { class: "lib-item", draggable: "true", title: it.description || "", "data-search": (it.name + " " + cat.cat).toLowerCase() }, sw, el("span", {}, it.name));
-      const payload = () => {
-        const p = clone(it);
-        if (it.kind === "path") p.action._kind = "path";
-        return JSON.stringify(p);
-      };
-      node.ondragstart = (e) => { e.dataTransfer.setData("text/hubforge-action", payload()); e.dataTransfer.effectAllowed = "copy"; };
-      node.ondblclick = () => {
-        if (S.sel.type !== "key") { toast("Sélectionne d'abord une touche, ou glisse l'action dessus."); return; }
-        onDropOnKey(S.sel.key, { getData: (t) => (t === "text/hubforge-action" ? payload() : "") });
-      };
-      items.append(node);
-    }
-    const c = el("div", { class: "lib-cat" + (cat.addon ? " addon" : "") }, el("div", { class: "lib-cat-title" }, el("span", { class: "caret" }, "▾"), cat.cat), items);
-    $(".lib-cat-title", c).onclick = () => c.classList.toggle("closed");
-    box.append(c);
+    box.append(libFolder({
+      key: `cat:${cat.cat}`, title: cat.cat, level: 0, defaultOpen: true,
+      children: cat.items.map((it) => libItem(it, cat.cat)),
+    }));
   }
+  const q = $("#lib-search").value || "";
+  if (q.trim()) filterLibrary(q);
 }
 
+/** Recherche : n'affiche que les actions trouvées et ouvre leurs dossiers ;
+    sans recherche, chaque dossier retrouve son état. */
 function filterLibrary(q) {
   q = q.trim().toLowerCase();
-  document.querySelectorAll(".lib-item").forEach((n) => n.classList.toggle("hidden", q && !n.dataset.search.includes(q)));
-  document.querySelectorAll(".lib-cat").forEach((c) => {
-    c.classList.remove("closed");
-    const any = [...c.querySelectorAll(".lib-item")].some((n) => !n.classList.contains("hidden"));
-    c.classList.toggle("hidden", !any);
-  });
+  document.querySelectorAll(".lib-item").forEach((n) => n.classList.toggle("hidden", !!q && !n.dataset.search.includes(q)));
+  const folders = [...document.querySelectorAll(".lib-folder")].reverse(); // les plus profonds d'abord
+  const st = libState();
+  for (const f of folders) {
+    if (q) {
+      const any = [...f.querySelectorAll(".lib-item")].some((n) => !n.classList.contains("hidden"));
+      f.classList.toggle("hidden", !any);
+      f.classList.toggle("closed", !any);
+    } else {
+      f.classList.remove("hidden");
+      const key = f.dataset.key;
+      const def = !(key.startsWith("addon:"));
+      f.classList.toggle("closed", !(key in st ? st[key] : def));
+    }
+  }
+  document.querySelectorAll(".lib-section").forEach((s) => s.classList.toggle("hidden", !!q));
 }
 
 // ---------------------------------------------------------------------------
@@ -1824,7 +1893,7 @@ async function mockInvoke(cmd, args) {
     case "addons_signature": return "x";
     case "addon_pages": return [{ name: "Fusion 360", apps: ["Fusion360.exe"], keys: [{ key: 1, label: "Esquisse", color: "#1565C0", action: { type: "hotkey", keys: "s" } }] }];
     case "get_initial":
-      return { profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.7.0",
+      return { profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.7.1",
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;

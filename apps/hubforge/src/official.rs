@@ -12,7 +12,7 @@ type Bundle = (&'static str, &'static str, &'static [(&'static str, &'static str
 
 const BUNDLES: &[Bundle] = &[(
     "fusion360",
-    "1.0.0",
+    "1.1.0",
     &[
         ("manifest.toml", include_str!("../../../assets/addons/fusion360/manifest.toml")),
         ("icons/arc-3p.svg", include_str!("../../../assets/addons/fusion360/icons/arc-3p.svg")),

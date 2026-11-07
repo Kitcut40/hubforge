@@ -53,14 +53,29 @@ windows = ["MonLogiciel.exe"]     # nom du programme (voir Gestionnaire des tâc
 
 Les pages de l'addon ajoutées au profil s'afficheront **toutes seules** quand ce programme passe au premier plan (pages automatiques).
 
-### 3.3 `[[category]]` — facultatif
+### 3.3 `[[category]]` — dossiers (facultatif)
 
-Regroupe les actions dans la bibliothèque (« Mon logiciel · Esquisse »…).
+Dans la bibliothèque de HubForge, chaque addon est **un seul dossier** (à son nom). Les `[[category]]` sont les **sous-dossiers** de ce dossier ; avec `parent`, un sous-dossier peut en contenir d'autres (4 niveaux au maximum). Les actions sans `category` sont directement dans le dossier de l'addon.
 
 ```toml
 [[category]]
 id   = "dessin"
 name = "Dessin"
+
+[[category]]
+id     = "formes"
+name   = "Formes"
+parent = "dessin"      # sous-dossier de « Dessin »
+```
+
+Résultat dans la bibliothèque :
+
+```
+▸ Mon logiciel
+   ▸ Dessin
+      ▸ Formes
+         Ligne, Rectangle…
+      Créer une esquisse…
 ```
 
 ### 3.4 `[[action]]` — les actions
@@ -158,6 +173,7 @@ Les touches sont numérotées de **1** (en haut à gauche) à **15** (en bas à 
 | `le dossier doit s'appeler comme l'id` | renomme le dossier comme l'`id` |
 | `le champ « type » est obligatoire` | chaque `[[action]]` a besoin de `type = "…"` |
 | `catégorie « x » inconnue` | ajoute le `[[category]]` correspondant |
+| `dossier parent « x » inconnu` / `boucle` | `parent` doit être l'`id` d'un autre `[[category]]`, sans boucle |
 | `icône introuvable` | vérifie le chemin (`icons/…`) et la casse |
 | `Expected newline…` | en TOML, une ligne = un champ : pas de `type = "hotkey", keys = "e"` sur la même ligne (sauf entre `{ }`) |
 

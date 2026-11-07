@@ -374,3 +374,22 @@ body.dragging-key.over-trash .stage { box-shadow: inset 0 0 0 2px rgba(198, 40, 
 /* Barre du haut sur les fenêtres étroites : les pastilles des modules
    disparaissent (le dessin de la base montre déjà les modules branchés). */
 @media (max-width: 1440px) { .modules { display: none; } }
+
+/* Bibliothèque en dossiers (addons : un dossier par addon, sous-dossiers) */
+.lib-section { font-size: 10.5px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--faint); margin: 12px 6px 4px; }
+.lib-section:first-child { margin-top: 2px; }
+.lib-folder { margin-top: 2px; }
+.lib-folder-title { display: flex; align-items: center; gap: 8px; padding: 7px 6px; cursor: pointer; border-radius: 8px; user-select: none; }
+.lib-folder-title:hover { background: rgba(255, 255, 255, 0.03); }
+.lib-folder-title .caret { transition: transform 0.15s; color: var(--faint); width: 10px; flex: none; }
+.lib-folder-title .grow { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-folder.closed > .lib-folder-title .caret { transform: rotate(-90deg); }
+.lib-folder.closed > .lib-folder-body { display: none; }
+.lib-folder.level-0 > .lib-folder-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.lib-folder.addon-root > .lib-folder-title { text-transform: none; letter-spacing: 0; font-size: 13.5px; color: var(--text); }
+.lib-folder.addon-root { border: 1px solid var(--line); border-radius: 10px; margin: 4px 0 6px; background: rgba(255, 255, 255, 0.015); }
+.lib-folder.addon-root > .lib-folder-body { padding: 0 6px 6px; }
+.lib-folder.level-1 > .lib-folder-title, .lib-folder.level-2 > .lib-folder-title, .lib-folder.level-3 > .lib-folder-title { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.lib-folder.level-1 > .lib-folder-body, .lib-folder.level-2 > .lib-folder-body, .lib-folder.level-3 > .lib-folder-body { margin-left: 10px; padding-left: 8px; border-left: 1px solid var(--line); }
+.lib-count { font-size: 10.5px; font-weight: 600; color: var(--faint); background: var(--panel-2); border-radius: 999px; padding: 1px 7px; }
+.lib-folder .addon-icon { padding: 3px; border-radius: 6px; }
