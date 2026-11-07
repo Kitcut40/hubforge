@@ -687,6 +687,9 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
         let Ok(rd) = std::fs::read_dir(&root) else { return };
         for e in rd.flatten() {
             let d = e.path();
+            if !d.is_dir() {
+                continue;
+            }
             let text = std::fs::read_to_string(d.join("manifest.toml")).unwrap();
             let a = parse_manifest(&text, &d).unwrap_or_else(|err| panic!("{} : {err}", d.display()));
             assert_eq!(a.id, e.file_name().to_string_lossy(), "dossier ≠ id");
@@ -694,14 +697,16 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
         }
     }
 
-    /// Planche d'un addon d'exemple : cargo test -p hubforge example_sheet -- --ignored
+    /// Planche d'un addon d'exemple :
+    /// HUBFORGE_ADDON=prusaslicer cargo test -p hubforge example_sheet -- --ignored
     #[test]
     #[ignore]
     fn example_sheet() {
         use hubforge_device::KEY_IMAGE_SIZE as S;
         let cfg = tmp("sheet");
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/addons/discord");
-        let dst = dir(&cfg).join("discord");
+        let name = std::env::var("HUBFORGE_ADDON").unwrap_or_else(|_| "discord".into());
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/addons").join(&name);
+        let dst = dir(&cfg).join(&name);
         std::fs::create_dir_all(dst.join("icons")).unwrap();
         for e in std::fs::read_dir(src.join("icons")).unwrap().flatten() {
             std::fs::copy(e.path(), dst.join("icons").join(e.file_name())).unwrap();
@@ -719,7 +724,7 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
             }
         }
         let big = image::imageops::resize(&sheet, sheet.width() * 2, sheet.height() * 2, image::imageops::FilterType::Lanczos3);
-        big.save("/tmp/hubforge-discord.png").unwrap();
+        big.save(format!("/tmp/hubforge-{name}.png")).unwrap();
     }
 
     /// Vérifie un vrai fichier .forge : HUBFORGE_FORGE=chemin cargo test -p hubforge forge_file -- --ignored

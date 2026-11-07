@@ -1,0 +1,529 @@
+# =====================================================================
+#  Addon d'exemple HubForge — PrusaSlicer
+#  Licence MIT. Icônes dessinées pour HubForge (aucun logo de Prusa).
+#
+#  Raccourcis par défaut de PrusaSlicer (liste officielle :
+#  Aide → Raccourcis clavier, ou Maj+?). Ils agissent dans la fenêtre de
+#  PrusaSlicer : sa page s'affiche toute seule quand il est au premier plan.
+# =====================================================================
+
+[addon]
+id          = "prusaslicer"
+name        = "PrusaSlicer"
+version     = "1.0.0"
+author      = "Benjamin & Claude"
+license     = "MIT"
+description = "Préparer, trancher et exporter : objets, vues, découpe, G-code et carte SD."
+icon        = "icons/addon.svg"
+format      = 1
+
+[detect]
+windows = ["prusa-slicer.exe"]
+
+[[category]]
+id   = "file"
+name = "Fichier"
+
+[[category]]
+id   = "object"
+name = "Objets"
+
+[[category]]
+id     = "object_tools"
+name   = "Outils"
+parent = "object"
+
+[[category]]
+id     = "object_instances"
+name   = "Copies et sélection"
+parent = "object"
+
+[[category]]
+id   = "slice"
+name = "Découpe et export"
+
+[[category]]
+id   = "view"
+name = "Vues"
+
+[[category]]
+id     = "view_cameras"
+name   = "Caméras"
+parent = "view"
+
+[[category]]
+id   = "tabs"
+name = "Onglets de réglages"
+
+# --- Fichier -----------------------------------------------------------
+
+[[action]]
+id          = "new"
+name        = "Nouveau projet"
+label       = "Nouveau"
+category    = "file"
+icon        = "builtin:file"
+color       = "#455A64"
+description = "Ctrl+N (vide le plateau)"
+type        = "hotkey"
+keys        = "ctrl+n"
+
+[[action]]
+id          = "open"
+name        = "Ouvrir un projet"
+label       = "Ouvrir"
+category    = "file"
+icon        = "builtin:folder-open"
+color       = "#455A64"
+description = "Ctrl+O"
+type        = "hotkey"
+keys        = "ctrl+o"
+
+[[action]]
+id          = "import"
+name        = "Importer un modèle"
+label       = "Importer"
+category    = "file"
+icon        = "icons/import.svg"
+color       = "#ED6B21"
+description = "Ctrl+I : STL/OBJ/3MF sans vider le plateau"
+type        = "hotkey"
+keys        = "ctrl+i"
+
+[[action]]
+id          = "save"
+name        = "Enregistrer le projet"
+label       = "Enregistrer"
+category    = "file"
+icon        = "builtin:save"
+color       = "#2E7D32"
+description = "Ctrl+S"
+type        = "hotkey"
+keys        = "ctrl+s"
+
+[[action]]
+id          = "undo"
+name        = "Annuler"
+label       = "Annuler"
+category    = "file"
+icon        = "builtin:undo-2"
+color       = "#5D4037"
+description = "Ctrl+Z"
+type        = "hotkey"
+keys        = "ctrl+z"
+
+[[action]]
+id          = "redo"
+name        = "Rétablir"
+label       = "Rétablir"
+category    = "file"
+icon        = "builtin:redo-2"
+color       = "#5D4037"
+description = "Ctrl+Y"
+type        = "hotkey"
+keys        = "ctrl+y"
+
+# --- Objets ------------------------------------------------------------
+
+[[action]]
+id          = "arrange"
+name        = "Agencer le plateau"
+label       = "Agencer"
+category    = "object"
+icon        = "icons/arrange.svg"
+color       = "#ED6B21"
+description = "A"
+type        = "hotkey"
+keys        = "a"
+
+[[action]]
+id          = "arrange_selection"
+name        = "Agencer la sélection"
+label       = "Agencer sél."
+category    = "object"
+icon        = "icons/arrange-sel.svg"
+color       = "#ED6B21"
+description = "Maj+A"
+type        = "hotkey"
+keys        = "shift+a"
+
+[[action]]
+id          = "move"
+name        = "Déplacer"
+label       = "Déplacer"
+category    = "object_tools"
+icon        = "icons/move.svg"
+color       = "#1565C0"
+description = "M"
+type        = "hotkey"
+keys        = "m"
+
+[[action]]
+id          = "rotate"
+name        = "Pivoter"
+label       = "Pivoter"
+category    = "object_tools"
+icon        = "builtin:rotate-ccw"
+color       = "#1565C0"
+description = "R"
+type        = "hotkey"
+keys        = "r"
+
+[[action]]
+id          = "scale"
+name        = "Redimensionner"
+label       = "Échelle"
+category    = "object_tools"
+icon        = "icons/scale.svg"
+color       = "#1565C0"
+description = "S"
+type        = "hotkey"
+keys        = "s"
+
+[[action]]
+id          = "place_face"
+name        = "Poser sur une face"
+label       = "Poser"
+category    = "object_tools"
+icon        = "icons/place-face.svg"
+color       = "#1565C0"
+description = "F"
+type        = "hotkey"
+keys        = "f"
+
+[[action]]
+id          = "cut"
+name        = "Couper l'objet"
+label       = "Couper"
+category    = "object_tools"
+icon        = "builtin:scissors"
+color       = "#1565C0"
+description = "C"
+type        = "hotkey"
+keys        = "c"
+
+[[action]]
+id          = "instance_add"
+name        = "Ajouter une copie"
+label       = "+ Copie"
+category    = "object_instances"
+icon        = "icons/instance-plus.svg"
+color       = "#00897B"
+description = "+ (ajoute une instance de l'objet sélectionné)"
+type        = "hotkey"
+keys        = "plus"
+
+[[action]]
+id          = "instance_remove"
+name        = "Retirer une copie"
+label       = "− Copie"
+category    = "object_instances"
+icon        = "icons/instance-minus.svg"
+color       = "#00897B"
+description = "- (retire une instance de l'objet sélectionné)"
+type        = "hotkey"
+keys        = "-"
+
+[[action]]
+id          = "select_all"
+name        = "Tout sélectionner"
+label       = "Tout sélect."
+category    = "object_instances"
+icon        = "builtin:text-select"
+color       = "#455A64"
+description = "Ctrl+A"
+type        = "hotkey"
+keys        = "ctrl+a"
+
+[[action]]
+id          = "delete"
+name        = "Supprimer la sélection"
+label       = "Supprimer"
+category    = "object_instances"
+icon        = "builtin:trash-2"
+color       = "#C62828"
+description = "Suppr"
+type        = "hotkey"
+keys        = "delete"
+
+[[action]]
+id          = "labels"
+name        = "Afficher les étiquettes"
+label       = "Étiquettes"
+category    = "object_instances"
+icon        = "icons/labels.svg"
+color       = "#455A64"
+description = "E : affiche ou masque le nom des objets"
+type        = "hotkey"
+keys        = "e"
+
+# --- Découpe et export -------------------------------------------------
+
+[[action]]
+id          = "slice"
+name        = "Découper (trancher)"
+label       = "Découper"
+category    = "slice"
+icon        = "icons/slice.svg"
+color       = "#ED6B21"
+description = "Ctrl+R"
+type        = "hotkey"
+keys        = "ctrl+r"
+
+[[action]]
+id          = "preview"
+name        = "Vue 3D / aperçu"
+label       = "3D / aperçu"
+category    = "slice"
+icon        = "icons/preview.svg"
+color       = "#ED6B21"
+description = "Ctrl+5 : bascule entre la vue 3D et l'aperçu de découpe"
+type        = "hotkey"
+keys        = "ctrl+5"
+
+[[action]]
+id          = "export_gcode"
+name        = "Exporter le G-code"
+label       = "G-code"
+category    = "slice"
+icon        = "icons/export-gcode.svg"
+color       = "#2E7D32"
+description = "Ctrl+G"
+type        = "hotkey"
+keys        = "ctrl+g"
+
+[[action]]
+id          = "export_sd"
+name        = "Exporter sur la carte SD / clé USB"
+label       = "Vers SD"
+category    = "slice"
+icon        = "icons/sd.svg"
+color       = "#2E7D32"
+description = "Ctrl+U"
+type        = "hotkey"
+keys        = "ctrl+u"
+
+[[action]]
+id          = "eject"
+name        = "Éjecter la carte SD / clé USB"
+label       = "Éjecter"
+category    = "slice"
+icon        = "icons/eject.svg"
+color       = "#455A64"
+description = "Ctrl+T"
+type        = "hotkey"
+keys        = "ctrl+t"
+
+[[action]]
+id          = "slice_export"
+name        = "Découper puis exporter sur SD"
+label       = "Trancher → SD"
+category    = "slice"
+icon        = "icons/sd.svg"
+color       = "#ED6B21"
+description = "Macro : Ctrl+R, attente, puis Ctrl+U"
+type        = "macro"
+steps       = [ { type = "hotkey", keys = "ctrl+r" }, { type = "wait", ms = 2500 }, { type = "hotkey", keys = "ctrl+u" } ]
+
+# --- Vues --------------------------------------------------------------
+
+[[action]]
+id          = "zoom_bed"
+name        = "Zoom sur le plateau"
+label       = "Zoom plateau"
+category    = "view"
+icon        = "icons/zoom-bed.svg"
+color       = "#37474F"
+description = "B"
+type        = "hotkey"
+keys        = "b"
+
+[[action]]
+id          = "zoom_all"
+name        = "Zoom sur les objets"
+label       = "Zoom objets"
+category    = "view"
+icon        = "icons/zoom-all.svg"
+color       = "#37474F"
+description = "Z"
+type        = "hotkey"
+keys        = "z"
+
+[[action]]
+id          = "camera_type"
+name        = "Perspective / orthographique"
+label       = "Caméra"
+category    = "view"
+icon        = "icons/camera.svg"
+color       = "#37474F"
+description = "K"
+type        = "hotkey"
+keys        = "k"
+
+[[action]]
+id          = "view_iso"
+name        = "Vue isométrique"
+label       = "Iso"
+category    = "view_cameras"
+icon        = "icons/view-iso.svg"
+color       = "#263238"
+description = "0"
+type        = "hotkey"
+keys        = "0"
+
+[[action]]
+id          = "view_top"
+name        = "Vue de dessus"
+label       = "Dessus"
+category    = "view_cameras"
+icon        = "icons/view-top.svg"
+color       = "#263238"
+description = "1"
+type        = "hotkey"
+keys        = "1"
+
+[[action]]
+id          = "view_bottom"
+name        = "Vue de dessous"
+label       = "Dessous"
+category    = "view_cameras"
+icon        = "icons/view-bottom.svg"
+color       = "#263238"
+description = "2"
+type        = "hotkey"
+keys        = "2"
+
+[[action]]
+id          = "view_front"
+name        = "Vue de face"
+label       = "Face"
+category    = "view_cameras"
+icon        = "icons/view-front.svg"
+color       = "#263238"
+description = "3"
+type        = "hotkey"
+keys        = "3"
+
+[[action]]
+id          = "view_back"
+name        = "Vue arrière"
+label       = "Arrière"
+category    = "view_cameras"
+icon        = "icons/view-back.svg"
+color       = "#263238"
+description = "4"
+type        = "hotkey"
+keys        = "4"
+
+[[action]]
+id          = "view_left"
+name        = "Vue de gauche"
+label       = "Gauche"
+category    = "view_cameras"
+icon        = "icons/view-left.svg"
+color       = "#263238"
+description = "5"
+type        = "hotkey"
+keys        = "5"
+
+[[action]]
+id          = "view_right"
+name        = "Vue de droite"
+label       = "Droite"
+category    = "view_cameras"
+icon        = "icons/view-right.svg"
+color       = "#263238"
+description = "6"
+type        = "hotkey"
+keys        = "6"
+
+# --- Onglets de réglages ----------------------------------------------
+
+[[action]]
+id          = "tab_plater"
+name        = "Onglet Plateau"
+label       = "Plateau"
+category    = "tabs"
+icon        = "builtin:layout-dashboard"
+color       = "#4E342E"
+description = "Ctrl+1"
+type        = "hotkey"
+keys        = "ctrl+1"
+
+[[action]]
+id          = "tab_print"
+name        = "Réglages d'impression"
+label       = "Impression"
+category    = "tabs"
+icon        = "builtin:settings"
+color       = "#4E342E"
+description = "Ctrl+2"
+type        = "hotkey"
+keys        = "ctrl+2"
+
+[[action]]
+id          = "tab_filament"
+name        = "Réglages du filament"
+label       = "Filament"
+category    = "tabs"
+icon        = "icons/filament.svg"
+color       = "#4E342E"
+description = "Ctrl+3"
+type        = "hotkey"
+keys        = "ctrl+3"
+
+[[action]]
+id          = "tab_printer"
+name        = "Réglages de l'imprimante"
+label       = "Imprimante"
+category    = "tabs"
+icon        = "builtin:printer"
+color       = "#4E342E"
+description = "Ctrl+4"
+type        = "hotkey"
+keys        = "ctrl+4"
+
+# --- Pages prêtes à l'emploi ------------------------------------------
+
+[[page]]
+id   = "main"
+name = "PrusaSlicer"
+keys = [
+  { key = 1,  action = "import" },
+  { key = 2,  action = "arrange" },
+  { key = 3,  action = "move" },
+  { key = 4,  action = "rotate" },
+  { key = 5,  action = "scale" },
+  { key = 6,  action = "place_face" },
+  { key = 7,  action = "cut" },
+  { key = 8,  action = "instance_add" },
+  { key = 9,  action = "instance_remove" },
+  { key = 10, action = "delete" },
+  { key = 11, action = "slice" },
+  { key = 12, action = "preview" },
+  { key = 13, action = "export_gcode" },
+  { key = 14, action = "export_sd" },
+  { key = 15, open = "views", label = "Vues…" },
+]
+
+[[page]]
+id     = "views"
+name   = "PrusaSlicer — Vues et réglages"
+folder = true
+keys = [
+  { key = 1,  back = true },
+  { key = 2,  action = "view_iso" },
+  { key = 3,  action = "view_top" },
+  { key = 4,  action = "view_front" },
+  { key = 5,  action = "view_right" },
+  { key = 6,  action = "zoom_bed" },
+  { key = 7,  action = "zoom_all" },
+  { key = 8,  action = "view_left" },
+  { key = 9,  action = "view_back" },
+  { key = 10, action = "camera_type" },
+  { key = 11, action = "tab_plater" },
+  { key = 12, action = "tab_print" },
+  { key = 13, action = "tab_filament" },
+  { key = 14, action = "tab_printer" },
+  { key = 15, action = "save" },
+]

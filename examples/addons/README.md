@@ -6,6 +6,7 @@ Format : [docs/ADDON_GUIDE.md](../../docs/ADDON_GUIDE.md).
 | Addon | Contenu |
 |---|---|
 | [`discord/`](discord/) | Vocal (micro, sourdine, appels), navigation serveurs/salons, emojis, GIF, messages rapides — 24 actions, 2 pages |
+| [`prusaslicer/`](prusaslicer/) | Objets (agencer, déplacer, pivoter, échelle, poser, couper, copies), découpe, G-code, carte SD, vues et onglets de réglages — 38 actions, 2 pages |
 
 ## Fabriquer le fichier `.forge`
 
