@@ -8,6 +8,8 @@ Le MasterHUB est un excellent contrôleur modulaire (touches à écran, faders, 
 
 ## État d'avancement
 
+> Feuille de route vers la v1.0 (analyse, attentes de la communauté, plan) : [docs/ROADMAP-V1.md](docs/ROADMAP-V1.md)
+
 | Phase | Contenu | État |
 |---|---|---|
 | 0 | Analyse et validation du protocole USB | ✅ terminée |
