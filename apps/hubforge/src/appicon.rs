@@ -42,6 +42,41 @@ pub fn app_name(target: &str) -> Option<String> {
     }
 }
 
+/// Cherche un programme installé (ex. « prusa-slicer.exe ») : d'abord parmi
+/// les programmes ouverts, puis dans Program Files et AppData (3 niveaux).
+pub fn find_installed(exe: &str) -> Option<std::path::PathBuf> {
+    if let Some(p) = crate::foreground::running_exe_path(exe) {
+        return Some(p.into());
+    }
+    let want = exe.trim().to_lowercase();
+    let roots: Vec<std::path::PathBuf> = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "ProgramW6432"]
+        .iter()
+        .filter_map(|v| std::env::var_os(v).map(std::path::PathBuf::from))
+        .collect();
+    fn walk(dir: &Path, want: &str, depth: u32, budget: &mut u32) -> Option<std::path::PathBuf> {
+        let rd = std::fs::read_dir(dir).ok()?;
+        let mut subdirs = Vec::new();
+        for e in rd.flatten() {
+            if *budget == 0 {
+                return None;
+            }
+            *budget -= 1;
+            let p = e.path();
+            if p.is_dir() {
+                subdirs.push(p);
+            } else if e.file_name().to_string_lossy().to_lowercase() == want {
+                return Some(p);
+            }
+        }
+        if depth == 0 {
+            return None;
+        }
+        subdirs.into_iter().find_map(|d| walk(&d, want, depth - 1, budget))
+    }
+    let mut budget = 60_000; // limite le temps de recherche
+    roots.iter().find_map(|r| walk(r, &want, 3, &mut budget))
+}
+
 fn is_url(t: &str) -> bool {
     let l = t.to_lowercase();
     l.starts_with("http://") || l.starts_with("https://")

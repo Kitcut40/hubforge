@@ -707,11 +707,18 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
         let name = std::env::var("HUBFORGE_ADDON").unwrap_or_else(|_| "discord".into());
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/addons").join(&name);
         let dst = dir(&cfg).join(&name);
-        std::fs::create_dir_all(dst.join("icons")).unwrap();
-        for e in std::fs::read_dir(src.join("icons")).unwrap().flatten() {
-            std::fs::copy(e.path(), dst.join("icons").join(e.file_name())).unwrap();
+        fn copy_dir(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for e in std::fs::read_dir(from).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    copy_dir(&p, &to.join(e.file_name()));
+                } else {
+                    std::fs::copy(&p, to.join(e.file_name())).unwrap();
+                }
+            }
         }
-        std::fs::copy(src.join("manifest.toml"), dst.join("manifest.toml")).unwrap();
+        copy_dir(&src, &dst);
         let a = scan(&cfg).remove(0).addon.unwrap();
         let pages = a.build_pages(0);
         let mut sheet = image::RgbImage::from_pixel(5 * (S + 6) + 6, 2 * (3 * (S + 6) + 12), image::Rgb([14, 15, 19]));

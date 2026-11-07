@@ -1893,7 +1893,7 @@ async function mockInvoke(cmd, args) {
     case "addons_signature": return "x";
     case "addon_pages": return [{ name: "Fusion 360", apps: ["Fusion360.exe"], keys: [{ key: 1, label: "Esquisse", color: "#1565C0", action: { type: "hotkey", keys: "s" } }] }];
     case "get_initial":
-      return { profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.7.1",
+      return { profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.7.2",
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;

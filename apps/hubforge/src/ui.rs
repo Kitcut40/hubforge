@@ -131,6 +131,26 @@ pub struct IconView {
     src: Option<String>,
 }
 
+/// Icône « auto » d'un addon : celle du programme installé (jamais
+/// redistribuée, extraite sur le PC de l'utilisateur et gardée en cache).
+fn auto_icon(cfg_dir: &std::path::Path, addon_id: &str, detect: &[String]) -> IconView {
+    let cache = cfg_dir.join("icons").join(format!("addon-{addon_id}.png"));
+    if !cache.is_file() {
+        let Some(exe) = detect.iter().find_map(|d| crate::appicon::find_installed(d)) else { return IconView::default() };
+        match crate::appicon::extract_to(&exe.to_string_lossy(), cfg_dir) {
+            Ok(rel) => {
+                let _ = std::fs::rename(cfg_dir.join(&rel), &cache);
+            }
+            Err(e) => {
+                log::debug!("icône de l'addon {addon_id} : {e}");
+                return IconView::default();
+            }
+        }
+    }
+    let src = std::fs::read(&cache).ok().map(|b| format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(b)));
+    IconView { svg: None, src }
+}
+
 fn icon_view(cfg_dir: &std::path::Path, icon: &Option<String>) -> IconView {
     let Some(icon) = icon else { return IconView::default() };
     if let Some(name) = icon.strip_prefix("builtin:") {
@@ -186,7 +206,7 @@ pub async fn list_addons(state: State<'_, AppState>) -> Result<AddonsInfo, Strin
         .map(|e| {
             let (icon, actions) = match &e.addon {
                 Some(a) => (
-                    icon_view(&dir, &a.icon),
+                    if a.icon.as_deref() == Some("auto") { auto_icon(&dir, &a.id, &a.detect) } else { icon_view(&dir, &a.icon) },
                     a.actions
                         .iter()
                         .map(|x| AddonActionView { preview: icon_view(&dir, &x.icon), action: x.clone() })

@@ -30,6 +30,12 @@ pub fn running_apps() -> Vec<String> {
     v
 }
 
+/// Chemin complet d'un programme qui a une fenêtre ouverte (ex. « Discord.exe »).
+pub fn running_exe_path(name: &str) -> Option<String> {
+    let want = normalize(name);
+    imp::window_exes().into_iter().find(|p| normalize(p) == want)
+}
+
 /// Programmes à ne jamais proposer (HubForge lui-même, éléments du système).
 const IGNORED: &[&str] = &[
     "hubforge.exe",

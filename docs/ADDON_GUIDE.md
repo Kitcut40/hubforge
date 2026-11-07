@@ -40,7 +40,7 @@ version     = "1.0.0"
 author      = "Ton nom"
 license     = "MIT"               # au choix de l'auteur (voir ADDON-EXCEPTION.md)
 description = "Ce que fait l'addon, en une phrase."
-icon        = "icons/logo.svg"    # ou "builtin:nom" (icônes intégrées), facultatif
+icon        = "icons/logo.svg"    # ou "builtin:nom", ou "auto" (voir § 4), facultatif
 format      = 1                   # version du format (1 pour l'instant)
 ```
 
@@ -163,6 +163,8 @@ Les touches sont numérotées de **1** (en haut à gauche) à **15** (en bas à 
 - PNG / JPG / GIF / WebP acceptés (affichés tels quels, le GIF est animé).
 - `builtin:nom` utilise une des icônes intégrées à HubForge (bouton « Icônes… » de l'interface pour voir les noms : `save`, `play`, `mic`, `folder`, `settings`…).
 - **Pas de logos de marques** dans un addon partagé publiquement sans autorisation de leur propriétaire.
+- **`icon = "auto"`** (icône de l'addon seulement) : HubForge extrait l'icône du **logiciel installé sur le PC** de l'utilisateur, d'après `[detect]` (programme ouvert, sinon recherche dans Program Files et AppData). Le logo n'est jamais redistribué dans l'addon. Sans le logiciel installé, une icône générique s'affiche.
+- **Icônes d'un logiciel open source** : autorisées si tu respectes leur licence. Exemple : l'addon PrusaSlicer reprend les icônes d'outils de PrusaSlicer (AGPL-3.0), donc l'addon est lui-même sous AGPL-3.0, avec la source indiquée (`icons/prusaslicer/SOURCE.md`) et le texte de la licence.
 
 ## 5. Erreurs fréquentes
 
