@@ -1,6 +1,6 @@
 # SPECS — Logiciel custom pour Cooler Master MasterHUB
 
-> **Statut : v1.0 — VALIDÉE pour le socle du logiciel.**
+> **Statut : v1.1 — VALIDÉE pour le socle du logiciel.**
 > Priorité absolue : un logiciel **propre et fonctionnel de A à Z** (sections 2 à 9).
 > Les addons métiers (Fusion 360, OBS, PrusaSlicer, SolidCraft, MSFS) seront précisés **après** le socle. Les points ❓ restants les concernent.
 
@@ -23,6 +23,7 @@ Nom du logiciel : **HubForge** ✅ — extension des addons : **`.forge`**
 | v0.5 | Addon Fusion 360 détaillé (section 5.7) |
 | v1.0 | **Priorité au socle** : logiciel complet et fiable d'abord ; addons métiers détaillés ensuite |
 | v1.0 | Mise à jour du firmware : **laissée au logiciel officiel** (risque de rendre le MasterHUB inutilisable) |
+| v1.1 | Base de fonctionnalités **intégrées** enrichie (5.4), GIF animés détaillés (5.3.1), **couleur par fader** (5.5) |
 
 ---
 
@@ -215,35 +216,84 @@ Priorité : **P1** = version 1 indispensable · **P2** = version 1 si possible �
 - **P2** Profil par défaut au démarrage
 
 ### 5.3 Touches à écran (15 touches)
-- **P1** Image, icône ou texte par touche
+- **P1** Image, icône ou texte par touche (JPEG 72×72 envoyé au module — ✅ validé sur le matériel)
 - **P1** **Import automatique de l'icône d'une application**
-- **P1** GIF animés
+- **P1** **GIF animés sur les touches** — voir 5.3.1
 - **P2** Éditeur d'icône intégré : fond, couleur, texte, emoji, bibliothèque d'icônes
-- **P2** Touches dynamiques : l'image change selon un état (micro coupé, autopilote ON / OFF…)
-- **P2** Touches "widget" : heure, CPU, GPU, températures, RAM
-- **P3** Une image découpée sur plusieurs touches
+- **P2** Touches dynamiques : l'image change selon un état (micro coupé, lecture en pause…)
+- **P2** Touches « widget » qui se mettent à jour seules (voir 5.4, catégorie Infos)
+- **P2** Effet visuel à l'appui (touche qui s'assombrit ou clignote brièvement)
+- **P3** Une image ou un GIF découpé sur plusieurs touches (grand visuel sur la grille)
 
-### 5.4 Actions de base (intégrées, hors addons)
+#### 5.3.1 GIF animés
+Le module n'enregistre pas d'animation : HubForge envoie chaque image du GIF l'une après l'autre (le logiciel officiel fait pareil).
+- Débit mesuré : ~30 images de touche par seconde au total → **1 touche animée ≈ 25–30 i/s, 3 touches ≈ 10 i/s chacune**, 15 touches ≈ 2 i/s chacune.
+- HubForge **pré-calcule** chaque GIF une fois (redimensionnement 72×72 + JPEG) pour ne rien recalculer pendant l'animation.
+- **Répartition automatique du débit** entre les touches animées, avec une cadence max réglable.
+- Option « animer seulement au survol / à l'appui » pour économiser le débit.
+- GIF, WebP et PNG animés acceptés.
+
+### 5.4 Fonctionnalités intégrées (sans aucun addon)
+Objectif : un logiciel **déjà complet et sympa dès l'installation**. Ces actions font partie du cœur de HubForge.
+
+**Clavier & automatisation**
 - **P1** Raccourci clavier **avec sélecteur en liste déroulante** + mode capture
 - **P1** Macros : séquence de touches, délais, enregistrement
-- **P1** Lancer une application, un fichier, un dossier, une URL
-- **P1** Taper un texte
-- **P1** Contrôle multimédia (lecture / pause, suivant, précédent)
-- **P1** Volume système, coupure micro
-- **P1** Navigation : page suivante / précédente, ouvrir un dossier, changer de profil
-- **P2** Multi-actions (plusieurs actions sur un appui)
-- **P2** Actions bascule (2 états)
+- **P1** Taper un texte (avec accents)
+- **P2** Multi-actions (plusieurs actions sur un appui) · actions bascule (2 états)
 - **P2** **Appui court / appui long / double appui** = actions différentes
 - **P2** Lancer une commande / un script (PowerShell, bash, Python)
-- **P2** Changer de sortie audio (casque ↔ enceintes)
+
+**Applications & fichiers**
+- **P1** Lancer une application, ouvrir un fichier, un dossier, une URL
+- **P2** Fermer / basculer vers une application (si déjà ouverte : la mettre au premier plan)
+- **P2** Ouvrir un groupe d'applications d'un coup (« espace de travail »)
+
+**Audio**
+- **P1** Volume général, coupure micro, coupure son
+- **P1** **Volume par application** (Discord, jeu, navigateur…) sur les faders
+- **P1** Contrôle multimédia : lecture / pause, suivant, précédent
+- **P2** **Titre et pochette** du morceau en cours affichés sur une touche
+- **P2** Changer de sortie audio (casque ↔ enceintes) et d'entrée (micro)
+- **P2** **Table de sons** (soundboard) : jouer un fichier son sur une touche
+
+**Système**
+- **P1** Verrouiller le PC, mise en veille
+- **P2** Capture d'écran (plein écran ou zone)
+- **P2** Mode « Ne pas déranger » Windows
+- **P2** Luminosité de l'écran du PC (écrans compatibles DDC/CI) sur un fader ou une molette
 - **P3** Requête HTTP (domotique, homelab futur)
 
-### 5.5 Faders et molettes
-- **P1** Fader → volume général, micro, **volume par application**
-- **P1** Molette → défilement, zoom, ou actions « + / − » personnalisées
+**Infos (touches widget, mises à jour en direct)**
+- **P2** Heure et date
+- **P2** CPU, GPU, RAM, températures
+- **P2** **Minuteur** et **chronomètre** (démarrer / pause sur la touche, compte affiché dessus)
+- **P3** Compteur (+1 à chaque appui, appui long = remise à zéro)
+
+**Navigation HubForge**
+- **P1** Page suivante / précédente, ouvrir un dossier, retour
+- **P1** Changer de profil
+- **P2** Luminosité du MasterHUB (touches et LED) sur un fader ou une molette
+
+### 5.5 Faders, molettes et LED
+
+**Faders**
+- **P1** Volume général, micro, **volume par application**
+- **P2** Luminosité de l'écran du PC, luminosité du MasterHUB
 - **P2** Courbes de réponse (linéaire, logarithmique), inversion, zone morte
-- **P2** Molette avec accélération (tourner vite = plus grands pas)
-- **P2** LED des faders liées au niveau ou à l'état (muet = rouge)
+- **P2** Position lue au démarrage (pas de saut de volume au lancement — ✅ lecture validée)
+
+**Molettes**
+- **P1** Défilement, zoom, volume, ou actions « + / − » personnalisées
+- **P2** Défilement horizontal, onglet suivant / précédent
+- **P2** Accélération (tourner vite = plus grands pas)
+
+**LED** (✅ couleur et luminosité validées sur le matériel)
+- **P1** **Couleur choisie pour chaque fader individuellement** (5 couleurs différentes possibles) 🔍 commande par fader à confirmer, la commande « tous les faders » est validée
+- **P1** Couleur et luminosité des LED de la base
+- **P2** LED **liées à l'action** : couleur selon le niveau (dégradé vert → rouge) ou selon l'état (muet = rouge)
+- **P2** Effets intégrés au module (respiration, vague…) — modes 0 à 9 à explorer
+- **P2** Couleurs propres à chaque profil (ex. profil Fusion = bleu, profil Jeu = rouge)
 
 ### 5.6 Addons livrés avec la version 1
 | Addon | Priorité | Niveau | Contenu |
