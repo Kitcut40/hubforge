@@ -77,7 +77,25 @@ pub fn error_visual(msg: &str) -> KeyVisual {
     KeyVisual { frames: vec![make_frame(&img, Duration::ZERO, 85)] }
 }
 
+/// Aperçu pour l'interface : première image (JPEG) + animé ou non.
+pub fn preview(def: &KeyDef, base_dir: &Path) -> (Vec<u8>, bool) {
+    let v = render_key_opts(def, base_dir, true);
+    let animated = def
+        .icon
+        .as_deref()
+        .map(|i| {
+            let l = i.to_lowercase();
+            l.ends_with(".gif") || l.ends_with(".webp")
+        })
+        .unwrap_or(false);
+    (v.frames[0].jpeg.as_ref().clone(), animated)
+}
+
 pub fn render_key(def: &KeyDef, base_dir: &Path) -> KeyVisual {
+    render_key_opts(def, base_dir, false)
+}
+
+fn render_key_opts(def: &KeyDef, base_dir: &Path, first_only: bool) -> KeyVisual {
     let bg = def.color.as_deref().and_then(parse_color).unwrap_or((0, 0, 0));
     let fg = def.text_color.as_deref().and_then(parse_color).unwrap_or((255, 255, 255));
     let bg = Rgb([bg.0, bg.1, bg.2]);
@@ -94,7 +112,12 @@ pub fn render_key(def: &KeyDef, base_dir: &Path) -> KeyVisual {
     } else {
         base_dir.join(icon)
     };
-    let frames = match load_frames(&path) {
+    let frames = match load_frames(&path).map(|mut f| {
+        if first_only {
+            f.truncate(1);
+        }
+        f
+    }) {
         Ok(f) if !f.is_empty() => f,
         Ok(_) => return error_visual("Image vide"),
         Err(e) => {

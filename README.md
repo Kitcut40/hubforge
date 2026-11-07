@@ -12,7 +12,7 @@ Le MasterHUB est un excellent contrôleur modulaire (touches à écran, faders, 
 |---|---|---|
 | 0 | Analyse et validation du protocole USB | ✅ terminée |
 | 1 | Service d'arrière-plan : touches, profils, raccourcis, macros | ✅ v0.1 validée sur le matériel |
-| 2 | Interface de configuration | ⏳ |
+| 2 | Interface de configuration | 🔧 v0.2 en test |
 | 3 | Faders, molettes, audio par application | ⏳ |
 | 4 | Système d'addons `.forge` | ⏳ |
 | 5 | Linux, installeurs, publication v1.0 | ⏳ |
@@ -32,11 +32,17 @@ Le MasterHUB est un excellent contrôleur modulaire (touches à écran, faders, 
 - [`docs/SPECS.md`](docs/SPECS.md) — fonctionnalités, architecture et feuille de route
 - [`docs/PROTOCOLE.md`](docs/PROTOCOLE.md) — protocole USB du MasterHUB (HID), vérifié sur le matériel
 
-## Essayer HubForge (v0.1)
+## Essayer HubForge
 
 ```sh
 cargo run --release -p hubforge
 ```
+
+HubForge s'installe dans la **zone de notification** (près de l'horloge) : clic sur l'icône pour ouvrir l'interface, clic droit pour « Démarrer avec Windows » ou « Quitter ». Fermer la fenêtre ne coupe pas le MasterHUB.
+
+L'interface montre ton MasterHUB à l'écran : glisse une action sur une touche, clique sur une touche, un fader ou une molette pour la régler, dépose une image ou un GIF depuis l'Explorateur. Tout est appliqué en direct et enregistré automatiquement.
+
+> Windows : l'exécutable a besoin de `WebView2Loader.dll` à côté de lui (fourni dans l'archive). Le moteur WebView2 est déjà présent sur Windows 10 et 11.
 
 Au premier lancement, HubForge crée `config.toml` (dans `%APPDATA%\HubForge` sous Windows, `~/.config/HubForge` sous Linux). Modifie-le et enregistre-le : les touches se mettent à jour toutes seules.
 

@@ -1,10 +1,10 @@
 //! Configuration de HubForge : un fichier `config.toml` lisible, rechargé
 //! automatiquement à chaque enregistrement.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
@@ -17,7 +17,7 @@ pub struct Config {
     pub pages: Vec<Page>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct General {
     /// Luminosité des écrans des touches (0–100).
@@ -44,7 +44,7 @@ impl Default for General {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FaderSlot {
     /// "master", "mic", "app:nom.exe" (plusieurs séparés par des virgules), "none"
@@ -57,7 +57,7 @@ fn default_fader_color() -> String {
     "#FFFFFF".into()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Rollers {
     pub right: String,
@@ -81,7 +81,7 @@ impl Default for Rollers {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Page {
     #[serde(default)]
@@ -90,7 +90,7 @@ pub struct Page {
     pub keys: Vec<KeyDef>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeyDef {
     /// Numéro de la touche, de 1 (en haut à gauche) à 15 (en bas à droite).
@@ -98,19 +98,19 @@ pub struct KeyDef {
     #[serde(default)]
     pub label: String,
     /// Image (png, jpg, gif, webp), chemin relatif au dossier de config ou absolu.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
     /// Couleur de fond (si pas d'image).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     /// Couleur du texte.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_color: Option<String>,
     #[serde(default)]
     pub action: Action,
 }
 
-#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
     #[default]
@@ -122,7 +122,7 @@ pub enum Action {
     /// Lance une application, ouvre un fichier, un dossier ou une URL
     Launch {
         target: String,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
     },
     /// Commande multimédia : play_pause, next, previous, stop, mute,
@@ -145,6 +145,20 @@ pub fn parse_color(s: &str) -> Option<(u8, u8, u8)> {
     Some(((v >> 16) as u8, (v >> 8) as u8, v as u8))
 }
 
+/// Enregistre la configuration (écriture atomique : fichier temporaire puis
+/// renommage, pour ne jamais laisser un fichier à moitié écrit).
+pub fn save(path: &Path, cfg: &Config) -> Result<(), String> {
+    validate(cfg)?;
+    let body = toml::to_string_pretty(cfg).map_err(|e| e.to_string())?;
+    let text = format!(
+        "# HubForge — configuration\n# Modifiée par l'interface de HubForge. Tu peux aussi l'éditer à la main :\n# enregistre le fichier et HubForge le rechargera tout seul.\n\n{body}"
+    );
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("écriture impossible : {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("écriture impossible : {e}"))?;
+    Ok(())
+}
+
 pub fn config_dir() -> PathBuf {
     #[cfg(windows)]
     let base = std::env::var_os("APPDATA").map(PathBuf::from);
@@ -162,7 +176,7 @@ pub fn load(path: &Path) -> Result<Config, String> {
     Ok(cfg)
 }
 
-fn validate(cfg: &Config) -> Result<(), String> {
+pub fn validate(cfg: &Config) -> Result<(), String> {
     for (p, page) in cfg.pages.iter().enumerate() {
         for k in &page.keys {
             if !(1..=15).contains(&k.key) {
@@ -399,6 +413,19 @@ mod tests {
             cfg.pages[0].keys[3].action,
             Action::Hotkey { keys: "ctrl+shift+esc".into() }
         );
+    }
+
+    #[test]
+    fn save_roundtrip() {
+        let cfg: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
+        let dir = std::env::temp_dir().join("hubforge-cfg-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.toml");
+        save(&p, &cfg).unwrap();
+        let back = load(&p).unwrap();
+        assert_eq!(back.pages.len(), cfg.pages.len());
+        assert_eq!(back.pages[0].keys[3].action, cfg.pages[0].keys[3].action);
+        assert_eq!(back.faders[1].target, "app:discord.exe");
     }
 
     #[test]

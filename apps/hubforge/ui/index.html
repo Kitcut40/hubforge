@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HubForge</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-logo" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2" y="2" width="20" height="20" rx="5" fill="#23262f"/>
+        <g fill="#4a4f60">
+          <rect x="5" y="5" width="4" height="4" rx="1"/><rect x="10" y="5" width="4" height="4" rx="1"/>
+          <rect x="5" y="10" width="4" height="4" rx="1"/><rect x="15" y="10" width="4" height="4" rx="1"/>
+          <rect x="10" y="15" width="4" height="4" rx="1"/><rect x="15" y="15" width="4" height="4" rx="1"/>
+        </g>
+        <g fill="#ff7a1a"><rect x="15" y="5" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="5" y="15" width="4" height="4" rx="1"/></g>
+      </svg>
+      <span class="brand-name">HubForge</span>
+      <span class="brand-version" id="version"></span>
+    </div>
+
+    <nav class="pages" id="pages" aria-label="Pages"></nav>
+
+    <div class="topbar-right">
+      <div class="modules" id="modules" title="Modules connectés"></div>
+      <div class="save-state" id="save-state"><span class="dot"></span><span class="label">Enregistré</span></div>
+      <button class="icon-btn" id="btn-settings" title="Réglages généraux">
+        <svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="M19.4 13.5a7.7 7.7 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.6 7.6 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.7 7.7 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.4 1 2-3.4-2-1.6Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="banner hidden" id="banner"></div>
+
+  <main class="layout">
+    <aside class="library">
+      <div class="library-head">
+        <h2>Actions</h2>
+        <input type="search" class="input" id="lib-search" placeholder="Rechercher…" autocomplete="off" />
+      </div>
+      <div class="library-list" id="library"></div>
+      <p class="library-hint">Glisse une action sur une touche.</p>
+    </aside>
+
+    <section class="stage">
+      <div class="device" id="device">
+        <div class="module module-keys" id="mod-keys">
+          <div class="module-label">15 touches</div>
+          <div class="keys" id="keys"></div>
+        </div>
+        <div class="module module-faders" id="mod-faders">
+          <div class="module-label">Faders</div>
+          <div class="faders" id="faders"></div>
+        </div>
+        <div class="module module-rollers" id="mod-rollers">
+          <div class="module-label">Molettes</div>
+          <div class="rollers" id="rollers"></div>
+        </div>
+        <div class="base-led" id="base-led" title="LED de la base"></div>
+      </div>
+      <p class="stage-hint">Clique sur une touche, un fader ou une molette pour le régler · glisse une touche sur une autre pour les échanger · dépose une image ou un GIF sur une touche.</p>
+    </section>
+
+    <aside class="inspector" id="inspector"></aside>
+  </main>
+
+  <div class="modal hidden" id="modal">
+    <div class="modal-card">
+      <p id="modal-text"></p>
+      <input type="text" id="modal-input" class="hidden" />
+      <div class="modal-actions">
+        <button class="btn ghost" id="modal-cancel">Annuler</button>
+        <button class="btn primary" id="modal-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

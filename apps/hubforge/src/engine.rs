@@ -1,16 +1,46 @@
 //! Moteur HubForge : relie les modules, la configuration et les actions.
+//! Il tourne dans son propre fil ; l'interface lui parle par messages
+//! ([`EngineMsg`]) et reçoit son état ([`Status`]) à chaque changement.
 
 use crate::actions::{self, Input};
 use crate::audio::{Audio, AudioCmd};
 use crate::config::{self, parse_color, Action, Config};
 use crate::render::{self, KeyVisual};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
+
+/// Messages envoyés au moteur par l'interface.
+pub enum EngineMsg {
+    /// Nouvelle configuration (déjà enregistrée sur le disque).
+    ApplyConfig(Box<Config>),
+    /// Afficher une page sur le module 15 touches.
+    ShowPage(usize),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModuleStatus {
+    pub kind: String,
+    pub name: String,
+    pub serial: String,
+}
+
+/// État du moteur, envoyé à l'interface.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct Status {
+    pub modules: Vec<ModuleStatus>,
+    pub faders: Option<[u8; FADER_COUNT]>,
+    pub page: usize,
+    pub pressed: Vec<bool>,
+    pub config_error: Option<String>,
+}
+
+pub type Notify = Box<dyn Fn(&Status) + Send>;
 
 struct Anim {
     frame: usize,
@@ -35,10 +65,23 @@ pub struct Engine {
     audio: Audio,
     gif_tokens: f32,
     gif_last: Instant,
+    config_error: Option<String>,
+    notify: Notify,
+}
+
+fn kind_id(k: Kind) -> &'static str {
+    match k {
+        Kind::Keys15 => "keys15",
+        Kind::Faders5 => "faders5",
+        Kind::Rollers2 => "rollers2",
+        Kind::BaseLed => "base",
+        Kind::Encoder => "encoder",
+        Kind::Knobs3 => "knobs3",
+    }
 }
 
 impl Engine {
-    pub fn new(cfg_path: PathBuf, cfg: Config) -> Result<Engine, String> {
+    pub fn new(cfg_path: PathBuf, cfg: Config, audio: Audio, notify: Notify) -> Result<Engine, String> {
         let (mgr, events) = DeviceManager::new()?;
         let cfg_dir = cfg_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let cfg_mtime = std::fs::metadata(&cfg_path).and_then(|m| m.modified()).ok();
@@ -56,15 +99,37 @@ impl Engine {
             modules: HashMap::new(),
             faders: HashMap::new(),
             input: Input::new(),
-            audio: Audio::start(),
+            audio,
             gif_tokens: 0.0,
             gif_last: Instant::now(),
+            config_error: None,
+            notify,
         };
         e.render_all();
         Ok(e)
     }
 
-    pub fn run(&mut self, stop: Arc<AtomicBool>) {
+    pub fn status(&self) -> Status {
+        let mut modules: Vec<ModuleStatus> = self
+            .modules
+            .iter()
+            .map(|(s, k)| ModuleStatus { kind: kind_id(*k).into(), name: k.name().into(), serial: s.clone() })
+            .collect();
+        modules.sort_by(|a, b| a.kind.cmp(&b.kind));
+        Status {
+            modules,
+            faders: self.faders.values().next().copied(),
+            page: self.page,
+            pressed: self.pressed.to_vec(),
+            config_error: self.config_error.clone(),
+        }
+    }
+
+    fn notify(&self) {
+        (self.notify)(&self.status());
+    }
+
+    pub fn run(&mut self, stop: Arc<AtomicBool>, msgs: Receiver<EngineMsg>) {
         let mut last_scan = Instant::now() - Duration::from_secs(10);
         let mut last_cfg_check = Instant::now();
         while !stop.load(Ordering::Relaxed) {
@@ -76,13 +141,17 @@ impl Engine {
                 self.check_config();
                 last_cfg_check = Instant::now();
             }
-            let timeout = if self.anims.is_empty() { 50 } else { 5 };
+            while let Ok(m) = msgs.try_recv() {
+                self.message(m);
+            }
+            let timeout = if self.anims.is_empty() { 30 } else { 5 };
             match self.events.recv_timeout(Duration::from_millis(timeout)) {
                 Ok(ev) => {
                     self.handle(ev);
                     while let Ok(ev) = self.events.try_recv() {
                         self.handle(ev);
                     }
+                    self.notify();
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
@@ -99,6 +168,23 @@ impl Engine {
         self.mgr.shutdown();
     }
 
+    fn message(&mut self, m: EngineMsg) {
+        match m {
+            EngineMsg::ApplyConfig(cfg) => {
+                self.cfg_mtime = std::fs::metadata(&self.cfg_path).and_then(|m| m.modified()).ok();
+                self.apply_config(*cfg);
+            }
+            EngineMsg::ShowPage(p) => {
+                if p < self.visuals.len() && p != self.page {
+                    self.page = p;
+                    self.pressed = [false; KEY_COUNT];
+                    self.show_page();
+                    self.notify();
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // Configuration
     // ------------------------------------------------------------------
@@ -113,17 +199,32 @@ impl Engine {
         std::thread::sleep(Duration::from_millis(150));
         match config::load(&self.cfg_path) {
             Ok(cfg) => {
-                log::info!("configuration rechargée ✓");
-                self.cfg = cfg;
-                self.render_all();
-                self.page = self.page.min(self.visuals.len().saturating_sub(1));
-                let serials: Vec<(String, Kind)> = self.modules.iter().map(|(s, k)| (s.clone(), *k)).collect();
-                for (s, k) in serials {
-                    self.setup_module(&s, k);
-                }
+                log::info!("configuration rechargée depuis le fichier ✓");
+                self.apply_config(cfg);
             }
-            Err(e) => log::error!("{e}\n→ la configuration précédente reste active."),
+            Err(e) => {
+                log::error!("{e}\n→ la configuration précédente reste active.");
+                self.config_error = Some(e);
+                self.notify();
+            }
         }
+    }
+
+    fn apply_config(&mut self, cfg: Config) {
+        self.cfg = cfg;
+        self.config_error = None;
+        self.render_all();
+        self.page = self.page.min(self.visuals.len().saturating_sub(1));
+        let serials: Vec<(String, Kind)> = self.modules.iter().map(|(s, k)| (s.clone(), *k)).collect();
+        for (s, k) in serials {
+            self.setup_module(&s, k);
+        }
+        // Applique tout de suite les volumes selon la position actuelle des faders.
+        let current: Vec<(String, [u8; FADER_COUNT])> = self.faders.drain().collect();
+        for (s, v) in current {
+            self.faders_changed(s, v);
+        }
+        self.notify();
     }
 
     fn render_all(&mut self) {

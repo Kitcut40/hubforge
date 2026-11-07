@@ -16,6 +16,8 @@ pub enum AudioCmd {
     SetApps(Vec<String>, f32),
     /// Coupe / rétablit le micro
     ToggleMicMute,
+    /// Liste des applications qui ont une session audio
+    ListApps(Sender<Vec<String>>),
 }
 
 #[derive(Clone)]
@@ -35,6 +37,13 @@ impl Audio {
 
     pub fn send(&self, cmd: AudioCmd) {
         let _ = self.tx.send(cmd);
+    }
+
+    /// Applications qui jouent (ou ont joué) du son, ex. « discord.exe ».
+    pub fn list_apps(&self) -> Vec<String> {
+        let (tx, rx) = mpsc::channel();
+        self.send(AudioCmd::ListApps(tx));
+        rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or_default()
     }
 }
 
@@ -83,7 +92,7 @@ mod imp {
             refreshed: Instant::now() - Duration::from_secs(60),
         };
         while let Ok(cmd) = rx.recv() {
-            if st.refreshed.elapsed() > Duration::from_secs(3) {
+            if st.refreshed.elapsed() > Duration::from_secs(3) || matches!(cmd, AudioCmd::ListApps(_)) {
                 refresh(&mut st);
             }
             let res = match &cmd {
@@ -91,6 +100,12 @@ mod imp {
                 AudioCmd::StepMaster(d) => step_endpoint(&st.master, *d),
                 AudioCmd::SetMic(v) => set_endpoint(&st.mic, *v),
                 AudioCmd::ToggleMicMute => toggle_mute(&st.mic),
+                AudioCmd::ListApps(reply) => {
+                    let mut names: Vec<String> = st.sessions.keys().cloned().collect();
+                    names.sort();
+                    let _ = reply.send(names);
+                    Ok(())
+                }
                 AudioCmd::SetApps(names, v) => {
                     let mut found = false;
                     for n in names {
@@ -194,6 +209,10 @@ mod imp {
 
     pub fn run(rx: Receiver<AudioCmd>) {
         log::warn!("contrôle du volume pas encore disponible sur cette plateforme");
-        while rx.recv().is_ok() {}
+        while let Ok(cmd) = rx.recv() {
+            if let AudioCmd::ListApps(reply) = cmd {
+                let _ = reply.send(Vec::new());
+            }
+        }
     }
 }
