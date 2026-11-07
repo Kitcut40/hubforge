@@ -1,6 +1,6 @@
 [package]
 name = "hubforge-probe"
-version = "0.2.0"
+version = "0.3.0"
 description = "Outil de test HubForge : détecte les modules MasterHUB et valide le protocole USB"
 edition.workspace = true
 license.workspace = true

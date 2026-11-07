@@ -110,6 +110,16 @@ pub fn led_color(target: u8, index: u8, r: u8, g: u8, b: u8, save: bool) -> Vec<
     d
 }
 
+/// Effet des LED (famille M0) : 0 éteint, 1 fixe, 2 respiration,
+/// 3 stroboscope, 5 cycle, 6 aléatoire, 7 vague, 8 eau, 9 arc-en-ciel.
+/// ⚠ Une couleur n'est appliquée qu'après une commande de mode
+/// (validé sur le matériel le 07/11/2026).
+pub fn led_mode(target: u8, index: u8, mode: u8, save: bool) -> Vec<u8> {
+    let mut d = vec![0u8; M0_OUTPUT_LEN];
+    d[..6].copy_from_slice(&[0x02, 0x2C, target, index, mode.min(9), save as u8]);
+    d
+}
+
 /// Luminosité des LED (famille M0).
 pub fn led_brightness(target: u8, index: u8, value: u8) -> Vec<u8> {
     let mut d = vec![0u8; M0_OUTPUT_LEN];

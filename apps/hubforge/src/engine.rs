@@ -4,8 +4,9 @@
 
 use crate::actions::{self, Input};
 use crate::audio::{Audio, AudioCmd};
-use crate::config::{self, parse_color, Action, Config};
+use crate::config::{self, parse_color, Action, Config, KeyDef};
 use crate::render::{self, KeyVisual};
+use crate::topology::{self, Placement};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -28,6 +29,10 @@ pub struct ModuleStatus {
     pub kind: String,
     pub name: String,
     pub serial: String,
+    /// Chemin de ports USB dans la base (ex. "134").
+    pub port: Option<String>,
+    /// Position et orientation sur la base, si connues.
+    pub placement: Option<Placement>,
 }
 
 /// État du moteur, envoyé à l'interface.
@@ -37,6 +42,8 @@ pub struct Status {
     pub faders: Option<[u8; FADER_COUNT]>,
     pub page: usize,
     pub pressed: Vec<bool>,
+    /// État des touches à 2 états de la page affichée (true = second état).
+    pub toggled: Vec<bool>,
     pub config_error: Option<String>,
 }
 
@@ -47,6 +54,12 @@ struct Anim {
     due: Instant,
 }
 
+/// Visuels d'une touche : état normal et, pour une touche à 2 états, le second.
+#[derive(Clone)]
+struct KeyVisuals {
+    states: Vec<KeyVisual>,
+}
+
 pub struct Engine {
     mgr: DeviceManager,
     events: Receiver<Event>,
@@ -55,11 +68,17 @@ pub struct Engine {
     cfg_dir: PathBuf,
     cfg_mtime: Option<SystemTime>,
     /// visuels[page][touche]
-    visuals: Vec<Vec<KeyVisual>>,
+    visuals: Vec<Vec<KeyVisuals>>,
     page: usize,
     anims: HashMap<u8, Anim>,
     pressed: [bool; KEY_COUNT],
+    /// (page, touche) → second état actif
+    toggled: HashMap<(usize, u8), bool>,
     modules: HashMap<String, Kind>,
+    ports: HashMap<String, String>,
+    modules_changed: bool,
+    /// Rotation du module de touches sur la base (degrés, sens horaire).
+    keys_rot: u16,
     faders: HashMap<String, [u8; FADER_COUNT]>,
     input: Input,
     audio: Audio,
@@ -96,7 +115,11 @@ impl Engine {
             page: 0,
             anims: HashMap::new(),
             pressed: [false; KEY_COUNT],
+            toggled: HashMap::new(),
             modules: HashMap::new(),
+            ports: HashMap::new(),
+            modules_changed: false,
+            keys_rot: 0,
             faders: HashMap::new(),
             input: Input::new(),
             audio,
@@ -113,7 +136,11 @@ impl Engine {
         let mut modules: Vec<ModuleStatus> = self
             .modules
             .iter()
-            .map(|(s, k)| ModuleStatus { kind: kind_id(*k).into(), name: k.name().into(), serial: s.clone() })
+            .map(|(s, k)| {
+                let port = self.ports.get(s).cloned();
+                let placement = port.as_deref().and_then(|p| topology::placement(kind_id(*k), p));
+                ModuleStatus { kind: kind_id(*k).into(), name: k.name().into(), serial: s.clone(), port, placement }
+            })
             .collect();
         modules.sort_by(|a, b| a.kind.cmp(&b.kind));
         Status {
@@ -121,6 +148,7 @@ impl Engine {
             faders: self.faders.values().next().copied(),
             page: self.page,
             pressed: self.pressed.to_vec(),
+            toggled: (0..KEY_COUNT as u8).map(|k| self.is_toggled(k)).collect(),
             config_error: self.config_error.clone(),
         }
     }
@@ -150,6 +178,17 @@ impl Engine {
                     self.handle(ev);
                     while let Ok(ev) = self.events.try_recv() {
                         self.handle(ev);
+                    }
+                    if self.modules_changed {
+                        self.modules_changed = false;
+                        self.ports = topology::port_codes();
+                        let rot = self.detected_keys_rot();
+                        if rot != self.keys_rot {
+                            log::info!("module de touches tourné de {rot}°");
+                            self.keys_rot = rot;
+                            self.render_all();
+                            self.show_page();
+                        }
                     }
                     self.notify();
                 }
@@ -211,13 +250,25 @@ impl Engine {
     }
 
     fn apply_config(&mut self, cfg: Config) {
-        self.cfg = cfg;
+        let old = std::mem::replace(&mut self.cfg, cfg);
         self.config_error = None;
         self.render_all();
         self.page = self.page.min(self.visuals.len().saturating_sub(1));
+        // Les touches qui ne sont plus à 2 états reviennent à l'état normal.
+        let cfg = &self.cfg;
+        self.toggled.retain(|(p, k), _| {
+            cfg.pages.get(*p).and_then(|pg| pg.keys.iter().find(|d| d.key == k + 1)).map(|d| d.toggle.is_some()).unwrap_or(false)
+        });
         let serials: Vec<(String, Kind)> = self.modules.iter().map(|(s, k)| (s.clone(), *k)).collect();
         for (s, k) in serials {
-            self.setup_module(&s, k);
+            // On ne renvoie les LED que si elles ont changé (évite un clignotement).
+            let leds_changed = old.faders.iter().map(|f| &f.color).ne(self.cfg.faders.iter().map(|f| &f.color))
+                || old.general.base_color != self.cfg.general.base_color
+                || old.general.base_effect != self.cfg.general.base_effect
+                || old.general.led_brightness != self.cfg.general.led_brightness;
+            if k == Kind::Keys15 || leds_changed {
+                self.setup_module(&s, k);
+            }
         }
         // Applique tout de suite les volumes selon la position actuelle des faders.
         let current: Vec<(String, [u8; FADER_COUNT])> = self.faders.drain().collect();
@@ -227,8 +278,20 @@ impl Engine {
         self.notify();
     }
 
+    fn detected_keys_rot(&self) -> u16 {
+        self.modules
+            .iter()
+            .find(|(_, k)| matches!(k, Kind::Keys15))
+            .and_then(|(s, _)| self.ports.get(s))
+            .and_then(|p| topology::placement("keys15", p))
+            .map(|p| p.rot)
+            .unwrap_or(0)
+    }
+
     fn render_all(&mut self) {
         let t = Instant::now();
+        let dir = self.cfg_dir.clone();
+        let rot = self.keys_rot;
         self.visuals = self
             .cfg
             .pages
@@ -236,14 +299,20 @@ impl Engine {
             .map(|page| {
                 (1..=KEY_COUNT as u8)
                     .map(|k| match page.keys.iter().find(|d| d.key == k) {
-                        Some(def) => render::render_key(def, &self.cfg_dir),
-                        None => render::blank(),
+                        Some(def) => {
+                            let mut states = vec![render::render_key_rot(&def.state(0), &dir, rot)];
+                            if def.toggle.is_some() {
+                                states.push(render::render_key_rot(&def.state(1), &dir, rot));
+                            }
+                            KeyVisuals { states }
+                        }
+                        None => KeyVisuals { states: vec![render::blank()] },
                     })
                     .collect()
             })
             .collect();
         if self.visuals.is_empty() {
-            self.visuals.push(vec![render::blank(); KEY_COUNT]);
+            self.visuals.push(vec![KeyVisuals { states: vec![render::blank()] }; KEY_COUNT]);
         }
         log::debug!("rendu des touches en {} ms", t.elapsed().as_millis());
     }
@@ -251,6 +320,20 @@ impl Engine {
     // ------------------------------------------------------------------
     // Modules
     // ------------------------------------------------------------------
+
+    /// Couleur(s), puis mode, puis luminosité, avec de courtes pauses :
+    /// le module n'applique une couleur qu'après la commande de mode.
+    fn setup_leds(&self, serial: &str, target: u8, colors: &[(u8, (u8, u8, u8))], mode: u8) {
+        let g = &self.cfg.general;
+        for (index, (r, gg, b)) in colors {
+            self.mgr.send(serial, Command::Output(protocol::led_color(target, *index, *r, *gg, *b, false)));
+            self.mgr.send(serial, Command::Sleep(30));
+        }
+        let all = if target == 0 { 0 } else { 0xFF };
+        self.mgr.send(serial, Command::Output(protocol::led_mode(target, all, mode, false)));
+        self.mgr.send(serial, Command::Sleep(30));
+        self.mgr.send(serial, Command::Output(protocol::led_brightness(target, all, g.led_brightness)));
+    }
 
     fn setup_module(&mut self, serial: &str, kind: Kind) {
         let g = self.cfg.general.clone();
@@ -261,17 +344,21 @@ impl Engine {
                 self.show_page();
             }
             Kind::Faders5 => {
-                for (i, slot) in self.cfg.faders.iter().take(FADER_COUNT).enumerate() {
-                    let (r, gg, b) = parse_color(&slot.color).unwrap_or((255, 255, 255));
-                    self.mgr.send(serial, Command::Output(protocol::led_color(1, i as u8, r, gg, b, false)));
-                }
-                self.mgr.send(serial, Command::Output(protocol::led_brightness(1, 0xFF, g.led_brightness)));
+                let colors: Vec<(u8, (u8, u8, u8))> = self
+                    .cfg
+                    .faders
+                    .iter()
+                    .take(FADER_COUNT)
+                    .enumerate()
+                    .map(|(i, slot)| (i as u8, parse_color(&slot.color).unwrap_or((255, 255, 255))))
+                    .collect();
+                // Les effets animés ne fonctionnent pas sur les faders : couleur fixe.
+                self.setup_leds(serial, 1, &colors, 1);
                 self.mgr.send(serial, Command::QueryFaders);
             }
             Kind::BaseLed => {
-                let (r, gg, b) = parse_color(&g.base_color).unwrap_or((0, 200, 255));
-                self.mgr.send(serial, Command::Output(protocol::led_color(0, 0, r, gg, b, false)));
-                self.mgr.send(serial, Command::Output(protocol::led_brightness(0, 0, g.led_brightness)));
+                let c = parse_color(&g.base_color).unwrap_or((0, 200, 255));
+                self.setup_leds(serial, 0, &[(0, c)], g.base_effect);
             }
             _ => {}
         }
@@ -282,12 +369,14 @@ impl Engine {
             Event::Connected(info) => {
                 log::info!("✓ {} connecté", info.kind.name());
                 self.modules.insert(info.serial.clone(), info.kind);
+                self.modules_changed = true;
                 self.setup_module(&info.serial, info.kind);
             }
             Event::Disconnected { serial } => {
                 if let Some(k) = self.modules.remove(&serial) {
                     log::info!("✗ {} débranché", k.name());
                 }
+                self.modules_changed = true;
                 self.faders.remove(&serial);
             }
             Event::KeyDown { key, .. } => self.key_down(key),
@@ -301,27 +390,47 @@ impl Engine {
     // Touches
     // ------------------------------------------------------------------
 
+    fn is_toggled(&self, key: u8) -> bool {
+        self.toggled.get(&(self.page, key)).copied().unwrap_or(false)
+    }
+
+    fn visual(&self, key: u8) -> &KeyVisual {
+        let kv = &self.visuals[self.page][key as usize];
+        let i = if self.is_toggled(key) { 1 } else { 0 };
+        &kv.states[i.min(kv.states.len() - 1)]
+    }
+
+    fn key_def(&self, key: u8) -> Option<&KeyDef> {
+        self.cfg.pages.get(self.page).and_then(|p| p.keys.iter().find(|d| d.key == key + 1))
+    }
+
     fn send_image(&self, key: u8, jpeg: &Arc<Vec<u8>>) {
         let packets = Arc::new(protocol::keys15_image_packets(key, jpeg));
         self.mgr.send_kind(Kind::Keys15, Command::Packets(packets));
     }
 
+    fn restart_anim(&mut self, key: u8) {
+        self.anims.remove(&key);
+        let v = self.visual(key);
+        if v.is_animated() {
+            let due = Instant::now() + v.frames[0].delay;
+            self.anims.insert(key, Anim { frame: 0, due });
+        }
+    }
+
     fn show_page(&mut self) {
         self.anims.clear();
-        let now = Instant::now();
-        let page = &self.visuals[self.page];
-        for (k, v) in page.iter().enumerate() {
-            self.send_image(k as u8, &v.frames[0].jpeg);
-            if v.is_animated() {
-                self.anims.insert(k as u8, Anim { frame: 0, due: now + v.frames[0].delay });
-            }
+        for k in 0..KEY_COUNT as u8 {
+            let jpeg = self.visual(k).frames[0].jpeg.clone();
+            self.send_image(k, &jpeg);
+            self.restart_anim(k);
         }
         let name = self.cfg.pages.get(self.page).map(|p| p.name.as_str()).unwrap_or("");
         log::info!("page {} « {name} »", self.page + 1);
     }
 
     fn current_frame(&self, key: u8) -> &render::Frame {
-        let v = &self.visuals[self.page][key as usize];
+        let v = self.visual(key);
         let i = self.anims.get(&key).map(|a| a.frame).unwrap_or(0);
         &v.frames[i.min(v.frames.len() - 1)]
     }
@@ -335,14 +444,23 @@ impl Engine {
             let jpeg = self.current_frame(key).pressed.clone();
             self.send_image(key, &jpeg);
         }
-        let action = self
-            .cfg
-            .pages
-            .get(self.page)
-            .and_then(|p| p.keys.iter().find(|d| d.key == key + 1))
-            .map(|d| d.action.clone())
-            .unwrap_or_default();
+        let Some(def) = self.key_def(key).cloned() else { return };
+        let state = if def.toggle.is_some() && self.is_toggled(key) { 1 } else { 0 };
+        let action = def.state(state).action;
+        if def.toggle.is_some() {
+            let page = self.page;
+            self.toggled.insert((page, key), state == 0);
+        }
+        let page_before = self.page;
         self.execute(&action);
+        // Touche à 2 états : affiche tout de suite le nouvel état.
+        if def.toggle.is_some() && self.page == page_before {
+            self.restart_anim(key);
+            if !self.cfg.general.press_feedback {
+                let jpeg = self.visual(key).frames[0].jpeg.clone();
+                self.send_image(key, &jpeg);
+            }
+        }
     }
 
     fn key_up(&mut self, key: u8) {
@@ -407,11 +525,13 @@ impl Engine {
                 break;
             }
             self.gif_tokens -= 1.0;
-            let v = &self.visuals[self.page][key as usize];
-            let anim = self.anims.get_mut(&key).unwrap();
-            anim.frame = (anim.frame + 1) % v.frames.len();
-            let frame = v.frames[anim.frame].clone();
-            anim.due = now + frame.delay;
+            let len = self.visual(key).frames.len();
+            let next = (self.anims[&key].frame + 1) % len;
+            let frame = self.visual(key).frames[next].clone();
+            if let Some(anim) = self.anims.get_mut(&key) {
+                anim.frame = next;
+                anim.due = now + frame.delay;
+            }
             self.send_image(key, &frame.jpeg);
         }
     }

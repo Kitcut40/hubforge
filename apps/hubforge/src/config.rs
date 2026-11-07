@@ -30,6 +30,9 @@ pub struct General {
     pub press_feedback: bool,
     /// Débit maximal d'images envoyées pour les GIF (images par seconde).
     pub gif_max_fps: u32,
+    /// Effet des LED de la base : 1 fixe, 2 respiration, 3 stroboscope,
+    /// 5 cycle, 6 aléatoire, 7 vague, 8 eau, 9 arc-en-ciel, 0 éteint.
+    pub base_effect: u8,
 }
 
 impl Default for General {
@@ -40,6 +43,7 @@ impl Default for General {
             base_color: "#00C8FF".into(),
             press_feedback: true,
             gif_max_fps: 28,
+            base_effect: 1,
         }
     }
 }
@@ -108,6 +112,43 @@ pub struct KeyDef {
     pub text_color: Option<String>,
     #[serde(default)]
     pub action: Action,
+    /// Second état : la touche alterne entre son état normal et celui-ci
+    /// à chaque appui (texte, image, couleur et action propres).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toggle: Option<KeyState>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct KeyState {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+    #[serde(default)]
+    pub action: Action,
+}
+
+impl KeyDef {
+    /// Définition de l'état n° `state` (0 = normal, 1 = second état).
+    pub fn state(&self, state: usize) -> KeyDef {
+        match (&self.toggle, state) {
+            (Some(t), 1) => KeyDef {
+                key: self.key,
+                label: t.label.clone(),
+                icon: t.icon.clone(),
+                color: t.color.clone(),
+                text_color: t.text_color.clone(),
+                action: t.action.clone(),
+                toggle: None,
+            },
+            _ => KeyDef { toggle: None, ..self.clone() },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -182,7 +223,11 @@ pub fn validate(cfg: &Config) -> Result<(), String> {
             if !(1..=15).contains(&k.key) {
                 return Err(format!("page {} : la touche {} n'existe pas (1 à 15)", p + 1, k.key));
             }
-            for c in [&k.color, &k.text_color].into_iter().flatten() {
+            let alt = k.toggle.as_ref();
+            for c in [&k.color, &k.text_color, &alt.and_then(|t| t.color.clone()), &alt.and_then(|t| t.text_color.clone())]
+                .into_iter()
+                .flatten()
+            {
                 if parse_color(c).is_none() {
                     return Err(format!("page {} touche {} : couleur invalide « {c} » (format #RRVVBB)", p + 1, k.key));
                 }
@@ -212,6 +257,8 @@ pub const DEFAULT_CONFIG: &str = r##"# =========================================
 brightness = 80          # luminosité des écrans des touches (0 à 100)
 led_brightness = 100     # luminosité des LED des faders et de la base (0 à 100)
 base_color = "#00C8FF"   # couleur des LED de la base
+base_effect = 1          # effet de la base : 1 fixe, 2 respiration, 3 stroboscope, 5 cycle,
+                         # 6 aléatoire, 7 vague, 8 eau, 9 arc-en-ciel, 0 éteint
 press_feedback = true    # la touche s'assombrit pendant l'appui
 gif_max_fps = 28         # images par seconde max pour les GIF (toutes touches confondues)
 
@@ -265,6 +312,8 @@ invert_left = false
 #    { type = "lock" }                                 (verrouiller le PC)
 #    { type = "open_config" }                          (ouvrir ce fichier)
 #  icon = "mon_image.png" : image (png, jpg, gif animé, webp) dans le dossier de ce fichier
+#  icon = "builtin:play"   : icône intégrée (voir la liste dans l'interface)
+#  toggle = { … }          : second état (la touche alterne à chaque appui)
 # ---------------------------------------------------------------------
 [[pages]]
 name = "Accueil"
@@ -272,72 +321,84 @@ name = "Accueil"
 [[pages.keys]]
 key = 1
 label = "Explorateur"
+icon = "builtin:folder-open"
 color = "#F4B400"
 action = { type = "launch", target = "explorer.exe" }
 
 [[pages.keys]]
 key = 2
 label = "Calculatrice"
+icon = "builtin:calculator"
 color = "#455A64"
 action = { type = "launch", target = "calc.exe" }
 
 [[pages.keys]]
 key = 3
 label = "HubForge GitHub"
+icon = "builtin:globe"
 color = "#24292F"
 action = { type = "launch", target = "https://github.com/Kitcut40/hubforge" }
 
 [[pages.keys]]
 key = 4
 label = "Gestion. tâches"
+icon = "builtin:activity"
 color = "#1565C0"
 action = { type = "hotkey", keys = "ctrl+shift+esc" }
 
 [[pages.keys]]
 key = 5
 label = "Capture"
+icon = "builtin:scan"
 color = "#00897B"
 action = { type = "hotkey", keys = "win+shift+s" }
 
 [[pages.keys]]
 key = 6
 label = "Précédent"
+icon = "builtin:skip-back"
 color = "#37474F"
 action = { type = "media", command = "previous" }
 
 [[pages.keys]]
 key = 7
 label = "Lecture / Pause"
+icon = "builtin:play"
 color = "#2E7D32"
 action = { type = "media", command = "play_pause" }
 
 [[pages.keys]]
 key = 8
 label = "Suivant"
+icon = "builtin:skip-forward"
 color = "#37474F"
 action = { type = "media", command = "next" }
 
 [[pages.keys]]
 key = 9
 label = "Muet"
+icon = "builtin:volume-x"
 color = "#C62828"
 action = { type = "media", command = "mute" }
 
 [[pages.keys]]
 key = 10
 label = "Verrouiller"
+icon = "builtin:lock"
 color = "#6A1B9A"
 action = { type = "lock" }
 
 [[pages.keys]]
 key = 11
 label = "Bonjour"
+icon = "builtin:type"
 color = "#EF6C00"
 action = { type = "text", text = "Bonjour depuis HubForge !" }
 
 [[pages.keys]]
 key = 12
 label = "Bureau"
+icon = "builtin:monitor"
 color = "#0277BD"
 action = { type = "hotkey", keys = "win+d" }
 
@@ -350,12 +411,14 @@ action = { type = "none" }
 [[pages.keys]]
 key = 14
 label = "Config"
+icon = "builtin:settings"
 color = "#546E7A"
 action = { type = "open_config" }
 
 [[pages.keys]]
 key = 15
-label = "Page 2 →"
+label = "Page 2"
+icon = "builtin:arrow-right"
 color = "#212121"
 action = { type = "page", to = "next" }
 
@@ -365,36 +428,50 @@ name = "Page 2"
 [[pages.keys]]
 key = 1
 label = "Bloc-notes"
+icon = "builtin:notebook-pen"
 color = "#0288D1"
 action = { type = "launch", target = "notepad.exe" }
 
 [[pages.keys]]
 key = 2
 label = "Paramètres"
+icon = "builtin:settings"
 color = "#607D8B"
 action = { type = "hotkey", keys = "win+i" }
 
 [[pages.keys]]
 key = 3
 label = "Copier"
+icon = "builtin:copy"
 color = "#5D4037"
 action = { type = "hotkey", keys = "ctrl+c" }
 
 [[pages.keys]]
 key = 4
 label = "Coller"
+icon = "builtin:clipboard-paste"
 color = "#5D4037"
 action = { type = "hotkey", keys = "ctrl+v" }
 
 [[pages.keys]]
 key = 5
 label = "Annuler"
+icon = "builtin:undo-2"
 color = "#5D4037"
 action = { type = "hotkey", keys = "ctrl+z" }
 
 [[pages.keys]]
+key = 6
+label = "Micro"
+icon = "builtin:mic"
+color = "#2E7D32"
+action = { type = "media", command = "mic_mute" }
+toggle = { label = "Micro coupé", icon = "builtin:mic-off", color = "#C62828", action = { type = "media", command = "mic_mute" } }
+
+[[pages.keys]]
 key = 15
-label = "← Accueil"
+label = "Accueil"
+icon = "builtin:house"
 color = "#212121"
 action = { type = "page", to = "1" }
 "##;
@@ -408,6 +485,7 @@ mod tests {
         let cfg: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
         validate(&cfg).unwrap();
         assert_eq!(cfg.pages.len(), 2);
+        assert!(cfg.pages[1].keys.iter().any(|k| k.toggle.is_some()));
         assert_eq!(cfg.faders.len(), 5);
         assert_eq!(
             cfg.pages[0].keys[3].action,

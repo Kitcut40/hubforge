@@ -101,13 +101,9 @@ fn title(t: &str) {
 fn official_software_running() -> bool {
     #[cfg(windows)]
     {
-        if let Ok(out) = std::process::Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq MasterHUB.exe"])
-            .output()
-        {
-            return String::from_utf8_lossy(&out.stdout)
-                .to_lowercase()
-                .contains("masterhub.exe");
+        if let Ok(out) = std::process::Command::new("tasklist").output() {
+            let t = String::from_utf8_lossy(&out.stdout).to_lowercase();
+            return t.contains("masterhub.exe") || t.contains("mhdaemon.exe") || t.contains("hubforge.exe");
         }
     }
     false
@@ -486,6 +482,81 @@ fn step_keys15_v2(list: &[Iface]) {
     }
 }
 
+fn step_led_v3(list: &[Iface]) {
+    title("TEST — Couleurs des LED (faders et base)");
+    let mut targets: Vec<(usize, u8, u8, &str)> = Vec::new();
+    for k in main_ifaces(list, Kind::Faders5) {
+        targets.push((k, 1, 0xFF, "faders"));
+    }
+    for k in main_ifaces(list, Kind::BaseLed) {
+        targets.push((k, 0, 0, "base"));
+    }
+    if targets.is_empty() {
+        say!("Ni faders ni base détectés : test impossible.");
+        return;
+    }
+    let pause_ms = |ms: u64| std::thread::sleep(Duration::from_millis(ms));
+    let all = |cmd: &dyn Fn(&Iface, u8, u8)| {
+        for (k, t, i, _) in &targets {
+            cmd(&list[*k], *t, *i);
+        }
+    };
+
+    say!("\n[1] Couleur ROUGE seule (02 2D, sans mode)");
+    all(&|it, t, i| { send(it, vec![0x02, 0x2D, t, i, 255, 0, 0, 0]); });
+    pause_ms(300);
+    ask("Faders et base sont-ils devenus ROUGES ? (oui / non / seulement les faders / seulement la base)");
+
+    say!("\n[2] Couleur VERTE puis mode « fixe » (02 2D puis 02 2C … 01)");
+    all(&|it, t, i| {
+        send(it, vec![0x02, 0x2D, t, i, 0, 255, 0, 0]);
+        pause_ms(60);
+        send(it, vec![0x02, 0x2C, t, i, 1, 0]);
+    });
+    pause_ms(300);
+    ask("Faders et base sont-ils devenus VERTS ?");
+
+    say!("\n[3] Mode « fixe » d'abord, puis couleur BLEUE");
+    all(&|it, t, i| {
+        send(it, vec![0x02, 0x2C, t, i, 1, 0]);
+        pause_ms(60);
+        send(it, vec![0x02, 0x2D, t, i, 0, 0, 255, 0]);
+    });
+    pause_ms(300);
+    ask("Sont-ils devenus BLEUS ?");
+
+    say!("\n[4] Une couleur différente par fader (rouge, orange, jaune, vert, bleu) + mode fixe");
+    for (k, t, _, what) in &targets {
+        if *what != "faders" {
+            continue;
+        }
+        let it = &list[*k];
+        let colors = [(255u8, 0u8, 0u8), (255, 120, 0), (255, 220, 0), (0, 255, 0), (0, 80, 255)];
+        for (n, (r, g, b)) in colors.iter().enumerate() {
+            send(it, vec![0x02, 0x2D, *t, n as u8, *r, *g, *b, 0]);
+            pause_ms(40);
+        }
+        send(it, vec![0x02, 0x2C, *t, 0xFF, 1, 0]);
+    }
+    pause_ms(300);
+    ask("Les 5 faders ont-ils chacun leur couleur (rouge, orange, jaune, vert, bleu) ?");
+
+    say!("\n[5] Couleur VIOLETTE avec sauvegarde dans le module (02 2D … 01) + mode fixe");
+    all(&|it, t, i| {
+        send(it, vec![0x02, 0x2D, t, i, 160, 0, 255, 1]);
+        pause_ms(60);
+        send(it, vec![0x02, 0x2C, t, i, 1, 1]);
+    });
+    pause_ms(300);
+    ask("Sont-ils devenus VIOLETS ?");
+
+    say!("\n[6] Effet « arc-en-ciel » (mode 9), pour vérifier les effets");
+    all(&|it, t, i| { send(it, vec![0x02, 0x2C, t, i, 9, 0]); });
+    pause_ms(300);
+    ask("Vois-tu un effet animé arc-en-ciel ? (oui / non)");
+    all(&|it, t, i| { send(it, vec![0x02, 0x2C, t, i, 1, 0]); });
+}
+
 fn step_m0_leds(list: &[Iface]) {
     title("ÉTAPE 4 — LED des faders et de la base");
     let mut tested = false;
@@ -575,7 +646,7 @@ fn main() {
 
     if official_software_running() {
         say!("");
-        say!("⚠  Le logiciel officiel MasterHUB est OUVERT.");
+        say!("⚠  Le logiciel officiel MasterHUB (ou HubForge) est OUVERT.");
         say!("   Ferme-le complètement (aussi dans la zone de notification, près de l'horloge),");
         say!("   sinon il va se battre avec cet outil pour l'accès aux modules.");
         pause("Quand c'est fait");
@@ -594,9 +665,7 @@ fn main() {
     };
 
     let list = step_detect(&mut api);
-    if list.iter().any(|i| i.kind == Kind::Keys15) {
-        step_keys15_v2(&list);
-    }
+    step_led_v3(&list);
 
     title("TERMINÉ — merci !");
     say!("Envoie-moi ce fichier dans la conversation :");

@@ -153,3 +153,22 @@ pub fn import_image_data(state: State<AppState>, name: String, data: String) -> 
     let _ = std::fs::remove_file(&tmp);
     res
 }
+
+#[derive(Serialize)]
+pub struct IconInfo {
+    name: String,
+    svg: String,
+}
+
+/// Icônes intégrées (pour le sélecteur de l'interface).
+#[tauri::command]
+pub fn list_icons() -> Vec<IconInfo> {
+    crate::icons_data::ICONS.iter().map(|(n, s)| IconInfo { name: n.to_string(), svg: s.to_string() }).collect()
+}
+
+/// Récupère l'icône d'une application / d'un dossier et retourne son chemin relatif.
+#[tauri::command]
+pub async fn extract_app_icon(state: State<'_, AppState>, target: String) -> Result<String, String> {
+    let dir = state.cfg_dir.clone();
+    crate::appicon::extract_to(&target, &dir)
+}

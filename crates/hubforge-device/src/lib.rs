@@ -57,6 +57,8 @@ pub enum Command {
     Packets(Arc<Vec<Vec<u8>>>),
     /// Demande la position actuelle des faders (répond par Event::Faders).
     QueryFaders,
+    /// Pause (millisecondes) entre deux commandes, pour laisser le module les traiter.
+    Sleep(u64),
     /// Arrête le fil du module.
     Stop,
 }
@@ -242,6 +244,10 @@ fn execute(dev: &HidDevice, cmd: &Command, serial: &str, events: &Sender<Event>)
             if let Some(values) = protocol::parse_faders_query(&b[..n]) {
                 let _ = events.send(Event::Faders { serial: serial.to_string(), values });
             }
+            Ok(())
+        }
+        Command::Sleep(ms) => {
+            thread::sleep(std::time::Duration::from_millis(*ms));
             Ok(())
         }
         Command::Stop => Ok(()),

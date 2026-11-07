@@ -7,12 +7,15 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod actions;
+mod appicon;
 mod audio;
 mod autostart;
 mod config;
 mod engine;
+mod icons_data;
 mod logging;
 mod render;
+mod topology;
 mod ui;
 
 use engine::{Engine, EngineMsg, Status};
@@ -107,6 +110,8 @@ fn main() {
             ui::pick_folder,
             ui::import_image,
             ui::import_image_data,
+            ui::list_icons,
+            ui::extract_app_icon,
         ])
         .setup({
             let stop = stop.clone();

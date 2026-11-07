@@ -92,7 +92,34 @@ pub fn preview(def: &KeyDef, base_dir: &Path) -> (Vec<u8>, bool) {
 }
 
 pub fn render_key(def: &KeyDef, base_dir: &Path) -> KeyVisual {
-    render_key_opts(def, base_dir, false)
+    render_key_rot(def, base_dir, 0)
+}
+
+/// Rendu pour un module de touches tourné de `rot` degrés (sens horaire) :
+/// l'image est tournée dans l'autre sens pour rester lisible.
+pub fn render_key_rot(def: &KeyDef, base_dir: &Path, rot: u16) -> KeyVisual {
+    let mut v = render_key_opts(def, base_dir, false);
+    if rot % 360 != 0 {
+        for f in &mut v.frames {
+            *f = rotate_frame(f, rot);
+        }
+    }
+    v
+}
+
+fn rotate_frame(f: &Frame, rot: u16) -> Frame {
+    let turn = |jpeg: &Arc<Vec<u8>>| -> Arc<Vec<u8>> {
+        let Ok(img) = image::load_from_memory(jpeg) else { return jpeg.clone() };
+        let img = img.to_rgb8();
+        let img = match rot % 360 {
+            90 => image::imageops::rotate270(&img),
+            180 => image::imageops::rotate180(&img),
+            270 => image::imageops::rotate90(&img),
+            _ => img,
+        };
+        Arc::new(encode_jpeg(&img, 90))
+    };
+    Frame { jpeg: turn(&f.jpeg), pressed: turn(&f.pressed), delay: f.delay }
 }
 
 fn render_key_opts(def: &KeyDef, base_dir: &Path, first_only: bool) -> KeyVisual {
@@ -100,6 +127,15 @@ fn render_key_opts(def: &KeyDef, base_dir: &Path, first_only: bool) -> KeyVisual
     let fg = def.text_color.as_deref().and_then(parse_color).unwrap_or((255, 255, 255));
     let bg = Rgb([bg.0, bg.1, bg.2]);
     let fg = Rgb([fg.0, fg.1, fg.2]);
+
+    if let Some(name) = def.icon.as_deref().and_then(|i| i.strip_prefix("builtin:")) {
+        let mut img = RgbImage::from_pixel(S, S, bg);
+        draw_builtin(&mut img, name, fg, !def.label.trim().is_empty());
+        if !def.label.trim().is_empty() {
+            draw_text_sized(&mut img, &def.label, fg, 44, S - 46, 13);
+        }
+        return KeyVisual { frames: vec![make_frame(&img, Duration::ZERO, 90)] };
+    }
 
     let Some(icon) = def.icon.as_deref().filter(|s| !s.trim().is_empty()) else {
         let mut img = RgbImage::from_pixel(S, S, bg);
@@ -209,7 +245,7 @@ fn draw_label_band(img: &mut RgbImage, label: &str, fg: Rgb<u8>) {
             blend(img, x, y, Rgba([0, 0, 0, 150]));
         }
     }
-    draw_text_block(img, label, fg, S - band, band);
+    draw_text_sized(img, label, fg, S - band, band, 13);
 }
 
 /// Découpe le texte en lignes qui tiennent dans `max_w` pixels.
@@ -236,6 +272,11 @@ fn wrap(text: &str, scale: PxScale, max_w: f32) -> Vec<String> {
 /// Dessine un texte centré dans la zone verticale [top, top+height),
 /// en choisissant la plus grande taille qui tient.
 fn draw_text_block(img: &mut RgbImage, text: &str, color: Rgb<u8>, top: u32, height: u32) {
+    draw_text_sized(img, text, color, top, height, 22);
+}
+
+/// Comme `draw_text_block`, avec une taille de police maximale.
+fn draw_text_sized(img: &mut RgbImage, text: &str, color: Rgb<u8>, top: u32, height: u32, max_size: u32) {
     let text = text.trim();
     if text.is_empty() {
         return;
@@ -243,7 +284,7 @@ fn draw_text_block(img: &mut RgbImage, text: &str, color: Rgb<u8>, top: u32, hei
     let margin = 4.0;
     let max_w = S as f32 - 2.0 * margin;
     let mut chosen = None;
-    for size in (9..=22).rev() {
+    for size in (9..=max_size.max(9)).rev() {
         let scale = PxScale::from(size as f32);
         let lines = wrap(text, scale, max_w);
         let f = font().as_scaled(scale);
@@ -288,6 +329,39 @@ fn draw_text_block(img: &mut RgbImage, text: &str, color: Rgb<u8>, top: u32, hei
             x += f.h_advance(id);
         }
         y += line_h;
+    }
+}
+
+/// SVG d'une icône intégrée (Lucide), ou None si inconnue.
+pub fn builtin_svg(name: &str) -> Option<&'static str> {
+    crate::icons_data::ICONS.iter().find(|(n, _)| *n == name).map(|(_, svg)| *svg)
+}
+
+/// Dessine une icône intégrée : en haut si un texte suit, sinon centrée.
+fn draw_builtin(img: &mut RgbImage, name: &str, color: Rgb<u8>, with_label: bool) {
+    let Some(svg) = builtin_svg(name) else {
+        draw_text_block(img, "?", color, 0, S);
+        return;
+    };
+    let hex = format!("#{:02X}{:02X}{:02X}", color.0[0], color.0[1], color.0[2]);
+    let svg = svg.replace("currentColor", &hex);
+    let size: u32 = if with_label { 34 } else { 46 };
+    let Ok(tree) = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()) else { return };
+    let Some(mut pm) = resvg::tiny_skia::Pixmap::new(size, size) else { return };
+    let ts = tree.size();
+    let scale = size as f32 / ts.width().max(ts.height());
+    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
+    let ox = (S - size) / 2;
+    let oy = if with_label { 8 } else { (S - size) / 2 };
+    for (i, px) in pm.pixels().iter().enumerate() {
+        let a = px.alpha();
+        if a == 0 {
+            continue;
+        }
+        // Pixels prémultipliés → couleur réelle
+        let c = px.demultiply();
+        let (x, y) = (i as u32 % size, i as u32 / size);
+        blend(img, ox + x, oy + y, Rgba([c.red(), c.green(), c.blue(), a]));
     }
 }
 
@@ -345,6 +419,7 @@ mod tests {
             color: Some("#1565C0".into()),
             text_color: None,
             action: Action::None,
+            toggle: None,
         }
     }
 
@@ -363,6 +438,16 @@ mod tests {
         let v = render_key(&key("GIF", Some("demo.gif")), &dir);
         assert_eq!(v.frames.len(), 24);
         assert!(v.is_animated());
+    }
+
+    #[test]
+    fn renders_builtin_icon() {
+        let mut d = key("Copier", None);
+        d.icon = Some("builtin:copy".into());
+        let v = render_key(&d, Path::new("."));
+        assert_eq!(v.frames.len(), 1);
+        assert!(builtin_svg("copy").is_some());
+        assert!(builtin_svg("nexistepas").is_none());
     }
 
     #[test]

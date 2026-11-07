@@ -1,6 +1,6 @@
 # PROTOCOLE.md — Protocole USB du Cooler Master MasterHUB
 
-> **Statut : v0.3 — analyse statique du logiciel officiel (v1.0.0.113) + deux tests réels** (`hubforge-probe` v0.1 et v0.2, 07/11/2026, PC de Benjamin, Windows).
+> **Statut : v0.4 — analyse statique du logiciel officiel (v1.0.0.113) + trois tests réels** (`hubforge-probe` v0.1, v0.2 et v0.3, 07/11/2026, PC de Benjamin, Windows).
 > Légende : ✅ confirmé sur le matériel · 🔍 déduit du logiciel officiel, à confirmer.
 > Ce document décrit uniquement le **fonctionnement** du protocole (interopérabilité). Aucun code, image ou ressource de Cooler Master n'est repris dans HubForge.
 
@@ -135,16 +135,26 @@ Rapport de **sortie** `0x02`, 64 octets :
 |---|---|---|
 | **Couleur** | `02 2D CC II RR GG BB SS` | ✅ rouge / vert / bleu OK sur faders et base |
 | **Luminosité** | `02 2E CC II VV` | ✅ 20 = plus sombre, 100 = plus fort |
-| Mode d'effet | `02 2C CC II MM SS` (MM 0–9) | 🔍 |
+| **Mode d'effet** | `02 2C CC II MM SS` (MM 0–9) | ✅ |
 | Vitesse d'effet | `02 30 …` | 🔍 |
 
-- `SS` = 1 pour **sauvegarder** dans le module, 0 pour un changement temporaire.
+- `SS` = 1 pour **sauvegarder** dans le module, 0 pour un changement temporaire. ✅ Sur les faders, `SS = 1` n'a aucun effet : il faut renvoyer les couleurs à chaque connexion.
+- ✅ **Une couleur n'est appliquée qu'après une commande de mode.** Séquence fiable : couleur(s) → ~30 ms → mode `1` (fixe) → ~30 ms → luminosité.
+- Modes : `0` éteint · `1` fixe · `2` respiration · `3` stroboscope · `5` cycle · `6` aléatoire · `7` vague · `8` eau · `9` arc-en-ciel. ✅ Les effets animés ne fonctionnent que sur la **base** ; les faders n'acceptent que le mode fixe (une couleur par fader).
 - Cible `CC` / index `II` : base `00 00` ✅ · faders `01 FF` (tous) ou **`01 0–4` = une couleur par fader ✅** (HubForge v0.1) · knobs `02 FF` ou `02 0–2` 🔍.
 
 ---
 
 ## 8. Base
 - Envoie en continu un rapport `01 2B 01` (≈ 1 par seconde) 🔍 signification inconnue (signal de vie ?).
+- La base contient un hub USB (VID `0x067B`, PID `0x2586`). Chaque module y est branché sur un port précis.
+
+### 8.1 Position des modules sur la base 🔍
+- Windows fournit pour chaque périphérique un chemin d'emplacement (`DEVPKEY_Device_LocationPaths`), ex. `PCIROOT(0)#…#USBROOT(0)#USB(3)#USB(2)#USB(4)`.
+- **Code de port** = les numéros `USB(n)` qui suivent le plus court préfixe correspondant au hub de la base, concaténés (ex. `24`, `41`, `121`).
+- La base est une grille de **4 colonnes × 6 lignes** (en portrait). Chaque module occupe 4×3 (touches), 4×2 (faders) ou 4×1 (molettes), éventuellement tourné de 90/180/270°.
+- Une table (code de port, type de module) → (colonne, ligne, rotation) donne la position. Disposition d'origine : touches `24` → (0,0,0°), faders `41` → (0,3,0°), molettes `121` → (0,5,0°).
+- Quand le module de touches est tourné, HubForge tourne les images dans l'autre sens pour qu'elles restent lisibles.
 
 ---
 
