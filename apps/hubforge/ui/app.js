@@ -62,6 +62,14 @@ const LIBRARY = [
     { name: "Bascule personnalisée", label: "État 1", icon: "toggle-left", color: "#37474F", action: { type: "none" },
       toggle: { label: "État 2", icon: "builtin:toggle-right", color: "#FF7A1A", action: { type: "none" } } },
   ]},
+  { cat: "Touches vivantes", items: [
+    { name: "Horloge", label: "", icon: "clock", color: "#1F2229", widget: "clock", action: { type: "none" } },
+    { name: "Date", label: "", icon: "calendar", color: "#1F2229", widget: "date", action: { type: "none" } },
+    { name: "Processeur (CPU)", label: "", icon: "cpu", color: "#1F2229", widget: "cpu", action: { type: "hotkey", keys: "ctrl+shift+esc" } },
+    { name: "Mémoire (RAM)", label: "", icon: "hard-drive", color: "#1F2229", widget: "ram", action: { type: "hotkey", keys: "ctrl+shift+esc" } },
+    { name: "Volume général", label: "", icon: "volume-2", color: "#1F2229", widget: "volume", action: { type: "media", command: "mute" } },
+    { name: "État du micro", label: "", icon: "mic", color: "#2E7D32", widget: "mic", action: { type: "media", command: "mic_mute" } },
+  ]},
   { cat: "HubForge", items: [
     { name: "Page suivante", label: "Page suivante", icon: "arrow-right", color: "#212121", action: { type: "page", to: "next" } },
     { name: "Page précédente", label: "Page précédente", icon: "arrow-left", color: "#212121", action: { type: "page", to: "previous" } },
@@ -82,6 +90,9 @@ const ACTION_TYPES = [
 
 const SWATCHES = ["#FF3B30", "#FF7A1A", "#FFB300", "#FFD60A", "#3DDC84", "#1DB954", "#00C8FF", "#1E88E5",
                   "#5865F2", "#8E24AA", "#E91E63", "#FFFFFF", "#607D8B", "#37474F", "#1F2229", "#000000"];
+
+const WIDGETS = [["", "Aucune (image fixe)"], ["clock", "Horloge"], ["date", "Date"], ["cpu", "Processeur (CPU)"],
+  ["ram", "Mémoire (RAM)"], ["volume", "Volume général"], ["mic", "État du micro"]];
 
 const FADER_TARGETS = [["master", "Volume général"], ["mic", "Micro"], ["app", "Application(s)"], ["none", "Rien"]];
 const ROLLER_MODES = [["volume", "Volume général"], ["scroll", "Défilement vertical"], ["hscroll", "Défilement horizontal"], ["zoom", "Zoom (Ctrl + molette)"], ["none", "Rien"]];
@@ -154,6 +165,8 @@ async function init() {
   document.addEventListener("keydown", onGlobalKey, true);
   fitDevice();
   new ResizeObserver(fitDevice).observe($(".stage"));
+  // Aperçu des touches vivantes dans l'interface.
+  setInterval(refreshLivePreviews, 2000);
 }
 
 function normalize(cfg) {
@@ -408,6 +421,7 @@ function keyElement(k) {
     def && prev ? el("img", { src: prev.src, alt: "" }) : null,
     el("span", { class: "num" }, String(k)),
     def && def.toggle ? el("span", { class: "badge" }, "2 états")
+      : def && def.widget ? el("span", { class: "badge" }, "Live")
       : def && def.action && def.action.type === "macro" ? el("span", { class: "badge" }, "Macro")
       : def && prev && prev.animated ? el("span", { class: "badge" }, "GIF") : null,
   );
@@ -442,6 +456,26 @@ async function refreshPreviews(page, onlyKey) {
     keys.forEach(updateKeyNode);
     if (S.sel.type === "key" && keys.includes(S.sel.key)) renderKeyPreviewInInspector();
   }
+}
+
+let liveBusy = false;
+async function refreshLivePreviews() {
+  if (liveBusy || document.hidden) return;
+  const keys = currentPage().keys.filter((d) => d.widget).map((d) => d.key);
+  if (!keys.length) return;
+  liveBusy = true;
+  try {
+    const page = S.page;
+    const res = await invoke("render_keys", { keys: keys.map((k) => clean(stateDef(keyDef(k, page), 0))) });
+    if (page !== S.page) return;
+    keys.forEach((k, i) => {
+      if (!res[i]) return;
+      S.previews[`${page}:${k}:0`] = res[i];
+      const img = document.querySelector(`#keys .key[data-key="${k}"] img`);
+      if (img && shownState(k) === 0) img.src = res[i].src; else updateKeyNode(k);
+    });
+    if (S.sel.type === "key" && keys.includes(S.sel.key)) renderKeyPreviewInInspector();
+  } catch (_) { /* aperçu seulement */ } finally { liveBusy = false; }
 }
 
 function setKeyDef(k, def) {
@@ -544,6 +578,7 @@ async function onDropOnKey(k, dt) {
       def.action = { type: "folder", to: String(idx + 1) };
     }
     if (item.toggle) def.toggle = clone(item.toggle);
+    if (item.widget) { def.widget = item.widget; delete def.icon; }
     setKeyDef(k, def);
     S.editState = 0;
     select({ type: "key", key: k });
@@ -702,8 +737,19 @@ function keyInspector(k) {
   const st = S.editState === 1 && def.toggle ? def.toggle : def;
   const upd = (fn, opts) => { fn(st); keyChanged(k, opts); };
 
-  out.push(field("Texte affiché", el("input", { id: "label-input", class: "input", value: st.label || "", placeholder: "(aucun)", oninput: (e) => upd((d) => { d.label = e.target.value; delete d._autoName; }) })));
-  out.push(iconField(k, st, upd));
+  const live = S.editState === 0 && def.widget;
+  if (S.editState === 0) {
+    const wsel = el("select", { class: "input" }, ...WIDGETS.map(([v, l]) => el("option", { value: v, selected: v === (def.widget || "") }, l)));
+    wsel.onchange = () => {
+      if (wsel.value) { def.widget = wsel.value; if (!def.color) def.color = "#1F2229"; } else delete def.widget;
+      keyChanged(k, { immediate: true });
+      renderInspector();
+    };
+    out.push(field("Touche vivante", wsel, live ? el("p", { class: "hint" }, "L'image se met à jour toute seule. L'action ci-dessous reste active quand on appuie.") : null));
+  }
+  out.push(field(live ? "Titre (facultatif)" : "Texte affiché", el("input", { id: "label-input", class: "input", value: st.label || "",
+    placeholder: live ? "(titre par défaut)" : "(aucun)", oninput: (e) => upd((d) => { d.label = e.target.value; delete d._autoName; }) })));
+  if (!live) out.push(iconField(k, st, upd));
   out.push(colorField("Couleur de fond", st.color, (v) => upd((d) => { if (v) d.color = v; else delete d.color; })));
   out.push(colorField("Couleur du texte et de l'icône", st.text_color || "#FFFFFF", (v) => upd((d) => { if (v) d.text_color = v; else delete d.text_color; })));
 
@@ -1333,7 +1379,7 @@ async function mockInvoke(cmd, args) {
        { kind: "rollers2", port: "121", placement: { col: 0, row: 5, rot: 0 } }, { kind: "base" }];
   switch (cmd) {
     case "get_initial":
-      return { config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.4.2",
+      return { config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.5.0",
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;
@@ -1346,7 +1392,8 @@ async function mockInvoke(cmd, args) {
 
 function mockPreview(d) {
   const bg = d.color || "#000";
-  const label = (d.label || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const demo = { clock: "15:49", date: "Samedi 7", cpu: "CPU 23 %", ram: "RAM 41 %", volume: "45 %", mic: "Micro" };
+  const label = (d.widget ? demo[d.widget] : d.label || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
   let icon = "";
   if (d.icon && d.icon.startsWith("builtin:")) {
     const svg = svgIcon(d.icon.slice(8)).replace(/currentColor/g, d.text_color || "#fff").replace(/width="24"/, 'width="34"').replace(/height="24"/, 'height="34"');

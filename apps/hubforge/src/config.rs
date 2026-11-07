@@ -135,6 +135,10 @@ pub struct KeyDef {
     /// à chaque appui (texte, image, couleur et action propres).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub toggle: Option<KeyState>,
+    /// Touche vivante : "clock", "date", "cpu", "ram", "volume", "mic".
+    /// L'image est redessinée en continu (le texte sert de titre).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widget: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -164,6 +168,7 @@ impl KeyDef {
                 text_color: t.text_color.clone(),
                 action: t.action.clone(),
                 toggle: None,
+                widget: None,
             },
             _ => KeyDef { toggle: None, ..self.clone() },
         }
@@ -272,6 +277,11 @@ pub fn validate(cfg: &Config) -> Result<(), String> {
         for k in &page.keys {
             if !(1..=15).contains(&k.key) {
                 return Err(format!("page {} : la touche {} n'existe pas (1 à 15)", p + 1, k.key));
+            }
+            if let Some(w) = &k.widget {
+                if !crate::widgets::is_known(w) {
+                    return Err(format!("page {} touche {} : touche vivante inconnue « {w} »", p + 1, k.key));
+                }
             }
             let alt = k.toggle.as_ref();
             for a in std::iter::once(&k.action).chain(alt.map(|t| &t.action)) {
@@ -543,6 +553,31 @@ icon = "builtin:folder"
 color = "#F4B400"
 action = { type = "folder", to = "3" }
 
+# Touches vivantes : l'image se met à jour toute seule.
+# widget = "clock", "date", "cpu", "ram", "volume" ou "mic".
+[[pages.keys]]
+key = 11
+widget = "clock"
+color = "#1F2229"
+
+[[pages.keys]]
+key = 12
+widget = "cpu"
+color = "#1F2229"
+action = { type = "hotkey", keys = "ctrl+shift+esc" }
+
+[[pages.keys]]
+key = 13
+widget = "ram"
+color = "#1F2229"
+action = { type = "hotkey", keys = "ctrl+shift+esc" }
+
+[[pages.keys]]
+key = 14
+widget = "volume"
+color = "#1F2229"
+action = { type = "media", command = "mute" }
+
 [[pages.keys]]
 key = 15
 label = "Accueil"
@@ -643,6 +678,7 @@ mod tests {
         validate(&cfg).unwrap();
         assert_eq!(cfg.pages.len(), 3);
         assert!(cfg.pages[2].folder && cfg.pages[2].close_after);
+        assert!(cfg.pages[1].keys.iter().any(|k| k.widget.is_some()));
         assert!(cfg.pages[1].keys.iter().any(|k| matches!(k.action, Action::Folder { .. })));
         assert!(cfg.pages[1].keys.iter().any(|k| k.toggle.is_some()));
         assert!(cfg.pages[1].keys.iter().any(|k| matches!(k.action, Action::Macro { .. })));

@@ -61,11 +61,21 @@ pub fn apply_config(state: State<AppState>, config: Config) -> Result<(), String
 #[tauri::command]
 pub async fn render_keys(state: State<'_, AppState>, keys: Vec<Option<KeyDef>>) -> Result<Vec<Option<Preview>>, String> {
     let dir = state.cfg_dir.clone();
+    let has_widget = keys.iter().flatten().any(|d| d.widget.is_some());
+    let snap = if has_widget {
+        state.audio.send(crate::audio::AudioCmd::Poll);
+        Some(crate::widgets::preview_snapshot(state.audio.state()))
+    } else {
+        None
+    };
     Ok(keys
         .into_iter()
         .map(|k| {
             k.map(|def| {
-                let (jpeg, animated) = render::preview(&def, &dir);
+                let (jpeg, animated) = match (&def.widget, &snap) {
+                    (Some(_), Some(snap)) => (render::encode_jpeg(&crate::widgets::render(&def, snap), 90), false),
+                    _ => render::preview(&def, &dir),
+                };
                 Preview {
                     src: format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(jpeg)),
                     animated,

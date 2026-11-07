@@ -221,7 +221,7 @@ Priorité : **P1** = version 1 indispensable · **P2** = version 1 si possible �
 - **P1** **GIF animés sur les touches** — voir 5.3.1
 - **P2** Éditeur d'icône intégré : fond, couleur, texte, emoji, bibliothèque d'icônes
 - **P2** Touches dynamiques : l'image change selon un état (micro coupé, lecture en pause…) — ✅ v0.3 : touches à 2 états
-- **P2** Touches « widget » qui se mettent à jour seules (voir 5.4, catégorie Infos)
+- **P2** Touches « widget » qui se mettent à jour seules (voir 5.4, catégorie Infos) — ✅ v0.5.0 : horloge, date, CPU, RAM, volume, micro
 - **P2** Effet visuel à l'appui (touche qui s'assombrit ou clignote brièvement)
 - **P3** Une image ou un GIF découpé sur plusieurs touches (grand visuel sur la grille)
 

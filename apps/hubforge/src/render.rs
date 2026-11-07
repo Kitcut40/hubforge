@@ -227,7 +227,7 @@ fn paste_fit(dst: &mut RgbImage, src: &RgbaImage) {
     }
 }
 
-fn blend(img: &mut RgbImage, x: u32, y: u32, p: Rgba<u8>) {
+pub(crate) fn blend(img: &mut RgbImage, x: u32, y: u32, p: Rgba<u8>) {
     if x >= img.width() || y >= img.height() {
         return;
     }
@@ -277,7 +277,7 @@ fn draw_text_block(img: &mut RgbImage, text: &str, color: Rgb<u8>, top: u32, hei
 }
 
 /// Comme `draw_text_block`, avec une taille de police maximale.
-fn draw_text_sized(img: &mut RgbImage, text: &str, color: Rgb<u8>, top: u32, height: u32, max_size: u32) {
+pub(crate) fn draw_text_sized(img: &mut RgbImage, text: &str, color: Rgb<u8>, top: u32, height: u32, max_size: u32) {
     let text = text.trim();
     if text.is_empty() {
         return;
@@ -340,20 +340,26 @@ pub fn builtin_svg(name: &str) -> Option<&'static str> {
 
 /// Dessine une icône intégrée : en haut si un texte suit, sinon centrée.
 fn draw_builtin(img: &mut RgbImage, name: &str, color: Rgb<u8>, with_label: bool) {
-    let Some(svg) = builtin_svg(name) else {
+    if builtin_svg(name).is_none() {
         draw_text_block(img, "?", color, 0, S);
         return;
-    };
+    }
+    let size: u32 = if with_label { 34 } else { 46 };
+    let oy = if with_label { 8 } else { (S - size) / 2 };
+    draw_builtin_at(img, name, color, size, oy);
+}
+
+/// Dessine une icône intégrée de `size` pixels, centrée horizontalement, à la hauteur `oy`.
+pub(crate) fn draw_builtin_at(img: &mut RgbImage, name: &str, color: Rgb<u8>, size: u32, oy: u32) {
+    let Some(svg) = builtin_svg(name) else { return };
     let hex = format!("#{:02X}{:02X}{:02X}", color.0[0], color.0[1], color.0[2]);
     let svg = svg.replace("currentColor", &hex);
-    let size: u32 = if with_label { 34 } else { 46 };
     let Ok(tree) = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()) else { return };
     let Some(mut pm) = resvg::tiny_skia::Pixmap::new(size, size) else { return };
     let ts = tree.size();
     let scale = size as f32 / ts.width().max(ts.height());
     resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
-    let ox = (S - size) / 2;
-    let oy = if with_label { 8 } else { (S - size) / 2 };
+    let ox = S.saturating_sub(size) / 2;
     for (i, px) in pm.pixels().iter().enumerate() {
         let a = px.alpha();
         if a == 0 {
@@ -362,8 +368,17 @@ fn draw_builtin(img: &mut RgbImage, name: &str, color: Rgb<u8>, with_label: bool
         // Pixels prémultipliés → couleur réelle
         let c = px.demultiply();
         let (x, y) = (i as u32 % size, i as u32 / size);
-        blend(img, ox + x, oy + y, Rgba([c.red(), c.green(), c.blue(), a]));
+        if ox + x < S && oy + y < S {
+            blend(img, ox + x, oy + y, Rgba([c.red(), c.green(), c.blue(), a]));
+        }
     }
+}
+
+/// Visuel d'une seule image (touches vivantes), tourné comme le module.
+pub(crate) fn visual_from_image(img: &RgbImage, rot: u16) -> KeyVisual {
+    let f = make_frame(img, Duration::ZERO, 90);
+    let f = if rot % 360 != 0 { rotate_frame(&f, rot) } else { f };
+    KeyVisual { frames: vec![f] }
 }
 
 /// Crée le GIF de démonstration (anneau arc-en-ciel qui tourne).
@@ -421,6 +436,7 @@ mod tests {
             text_color: None,
             action: Action::None,
             toggle: None,
+            widget: None,
         }
     }
 

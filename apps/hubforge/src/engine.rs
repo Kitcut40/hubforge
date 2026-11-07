@@ -7,6 +7,7 @@ use crate::audio::{Audio, AudioCmd};
 use crate::config::{self, parse_color, Action, Config, KeyDef};
 use crate::render::{self, KeyVisual};
 use crate::foreground;
+use crate::widgets;
 use crate::topology::{self, Placement};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
 use serde::Serialize;
@@ -92,6 +93,11 @@ pub struct Engine {
     macro_next: Instant,
     /// Pages d'où l'on a ouvert les dossiers (pour la touche Retour).
     page_stack: Vec<usize>,
+    /// Touches vivantes : mesures, prochaine mise à jour, et ce qui est
+    /// affiché sur chaque touche (pour ne renvoyer que ce qui change).
+    sampler: widgets::Sampler,
+    widgets_due: Instant,
+    widget_sig: HashMap<u8, String>,
     faders: HashMap<String, [u8; FADER_COUNT]>,
     input: Input,
     audio: Audio,
@@ -138,6 +144,9 @@ impl Engine {
             macro_queue: VecDeque::new(),
             macro_next: Instant::now(),
             page_stack: Vec::new(),
+            sampler: widgets::Sampler::default(),
+            widgets_due: Instant::now(),
+            widget_sig: HashMap::new(),
             faders: HashMap::new(),
             input: Input::new(),
             audio,
@@ -196,6 +205,9 @@ impl Engine {
                 self.message(m);
             }
             self.run_macro();
+            if Instant::now() >= self.widgets_due {
+                self.update_widgets(false);
+            }
             let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() { 30 } else { 5 };
             match self.events.recv_timeout(Duration::from_millis(timeout)) {
                 Ok(ev) => {
@@ -318,6 +330,7 @@ impl Engine {
         let t = Instant::now();
         let dir = self.cfg_dir.clone();
         let rot = self.keys_rot;
+        self.widget_sig.clear();
         self.visuals = self
             .cfg
             .pages
@@ -446,6 +459,9 @@ impl Engine {
 
     fn show_page(&mut self) {
         self.anims.clear();
+        // Touches vivantes à jour avant l'envoi de la page.
+        self.widget_sig.clear();
+        self.render_widgets();
         for k in 0..KEY_COUNT as u8 {
             let jpeg = self.visual(k).frames[0].jpeg.clone();
             self.send_image(k, &jpeg);
@@ -453,6 +469,66 @@ impl Engine {
         }
         let name = self.cfg.pages.get(self.page).map(|p| p.name.as_str()).unwrap_or("");
         log::info!("page {} « {name} »", self.page + 1);
+    }
+
+    // ------------------------------------------------------------------
+    // Touches vivantes
+    // ------------------------------------------------------------------
+
+    /// Redessine les touches vivantes de la page dont le contenu a changé ;
+    /// retourne les touches redessinées.
+    fn render_widgets(&mut self) -> Vec<u8> {
+        let page = self.page;
+        let Some(defs) = self.cfg.pages.get(page).map(|p| p.keys.clone()) else { return Vec::new() };
+        if !defs.iter().any(|d| d.widget.is_some()) {
+            return Vec::new();
+        }
+        let snap = self.sampler.sample(self.audio.state());
+        let mut changed = Vec::new();
+        for def in defs.iter().filter(|d| d.widget.is_some() && (1..=KEY_COUNT as u8).contains(&d.key)) {
+            let key = def.key - 1;
+            // Une touche à 2 états montre son second état tel quel.
+            if def.toggle.is_some() && self.is_toggled(key) {
+                continue;
+            }
+            let sig = widgets::signature(def, &snap);
+            if self.widget_sig.get(&key) == Some(&sig) {
+                continue;
+            }
+            let img = widgets::render(def, &snap);
+            let visual = render::visual_from_image(&img, self.keys_rot);
+            if let Some(v) = self.visuals.get_mut(page).and_then(|p| p.get_mut(key as usize)) {
+                if let Some(first) = v.states.first_mut() {
+                    *first = visual;
+                }
+            }
+            self.widget_sig.insert(key, sig);
+            changed.push(key);
+        }
+        changed
+    }
+
+    /// Mise à jour régulière (toutes les 500 ms) : n'envoie que les touches
+    /// dont l'affichage a changé.
+    fn update_widgets(&mut self, force: bool) {
+        self.widgets_due = Instant::now() + Duration::from_millis(500);
+        // Demande l'état du son pour la prochaine fois (volume, micro).
+        self.audio.send(AudioCmd::Poll);
+        if force {
+            self.widget_sig.clear();
+        }
+        for key in self.render_widgets() {
+            let f = self.current_frame(key);
+            let jpeg = if self.pressed[key as usize] && self.cfg.general.press_feedback { f.pressed.clone() } else { f.jpeg.clone() };
+            self.send_image(key, &jpeg);
+        }
+    }
+
+    /// Après une action qui peut changer le volume ou le micro : mise à jour
+    /// rapide des touches vivantes.
+    fn nudge_widgets(&mut self) {
+        self.audio.send(AudioCmd::Poll);
+        self.widgets_due = self.widgets_due.min(Instant::now() + Duration::from_millis(120));
     }
 
     fn current_frame(&self, key: u8) -> &render::Frame {
@@ -479,6 +555,7 @@ impl Engine {
         }
         let page_before = self.page;
         self.execute(&action);
+        self.nudge_widgets();
         // Dossier « refermé après une action » : retour à la page d'avant.
         let closes = !matches!(action, Action::None | Action::Folder { .. } | Action::Back | Action::Page { .. });
         if closes && self.page == page_before && self.is_closing_folder(self.page) {
@@ -735,6 +812,7 @@ impl Engine {
             let target = slot.target.trim().to_lowercase();
             if target == "master" {
                 self.audio.send(AudioCmd::SetMaster(level));
+                self.widgets_due = self.widgets_due.min(Instant::now() + Duration::from_millis(80));
             } else if target == "mic" {
                 self.audio.send(AudioCmd::SetMic(level));
             } else if let Some(apps) = target.strip_prefix("app:") {
@@ -756,7 +834,10 @@ impl Engine {
             dir = -dir;
         }
         match mode.as_str() {
-            "volume" => self.audio.send(AudioCmd::StepMaster(dir as f32 * r.volume_step as f32 / 100.0)),
+            "volume" => {
+                self.audio.send(AudioCmd::StepMaster(dir as f32 * r.volume_step as f32 / 100.0));
+                self.widgets_due = self.widgets_due.min(Instant::now() + Duration::from_millis(80));
+            }
             "scroll" => self.input.scroll(-dir * r.scroll_step, false),
             "hscroll" => self.input.scroll(dir * r.scroll_step, true),
             "zoom" => self.input.zoom(-dir),

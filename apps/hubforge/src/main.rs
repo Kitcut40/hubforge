@@ -18,6 +18,7 @@ mod logging;
 mod render;
 mod topology;
 mod ui;
+mod widgets;
 
 use engine::{Engine, EngineMsg, Status};
 use std::io::{Read, Write};

@@ -2,6 +2,7 @@
 //! Sous Windows : API Core Audio (WASAPI), dans un fil dédié.
 
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -18,21 +19,41 @@ pub enum AudioCmd {
     ToggleMicMute,
     /// Liste des applications qui ont une session audio
     ListApps(Sender<Vec<String>>),
+    /// Relit le volume général et l'état des micros (touches vivantes)
+    Poll,
+}
+
+/// Dernier état connu du son (mis à jour par `AudioCmd::Poll`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct AudioState {
+    /// Volume général (0.0 à 1.0), None si pas de sortie audio.
+    pub master: Option<f32>,
+    pub master_muted: bool,
+    /// Micro coupé ? None si pas de micro.
+    pub mic_muted: Option<bool>,
 }
 
 #[derive(Clone)]
 pub struct Audio {
     tx: Sender<AudioCmd>,
+    state: Arc<Mutex<AudioState>>,
 }
 
 impl Audio {
     pub fn start() -> Audio {
         let (tx, rx) = mpsc::channel::<AudioCmd>();
+        let state = Arc::new(Mutex::new(AudioState::default()));
+        let shared = state.clone();
         std::thread::Builder::new()
             .name("audio".into())
-            .spawn(move || imp::run(rx))
+            .spawn(move || imp::run(rx, shared))
             .ok();
-        Audio { tx }
+        Audio { tx, state }
+    }
+
+    /// Dernier état connu (demander une mise à jour avec `AudioCmd::Poll`).
+    pub fn state(&self) -> AudioState {
+        self.state.lock().map(|s| *s).unwrap_or_default()
     }
 
     pub fn send(&self, cmd: AudioCmd) {
@@ -49,8 +70,9 @@ impl Audio {
 
 #[cfg(windows)]
 mod imp {
-    use super::AudioCmd;
+    use super::{AudioCmd, AudioState};
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
     use std::sync::mpsc::Receiver;
     use std::time::{Duration, Instant};
     use windows::core::{Interface, PWSTR};
@@ -73,7 +95,7 @@ mod imp {
         refreshed: Instant,
     }
 
-    pub fn run(rx: Receiver<AudioCmd>) {
+    pub fn run(rx: Receiver<AudioCmd>, shared: Arc<Mutex<AudioState>>) {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         }
@@ -106,6 +128,7 @@ mod imp {
                     let _ = reply.send(names);
                     Ok(())
                 }
+                AudioCmd::Poll => Ok(()),
                 AudioCmd::SetApps(names, v) => {
                     let mut found = false;
                     for n in names {
@@ -126,6 +149,21 @@ mod imp {
                 log::debug!("audio : {e}");
                 st.refreshed = Instant::now() - Duration::from_secs(60);
             }
+            if !matches!(cmd, AudioCmd::ListApps(_) | AudioCmd::SetApps(..)) {
+                let snap = snapshot(&st);
+                if let Ok(mut s) = shared.lock() {
+                    *s = snap;
+                }
+            }
+        }
+    }
+
+    fn snapshot(st: &State) -> AudioState {
+        unsafe {
+            let master = st.master.as_ref().and_then(|ep| ep.GetMasterVolumeLevelScalar().ok());
+            let master_muted = st.master.as_ref().and_then(|ep| ep.GetMute().ok()).map(|b| b.as_bool()).unwrap_or(false);
+            let mic_muted = st.mic.as_ref().and_then(|ep| ep.GetMute().ok()).map(|b| b.as_bool());
+            AudioState { master, master_muted, mic_muted }
         }
     }
 
@@ -204,10 +242,11 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
-    use super::AudioCmd;
+    use super::{AudioCmd, AudioState};
     use std::sync::mpsc::Receiver;
+    use std::sync::{Arc, Mutex};
 
-    pub fn run(rx: Receiver<AudioCmd>) {
+    pub fn run(rx: Receiver<AudioCmd>, _shared: Arc<Mutex<AudioState>>) {
         log::warn!("contrôle du volume pas encore disponible sur cette plateforme");
         while let Ok(cmd) = rx.recv() {
             if let AudioCmd::ListApps(reply) = cmd {
