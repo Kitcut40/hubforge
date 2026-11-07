@@ -120,6 +120,166 @@ pub fn delete_profile(state: State<AppState>, name: String) -> Result<(), String
     profiles::delete(&state.cfg_dir, &name)
 }
 
+// ----------------------------------------------------------------------
+// Addons
+// ----------------------------------------------------------------------
+
+/// Icône prête à afficher dans l'interface : SVG (texte) ou image (data URL).
+#[derive(Serialize, Default)]
+pub struct IconView {
+    svg: Option<String>,
+    src: Option<String>,
+}
+
+fn icon_view(cfg_dir: &std::path::Path, icon: &Option<String>) -> IconView {
+    let Some(icon) = icon else { return IconView::default() };
+    if let Some(name) = icon.strip_prefix("builtin:") {
+        return IconView { svg: render::builtin_svg(name).map(String::from), src: None };
+    }
+    let Some(path) = crate::addons::resolve_icon(cfg_dir, icon) else { return IconView::default() };
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if ext == "svg" {
+        return IconView { svg: std::fs::read_to_string(&path).ok(), src: None };
+    }
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/jpeg",
+    };
+    let src = std::fs::read(&path).ok().map(|b| format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(b)));
+    IconView { svg: None, src }
+}
+
+#[derive(Serialize)]
+pub struct AddonActionView {
+    #[serde(flatten)]
+    action: crate::addons::AddonAction,
+    preview: IconView,
+}
+
+#[derive(Serialize)]
+pub struct AddonView {
+    folder: String,
+    enabled: bool,
+    official: bool,
+    error: Option<String>,
+    addon: Option<crate::addons::Addon>,
+    icon: IconView,
+    actions: Vec<AddonActionView>,
+}
+
+#[derive(Serialize)]
+pub struct AddonsInfo {
+    addons: Vec<AddonView>,
+    signature: String,
+    folder: String,
+}
+
+#[tauri::command]
+pub async fn list_addons(state: State<'_, AppState>) -> Result<AddonsInfo, String> {
+    let dir = state.cfg_dir.clone();
+    let disabled = profiles::load_settings(&dir).disabled_addons;
+    let official = crate::official::ids();
+    let addons = crate::addons::scan(&dir)
+        .into_iter()
+        .map(|e| {
+            let (icon, actions) = match &e.addon {
+                Some(a) => (
+                    icon_view(&dir, &a.icon),
+                    a.actions
+                        .iter()
+                        .map(|x| AddonActionView { preview: icon_view(&dir, &x.icon), action: x.clone() })
+                        .collect(),
+                ),
+                None => (IconView::default(), Vec::new()),
+            };
+            AddonView {
+                enabled: !disabled.contains(&e.folder),
+                official: official.contains(&e.folder.as_str()),
+                folder: e.folder,
+                error: e.error,
+                addon: e.addon,
+                icon,
+                actions,
+            }
+        })
+        .collect();
+    Ok(AddonsInfo { addons, signature: crate::addons::signature(&dir), folder: crate::addons::dir(&dir).display().to_string() })
+}
+
+/// Empreinte du dossier des addons (l'interface recharge la liste si elle change).
+#[tauri::command]
+pub fn addons_signature(state: State<AppState>) -> String {
+    crate::addons::signature(&state.cfg_dir)
+}
+
+fn after_install(state: &State<AppState>, id: &str) {
+    crate::official::unmark_removed(&state.cfg_dir, id);
+    log::info!("addon « {id} » installé");
+}
+
+/// Installe un fichier .forge choisi sur le disque.
+#[tauri::command]
+pub fn install_addon(state: State<AppState>, path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("lecture impossible : {e}"))?;
+    let id = crate::addons::install_bytes(&state.cfg_dir, &bytes)?;
+    after_install(&state, &id);
+    Ok(id)
+}
+
+/// Installe un fichier .forge glissé sur la fenêtre (contenu en base64).
+#[tauri::command]
+pub fn install_addon_data(state: State<AppState>, data: String) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|e| e.to_string())?;
+    let id = crate::addons::install_bytes(&state.cfg_dir, &bytes)?;
+    after_install(&state, &id);
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn remove_addon(state: State<AppState>, id: String) -> Result<(), String> {
+    crate::addons::remove(&state.cfg_dir, &id)?;
+    crate::official::mark_removed(&state.cfg_dir, &id);
+    log::info!("addon « {id} » supprimé");
+    Ok(())
+}
+
+/// Réinstalle les addons officiels supprimés.
+#[tauri::command]
+pub fn restore_official_addons(state: State<AppState>) {
+    for id in crate::official::ids() {
+        crate::official::unmark_removed(&state.cfg_dir, id);
+    }
+    crate::official::install(&state.cfg_dir);
+}
+
+#[tauri::command]
+pub fn set_addon_enabled(state: State<AppState>, id: String, on: bool) {
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.disabled_addons.retain(|x| x != &id);
+    if !on {
+        st.disabled_addons.push(id);
+    }
+    profiles::save_settings(&state.cfg_dir, &st);
+}
+
+/// Pages prêtes à l'emploi d'un addon, numérotées pour être ajoutées
+/// après les `base` pages existantes.
+#[tauri::command]
+pub fn addon_pages(state: State<AppState>, id: String, base: usize) -> Result<Vec<config::Page>, String> {
+    let entry = crate::addons::scan(&state.cfg_dir).into_iter().find(|e| e.folder == id).ok_or("addon introuvable")?;
+    let addon = entry.addon.ok_or_else(|| entry.error.unwrap_or_default())?;
+    Ok(addon.build_pages(base))
+}
+
+#[tauri::command]
+pub fn open_addons_folder(state: State<AppState>) {
+    let d = crate::addons::dir(&state.cfg_dir);
+    let _ = std::fs::create_dir_all(&d);
+    crate::actions::launch(&d.to_string_lossy(), &[]);
+}
+
 /// 🎮
 #[tauri::command]
 pub fn start_game(state: State<AppState>) {
@@ -182,6 +342,7 @@ pub async fn pick_file(app: AppHandle, kind: String) -> Result<Option<String>, S
     let mut d = app.dialog().file();
     d = match kind.as_str() {
         "image" => d.add_filter("Images et GIF", &["png", "jpg", "jpeg", "gif", "webp", "bmp"]),
+        "addon" => d.add_filter("Addon HubForge", &["forge"]),
         "program" => d.add_filter("Programmes", &["exe", "lnk", "bat", "cmd"]).add_filter("Tous les fichiers", &["*"]),
         _ => d,
     };

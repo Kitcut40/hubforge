@@ -15,7 +15,7 @@ Le MasterHUB est un excellent contrôleur modulaire (touches à écran, faders, 
 | 2 | Interface de configuration | ✅ v0.2 → v0.3 (disposition réelle des modules, icônes, touches à 2 états) |
 | 3 | Faders, molettes, audio par application | ✅ v0.2 |
 | 3b | Noyau avancé : pages automatiques par application ✅ v0.4, macros ✅ v0.4.1, dossiers ✅ v0.4.2, touches vivantes ✅ v0.5.0 (styles v0.6.0), profils ✅ v0.6.0, appui long | 🔧 |
-| 4 | Système d'addons `.forge` | ⏳ |
+| 4 | Système d'addons `.forge` | 🔧 niveau 1 (déclaratif) ✅ v0.7.0 + addon officiel Fusion 360 — guide : [docs/ADDON_GUIDE.md](docs/ADDON_GUIDE.md) |
 | 5 | Linux, installeurs, publication v1.0 | ⏳ |
 
 ## Modules pris en charge

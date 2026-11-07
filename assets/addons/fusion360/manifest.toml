@@ -1,0 +1,393 @@
+# =====================================================================
+#  Addon officiel HubForge — Fusion 360
+#  Licence GPL-3.0-or-later. Icônes dessinées pour HubForge (aucun
+#  logo ni élément d'Autodesk). Fusion 360 est une marque d'Autodesk.
+#
+#  Les outils sans raccourci par défaut passent par la recherche de
+#  commandes de Fusion (touche S) : la macro tape le nom de l'outil puis
+#  Entrée. Ces noms sont ceux de Fusion en français : si ton Fusion est
+#  en anglais, remplace-les (ex. "Chamfer", "Mirror", "Revolve").
+# =====================================================================
+
+[addon]
+id          = "fusion360"
+name        = "Fusion 360"
+version     = "1.0.0"
+author      = "HubForge"
+license     = "GPL-3.0-or-later"
+description = "Esquisse, modélisation et modification : les outils de base de Fusion 360 sur le MasterHUB."
+icon        = "icons/fusion.svg"
+format      = 1
+
+[detect]
+windows = ["Fusion360.exe"]
+
+[[category]]
+id = "sketch"
+name = "Esquisse"
+
+[[category]]
+id = "model"
+name = "Créer"
+
+[[category]]
+id = "modify"
+name = "Modifier"
+
+[[category]]
+id = "tools"
+name = "Outils"
+
+[[action]]
+id          = "create_sketch"
+name        = "Créer une esquisse"
+label       = "Esquisse"
+category    = "sketch"
+icon        = "icons/sketch.svg"
+color       = "#1565C0"
+description = "Ouvre l'outil Créer une esquisse (via la recherche S)."
+type        = "macro"
+steps       = [ { type = "hotkey", keys = "s" }, { type = "wait", ms = 350 }, { type = "text", text = "Créer une esquisse" }, { type = "wait", ms = 600 }, { type = "hotkey", keys = "enter" } ]
+
+[[action]]
+id          = "finish_sketch"
+name        = "Terminer l'esquisse"
+label       = "Terminer"
+category    = "sketch"
+icon        = "icons/finish-sketch.svg"
+color       = "#2E7D32"
+description = "Quitte le mode esquisse (via la recherche S)."
+type        = "macro"
+steps       = [ { type = "hotkey", keys = "s" }, { type = "wait", ms = 350 }, { type = "text", text = "Terminer l'esquisse" }, { type = "wait", ms = 600 }, { type = "hotkey", keys = "enter" } ]
+
+[[action]]
+id          = "line"
+name        = "Ligne"
+label       = "Ligne"
+category    = "sketch"
+icon        = "icons/line.svg"
+color       = "#1E88E5"
+description = "Raccourci par défaut : L"
+type        = "hotkey"
+keys        = "l"
+
+[[action]]
+id          = "rectangle"
+name        = "Rectangle 2 points"
+label       = "Rectangle"
+category    = "sketch"
+icon        = "icons/rectangle.svg"
+color       = "#1E88E5"
+description = "Raccourci par défaut : R"
+type        = "hotkey"
+keys        = "r"
+
+[[action]]
+id          = "circle"
+name        = "Cercle (centre, diamètre)"
+label       = "Cercle"
+category    = "sketch"
+icon        = "icons/circle-center.svg"
+color       = "#1E88E5"
+description = "Raccourci par défaut : C"
+type        = "hotkey"
+keys        = "c"
+
+[[action]]
+id          = "circle_2p"
+name        = "Cercle 2 points"
+label       = "Cercle 2 pts"
+category    = "sketch"
+icon        = "icons/circle-2p.svg"
+color       = "#1E88E5"
+description = "Via la recherche S."
+type        = "macro"
+steps       = [ { type = "hotkey", keys = "s" }, { type = "wait", ms = 350 }, { type = "text", text = "Cercle 2 points" }, { type = "wait", ms = 600 }, { type = "hotkey", keys = "enter" } ]
+
+[[action]]
+id          = "circle_3p"
+name        = "Cercle 3 points"
+label       = "Cercle 3 pts"
+category    = "sketch"
+icon        = "icons/circle-3p.svg"
+color       = "#1E88E5"
+description = "Via la recherche S."
+type        = "macro"
+steps       = [ { type = "hotkey", keys = "s" }, { type = "wait", ms = 350 }, { type = "text", text = "Cercle 3 points" }, { type = "wait", ms = 600 }, { type = "hotkey", keys = "enter" } ]
+
+[[action]]
+id          = "arc_3p"
+name        = "Arc 3 points"
+label       = "Arc 3 pts"
+category    = "sketch"
+icon        = "icons/arc-3p.svg"
+color       = "#1E88E5"
+description = "Via la recherche S."
+type        = "macro"
+steps       = [ { type = "hotkey", keys = "s" }, { type = "wait", ms = 350 }, { type = "text", text = "Arc 3 points" }, { type = "wait", ms = 600 }, { type = "hotkey", keys = "enter" } ]
+
+[[action]]
+id          = "trim"
+name        = "Ajuster"
+label       = "Ajuster"
+category    = "sketch"
+icon        = "icons/trim.svg"
+color       = "#3949AB"
+description = "Raccourci par défaut : T"
+type        = "hotkey"
+keys        = "t"
+
+[[action]]
+id          = "offset"
+name        = "Décaler"
+label       = "Décaler"
+category    = "sketch"
+icon        = "icons/offset.svg"
+color       = "#3949AB"
+description = "Raccourci par défaut : O"
+type        = "hotkey"
+keys        = "o"
+
+[[action]]
+id          = "project"
+name        = "Projeter"
+label       = "Projeter"
+category    = "sketch"
+icon        = "icons/project.svg"
+color       = "#3949AB"
+description = "Raccourci par défaut : P"
+type        = "hotkey"
+keys        = "p"
+
+[[action]]
+id          = "dimension"
+name        = "Cote d'esquisse"
+label       = "Cote"
+category    = "sketch"
+icon        = "icons/dimension.svg"
+color       = "#3949AB"
+description = "Raccourci par défaut : D"
+type        = "hotkey"
+keys        = "d"
+
+[[action]]
+id          = "construction"
+name        = "Normal / construction"
+label       = "Constr."
+category    = "sketch"
+icon        = "icons/construction.svg"
+color       = "#3949AB"
+description = "Raccourci par défaut : X"
+type        = "hotkey"
+keys        = "x"
+
+[[action]]
+id          = "extrude"
+name        = "Extrusion"
+label       = "Extrusion"
+category    = "model"
+icon        = "icons/extrude.svg"
+color       = "#EF6C00"
+description = "Raccourci par défaut : E"
+type        = "hotkey"
+keys        = "e"
+
+[[action]]
+id          = "revolve"
+name        = "Révolution"
+label       = "Révolution"
+category    = "model"
+icon        = "icons/revolve.svg"
+color       = "#EF6C00"
+description = "Via la recherche S."
+type        = "macro"
+steps       = [ { type = "hotkey", keys = "s" }, { type = "wait", ms = 350 }, { type = "text", text = "Révolution" }, { type = "wait", ms = 600 }, { type = "hotkey", keys = "enter" } ]
+
+[[action]]
+id          = "hole"
+name        = "Perçage"
+label       = "Perçage"
+category    = "model"
+icon        = "icons/hole.svg"
+color       = "#EF6C00"
+description = "Raccourci par défaut : H"
+type        = "hotkey"
+keys        = "h"
+
+[[action]]
+id          = "presspull"
+name        = "Appuyer/tirer"
+label       = "Appuyer tirer"
+category    = "modify"
+icon        = "icons/presspull.svg"
+color       = "#6A1B9A"
+description = "Raccourci par défaut : Q"
+type        = "hotkey"
+keys        = "q"
+
+[[action]]
+id          = "fillet"
+name        = "Congé"
+label       = "Congé"
+category    = "modify"
+icon        = "icons/fillet.svg"
+color       = "#6A1B9A"
+description = "Raccourci par défaut : F"
+type        = "hotkey"
+keys        = "f"
+
+[[action]]
+id          = "chamfer"
+name        = "Chanfrein"
+label       = "Chanfrein"
+category    = "modify"
+icon        = "icons/chamfer.svg"
+color       = "#6A1B9A"
+description = "Via la recherche S."
+type        = "macro"
+steps       = [ { type = "hotkey", keys = "s" }, { type = "wait", ms = 350 }, { type = "text", text = "Chanfrein" }, { type = "wait", ms = 600 }, { type = "hotkey", keys = "enter" } ]
+
+[[action]]
+id          = "mirror"
+name        = "Symétrie"
+label       = "Symétrie"
+category    = "modify"
+icon        = "icons/mirror.svg"
+color       = "#6A1B9A"
+description = "Via la recherche S."
+type        = "macro"
+steps       = [ { type = "hotkey", keys = "s" }, { type = "wait", ms = 350 }, { type = "text", text = "Symétrie" }, { type = "wait", ms = 600 }, { type = "hotkey", keys = "enter" } ]
+
+[[action]]
+id          = "move"
+name        = "Déplacer/copier"
+label       = "Déplacer"
+category    = "modify"
+icon        = "icons/move.svg"
+color       = "#6A1B9A"
+description = "Raccourci par défaut : M"
+type        = "hotkey"
+keys        = "m"
+
+[[action]]
+id          = "joint"
+name        = "Liaison"
+label       = "Liaison"
+category    = "modify"
+icon        = "icons/joint.svg"
+color       = "#00897B"
+description = "Raccourci par défaut : J"
+type        = "hotkey"
+keys        = "j"
+
+[[action]]
+id          = "measure"
+name        = "Mesurer"
+label       = "Mesurer"
+category    = "tools"
+icon        = "icons/measure.svg"
+color       = "#455A64"
+description = "Raccourci par défaut : I"
+type        = "hotkey"
+keys        = "i"
+
+[[action]]
+id          = "toolbox"
+name        = "Recherche de commandes"
+label       = "Recherche"
+category    = "tools"
+icon        = "icons/toolbox.svg"
+color       = "#455A64"
+description = "Raccourci par défaut : S (boîte à outils)"
+type        = "hotkey"
+keys        = "s"
+
+[[action]]
+id          = "compute"
+name        = "Tout recalculer"
+label       = "Recalculer"
+category    = "tools"
+icon        = "icons/compute.svg"
+color       = "#455A64"
+description = "Raccourci par défaut : Ctrl+B"
+type        = "hotkey"
+keys        = "ctrl+b"
+
+[[action]]
+id          = "undo"
+name        = "Annuler"
+label       = "Annuler"
+category    = "tools"
+icon        = "builtin:undo-2"
+color       = "#5D4037"
+description = ""
+type        = "hotkey"
+keys        = "ctrl+z"
+
+[[action]]
+id          = "redo"
+name        = "Rétablir"
+label       = "Rétablir"
+category    = "tools"
+icon        = "builtin:redo-2"
+color       = "#5D4037"
+description = ""
+type        = "hotkey"
+keys        = "ctrl+y"
+
+[[action]]
+id          = "save"
+name        = "Enregistrer"
+label       = "Enregistrer"
+category    = "tools"
+icon        = "builtin:save"
+color       = "#2E7D32"
+description = "Enregistre une version"
+type        = "hotkey"
+keys        = "ctrl+s"
+
+# ---------------------------------------------------------------------
+#  Pages prêtes à l'emploi (bouton « Ajouter les pages » dans HubForge)
+# ---------------------------------------------------------------------
+[[page]]
+id   = "main"
+name = "Fusion 360"
+keys = [
+  { key = 1,  action = "create_sketch" },
+  { key = 2,  action = "extrude" },
+  { key = 3,  action = "revolve" },
+  { key = 4,  action = "presspull" },
+  { key = 5,  action = "hole" },
+  { key = 6,  action = "fillet" },
+  { key = 7,  action = "chamfer" },
+  { key = 8,  action = "mirror" },
+  { key = 9,  action = "move" },
+  { key = 10, action = "measure" },
+  { key = 11, action = "undo" },
+  { key = 12, action = "redo" },
+  { key = 13, action = "save" },
+  { key = 14, action = "toolbox" },
+  { key = 15, open = "sketch", label = "Esquisse…" },
+]
+
+[[page]]
+id     = "sketch"
+name   = "Fusion — Esquisse"
+folder = true
+keys = [
+  { key = 1,  back = true },
+  { key = 2,  action = "line" },
+  { key = 3,  action = "rectangle" },
+  { key = 4,  action = "circle" },
+  { key = 5,  action = "circle_2p" },
+  { key = 6,  action = "circle_3p" },
+  { key = 7,  action = "arc_3p" },
+  { key = 8,  action = "trim" },
+  { key = 9,  action = "offset" },
+  { key = 10, action = "project" },
+  { key = 11, action = "dimension" },
+  { key = 12, action = "construction" },
+  { key = 13, action = "undo" },
+  { key = 14, action = "toolbox" },
+  { key = 15, action = "finish_sketch" },
+]

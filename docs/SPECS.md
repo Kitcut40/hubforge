@@ -68,6 +68,8 @@ Le logiciel est **modulaire dès le départ** : ajouter un module = ajouter un "
 ## 4. Système d'addons ⭐ (cœur du projet)
 
 ### 4.1 Principe
+> **État : niveau 1 (déclaratif) livré en v0.7.0** — format décrit dans [ADDON_GUIDE.md](ADDON_GUIDE.md). Les actions « rotary » (molettes/faders) et les niveaux 2–3 restent à faire.
+
 Un **addon** est un fichier unique qu'on glisse dans le dossier `addons/` (ou directement sur la fenêtre du logiciel). Il ajoute :
 - une **catégorie** dans la bibliothèque d'actions (ex. « Fusion 360 ») ;
 - des **actions** prêtes à l'emploi (Extrusion, Esquisse, Congé, Orbite…) avec leurs **icônes** ;

@@ -144,11 +144,31 @@ fn render_key_opts(def: &KeyDef, base_dir: &Path, first_only: bool) -> KeyVisual
         return KeyVisual { frames: vec![make_frame(&img, Duration::ZERO, 90)] };
     };
 
-    let path = if Path::new(icon).is_absolute() {
+    let path = if icon.starts_with("addon:") {
+        match crate::addons::resolve_icon(base_dir, icon) {
+            Some(p) => p,
+            None => return error_visual("Icône invalide"),
+        }
+    } else if Path::new(icon).is_absolute() {
         Path::new(icon).to_path_buf()
     } else {
         base_dir.join(icon)
     };
+    // Icône SVG (addons) : dessinée comme les icônes intégrées, à la couleur du texte.
+    if path.extension().map(|e| e.eq_ignore_ascii_case("svg")).unwrap_or(false) {
+        let Ok(svg) = std::fs::read_to_string(&path) else {
+            log::warn!("touche {} : icône introuvable {}", def.key, path.display());
+            return error_visual("Image introuvable");
+        };
+        let mut img = RgbImage::from_pixel(S, S, bg);
+        let with_label = !def.label.trim().is_empty();
+        let size: u32 = if with_label { 34 } else { 46 };
+        draw_svg_icon(&mut img, &svg, fg, size, if with_label { 8 } else { (S - size) / 2 });
+        if with_label {
+            draw_text_sized(&mut img, &def.label, fg, 44, S - 46, 13);
+        }
+        return KeyVisual { frames: vec![make_frame(&img, Duration::ZERO, 90)] };
+    }
     let frames = match load_frames(&path).map(|mut f| {
         if first_only {
             f.truncate(1);
@@ -352,6 +372,11 @@ fn draw_builtin(img: &mut RgbImage, name: &str, color: Rgb<u8>, with_label: bool
 /// Dessine une icône intégrée de `size` pixels, centrée horizontalement, à la hauteur `oy`.
 pub(crate) fn draw_builtin_at(img: &mut RgbImage, name: &str, color: Rgb<u8>, size: u32, oy: u32) {
     let Some(svg) = builtin_svg(name) else { return };
+    draw_svg_icon(img, svg, color, size, oy);
+}
+
+/// Dessine une icône SVG (style Lucide : `currentColor` = couleur du texte).
+pub(crate) fn draw_svg_icon(img: &mut RgbImage, svg: &str, color: Rgb<u8>, size: u32, oy: u32) {
     let hex = format!("#{:02X}{:02X}{:02X}", color.0[0], color.0[1], color.0[2]);
     let svg = svg.replace("currentColor", &hex);
     let Ok(tree) = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()) else { return };

@@ -20,6 +20,8 @@ pub struct Settings {
     pub profile: String,
     /// Meilleur score au mini-jeu caché.
     pub game_best: u32,
+    /// Addons désactivés (leurs actions n'apparaissent plus).
+    pub disabled_addons: Vec<String>,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.
@@ -237,7 +239,7 @@ mod tests {
         assert_eq!(list(&d), vec!["Laura", "Principal"]);
 
         // Le profil actif est retenu.
-        save_settings(&d, &Settings { profile: "Laura".into(), game_best: 12 });
+        save_settings(&d, &Settings { profile: "Laura".into(), game_best: 12, ..Default::default() });
         assert_eq!(init(&d).name, "Laura");
         assert_eq!(load_settings(&d).game_best, 12);
         let _ = std::fs::remove_dir_all(&d);

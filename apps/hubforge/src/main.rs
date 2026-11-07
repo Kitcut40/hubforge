@@ -7,6 +7,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod actions;
+mod addons;
 mod appicon;
 mod audio;
 mod autostart;
@@ -15,6 +16,7 @@ mod engine;
 mod foreground;
 mod icons_data;
 mod logging;
+mod official;
 mod game;
 mod profiles;
 mod render;
@@ -63,6 +65,7 @@ fn main() {
     };
 
     log::info!("HubForge v{} démarre", env!("CARGO_PKG_VERSION"));
+    official::install(&dir);
     let active = profiles::init(&dir);
     log::info!("profil « {} »", active.name);
     let cfg_path = active.path.clone();
@@ -110,6 +113,15 @@ fn main() {
             ui::rename_profile,
             ui::delete_profile,
             ui::start_game,
+            ui::list_addons,
+            ui::addons_signature,
+            ui::install_addon,
+            ui::install_addon_data,
+            ui::remove_addon,
+            ui::restore_official_addons,
+            ui::set_addon_enabled,
+            ui::addon_pages,
+            ui::open_addons_folder,
             ui::app_info,
             ui::list_running_apps,
             ui::apply_config,
