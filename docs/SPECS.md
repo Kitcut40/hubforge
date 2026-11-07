@@ -289,7 +289,7 @@ Objectif : un logiciel **déjà complet et sympa dès l'installation**. Ces acti
 - **P2** Accélération (tourner vite = plus grands pas)
 
 **LED** (✅ couleur et luminosité validées sur le matériel)
-- **P1** **Couleur choisie pour chaque fader individuellement** (5 couleurs différentes possibles) 🔍 commande par fader à confirmer, la commande « tous les faders » est validée
+- **P1** **Couleur choisie pour chaque fader individuellement** (5 couleurs différentes possibles) ✅ validé avec HubForge v0.1
 - **P1** Couleur et luminosité des LED de la base
 - **P2** LED **liées à l'action** : couleur selon le niveau (dégradé vert → rouge) ou selon l'état (muet = rouge)
 - **P2** Effets intégrés au module (respiration, vague…) — modes 0 à 9 à explorer

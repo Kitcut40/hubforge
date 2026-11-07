@@ -139,7 +139,7 @@ Rapport de **sortie** `0x02`, 64 octets :
 | Vitesse d'effet | `02 30 …` | 🔍 |
 
 - `SS` = 1 pour **sauvegarder** dans le module, 0 pour un changement temporaire.
-- Cible `CC` / index `II` : base `00 00` ✅ · faders `01 FF` (tous) ou `01 0–4` ✅ · knobs `02 FF` ou `02 0–2` 🔍.
+- Cible `CC` / index `II` : base `00 00` ✅ · faders `01 FF` (tous) ou **`01 0–4` = une couleur par fader ✅** (HubForge v0.1) · knobs `02 FF` ou `02 0–2` 🔍.
 
 ---
 

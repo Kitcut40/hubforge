@@ -11,7 +11,7 @@ Le MasterHUB est un excellent contrôleur modulaire (touches à écran, faders, 
 | Phase | Contenu | État |
 |---|---|---|
 | 0 | Analyse et validation du protocole USB | ✅ terminée |
-| 1 | Service d'arrière-plan : touches, profils, raccourcis, macros | 🔧 v0.1 en test |
+| 1 | Service d'arrière-plan : touches, profils, raccourcis, macros | ✅ v0.1 validée sur le matériel |
 | 2 | Interface de configuration | ⏳ |
 | 3 | Faders, molettes, audio par application | ⏳ |
 | 4 | Système d'addons `.forge` | ⏳ |
