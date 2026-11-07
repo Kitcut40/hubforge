@@ -11,7 +11,7 @@ Le MasterHUB est un excellent contrôleur modulaire (touches à écran, faders, 
 | Phase | Contenu | État |
 |---|---|---|
 | 0 | Analyse et validation du protocole USB | ✅ terminée |
-| 1 | Service d'arrière-plan : touches, profils, raccourcis, macros | ⏳ à venir |
+| 1 | Service d'arrière-plan : touches, profils, raccourcis, macros | 🔧 v0.1 en test |
 | 2 | Interface de configuration | ⏳ |
 | 3 | Faders, molettes, audio par application | ⏳ |
 | 4 | Système d'addons `.forge` | ⏳ |
@@ -31,6 +31,16 @@ Le MasterHUB est un excellent contrôleur modulaire (touches à écran, faders, 
 
 - [`docs/SPECS.md`](docs/SPECS.md) — fonctionnalités, architecture et feuille de route
 - [`docs/PROTOCOLE.md`](docs/PROTOCOLE.md) — protocole USB du MasterHUB (HID), vérifié sur le matériel
+
+## Essayer HubForge (v0.1)
+
+```sh
+cargo run --release -p hubforge
+```
+
+Au premier lancement, HubForge crée `config.toml` (dans `%APPDATA%\HubForge` sous Windows, `~/.config/HubForge` sous Linux). Modifie-le et enregistre-le : les touches se mettent à jour toutes seules.
+
+Déjà disponible : images, texte et **GIF animés** sur les touches, pages, raccourcis clavier, saisie de texte, lancement d'applis / fichiers / URL, contrôle multimédia, verrouillage, **volume général, micro et par application sur les faders**, **couleur par fader**, molettes (volume, défilement, zoom).
 
 ## Outil de test
 

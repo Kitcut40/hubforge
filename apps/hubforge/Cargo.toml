@@ -1,0 +1,33 @@
+[package]
+name = "hubforge"
+version = "0.1.0"
+description = "HubForge — logiciel libre pour le Cooler Master MasterHUB"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+hubforge-device = { path = "../../crates/hubforge-device" }
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+ab_glyph = "0.2"
+enigo = "0.6"
+ctrlc = { version = "3.5", features = ["termination"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_System_Threading",
+    "Win32_System_Console",
+    "Win32_System_Shutdown",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }

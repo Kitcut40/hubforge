@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["tools/hubforge-probe"]
+members = ["crates/hubforge-device", "apps/hubforge", "tools/hubforge-probe"]
+default-members = ["crates/hubforge-device", "apps/hubforge", "tools/hubforge-probe"]
 
 [workspace.package]
 edition = "2021"
