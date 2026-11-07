@@ -1,0 +1,107 @@
+# Publication d'une version de HubForge.
+#
+# Déclenchement : un tag « vX.Y.Z » (ex. v0.8.1) envoyé sur GitHub, ou créé
+# depuis la page Releases → « Choose a tag → Create new tag ».
+# GitHub compile alors HubForge sous Windows, fabrique l'installateur et son
+# empreinte SHA-256, puis publie la version avec les notes du CHANGELOG.
+# Les HubForge déjà installés la proposeront ensuite tout seuls.
+#
+# Lancement manuel (onglet Actions → Publication → Run workflow) : compile et
+# fabrique l'installateur sans rien publier (fichier téléchargeable dans
+# l'exécution), pour vérifier que tout fonctionne.
+
+name: Publication
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Installateur Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          VERSION=$(grep -m1 '^version' apps/hubforge/Cargo.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$VERSION" ]; then
+            echo "::error::Le tag ${GITHUB_REF_NAME} ne correspond pas à la version du programme (v$VERSION, apps/hubforge/Cargo.toml)."
+            exit 1
+          fi
+          echo "HubForge $VERSION"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tests
+        run: cargo test -p hubforge-device -p hubforge --release
+
+      - name: Compilation
+        run: cargo build --release -p hubforge
+
+      - name: NSIS
+        run: |
+          if ! command -v makensis >/dev/null 2>&1 && [ ! -f "/c/Program Files (x86)/NSIS/makensis.exe" ]; then
+            choco install nsis -y --no-progress
+          fi
+          echo "/c/Program Files (x86)/NSIS" >> "$GITHUB_PATH"
+
+      - name: Installateur
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          mkdir -p stage dist
+          cp target/release/hubforge.exe stage/
+          if [ -f target/release/WebView2Loader.dll ]; then cp target/release/WebView2Loader.dll stage/; fi
+          makensis -V2 -DVERSION="$VERSION" -DSRC="$PWD/stage" -DOUT="$PWD/dist/HubForge-Setup-$VERSION.exe" installer/hubforge.nsi
+          cd dist
+          sha256sum "HubForge-Setup-$VERSION.exe" > "HubForge-Setup-$VERSION.exe.sha256"
+          cat "HubForge-Setup-$VERSION.exe.sha256"
+
+      - name: Notes de version (CHANGELOG)
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          awk -v v="$VERSION" '
+            /^## / { if (inside) exit; inside = index($0, "[" v "]") > 0; next }
+            inside { print }
+          ' CHANGELOG.md > notes.md
+          HASH=$(cut -d' ' -f1 "dist/HubForge-Setup-$VERSION.exe.sha256")
+          {
+            echo
+            echo "---"
+            echo "**Installation** : télécharge \`HubForge-Setup-$VERSION.exe\` ci-dessous et lance-le (Windows 10/11, sans droits administrateur). Si HubForge est déjà installé, il propose cette version tout seul."
+            echo
+            echo "Empreinte SHA-256 : \`$HASH\`"
+            echo
+            echo "Windows peut afficher un avertissement SmartScreen (programme non signé) : *Informations complémentaires → Exécuter quand même*."
+            echo
+            echo "HubForge n'est pas affilié à Cooler Master."
+          } >> notes.md
+          cat notes.md
+
+      - name: Fichiers de l'exécution
+        uses: actions/upload-artifact@v4
+        with:
+          name: HubForge-Setup-${{ steps.version.outputs.version }}
+          path: dist/*
+
+      - name: Publication sur GitHub
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: HubForge ${{ steps.version.outputs.version }}
+          body_path: notes.md
+          files: |
+            dist/HubForge-Setup-${{ steps.version.outputs.version }}.exe
+            dist/HubForge-Setup-${{ steps.version.outputs.version }}.exe.sha256

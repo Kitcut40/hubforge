@@ -198,7 +198,11 @@ Section "$(SecMain)" SecMain
       Abort
     ${EndIf}
   ${EndIf}
-  File "${SRC}/WebView2Loader.dll"
+  ; Compilation MinGW : chargeur WebView2 à côté du programme.
+  ; Compilation MSVC (GitHub) : il est intégré au programme.
+  !if /FileExists "${SRC}/WebView2Loader.dll"
+    File "${SRC}/WebView2Loader.dll"
+  !endif
   File "/oname=LICENSE.txt" "../LICENSE"
   File "/oname=ADDON-EXCEPTION.md" "../ADDON-EXCEPTION.md"
   File "/oname=CHANGELOG.md" "../CHANGELOG.md"
