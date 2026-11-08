@@ -57,7 +57,6 @@ struct DoomPlay {
     pulses: Vec<(Instant, u8)>,
     esc_since: Option<Instant>,
     leds_due: Instant,
-    view_due: Instant,
 }
 
 /// Couleurs envoyées en ce moment aux LED (pour l'aperçu dans l'interface).
@@ -932,7 +931,6 @@ impl Engine {
                     pulses: Vec::new(),
                     esc_since: None,
                     leds_due: now,
-                    view_due: now,
                 });
                 self.doom_error = None;
                 self.pressed = [false; KEY_COUNT];
@@ -1014,13 +1012,7 @@ impl Engine {
         }
 
         let Some((seq, frame)) = d.sess.frame_after(d.seen) else { return };
-        // Fenêtre de HubForge : jusqu'à 20 images par seconde.
-        if now >= d.view_due {
-            d.view_due = now + Duration::from_millis(50);
-            if let Some(img) = image::RgbImage::from_raw(frame.width as u32, frame.height as u32, frame.rgb.clone()) {
-                *doom::VIEW.lock().unwrap() = Some((seq, Arc::new(render::encode_jpeg(&img, 75))));
-            }
-        }
+        // L'image n'est affichée que sur les touches du MasterHUB.
         // MasterHUB : seulement quand le module a fini d'afficher l'image précédente.
         if keys_busy == 0 {
             d.seen = seq;

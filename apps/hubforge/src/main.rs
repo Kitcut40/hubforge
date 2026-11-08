@@ -223,7 +223,6 @@ fn main() {
             ui::download_freedoom,
             ui::stop_doom,
             ui::doom_key,
-            ui::doom_frame,
             ui::reset_base,
             ui::list_addons,
             ui::addons_signature,

@@ -7,7 +7,7 @@ beaucoup de choses.
 ## [0.10.0] — 2026-11-08
 
 ### Easter egg
-- **Doom tourne sur le MasterHUB.** Tape `IDDQD` dans la fenêtre de HubForge : le jeu s'affiche sur les 15 touches (chaque touche montre un morceau de l'image) et dans la fenêtre. Les touches servent de manette, la molette gauche vise, la molette droite fait avancer, les LED des faders montrent ta vie et la base prend la couleur de l'action (rouge quand tu es touché). Appui long sur la touche en haut à gauche pour quitter.
+- **Doom tourne sur le MasterHUB.** Tape `IDDQD` dans la fenêtre de HubForge : le jeu s'affiche sur les 15 touches du MasterHUB (chaque touche montre un morceau de l'image) ; la fenêtre ne montre que les commandes. Les touches servent de manette, la molette gauche vise, la molette droite fait avancer, les LED des faders montrent ta vie et la base prend la couleur de l'action (rouge quand tu es touché). Appui long sur la touche en haut à gauche pour quitter.
 - Le moteur est [doomgeneric](https://github.com/ozkl/doomgeneric) (GPL-2.0 ou ultérieure). Les niveaux ne sont pas inclus : HubForge propose de télécharger [Freedoom](https://freedoom.github.io/) (libre et gratuit), ou d'utiliser ton DOOM.WAD / DOOM2.WAD.
 
 ## [0.9.0] — 2026-11-08

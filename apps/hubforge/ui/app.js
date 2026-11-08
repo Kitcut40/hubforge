@@ -2218,19 +2218,8 @@ async function downloadFreedoom() {
 /** Affiche / masque la fenêtre de Doom selon l'état du moteur. */
 function updateDoomView(prev, st) {
   if (st.doom_error && st.doom_error !== prev.doom_error) toast("Doom : " + st.doom_error, true);
-  const box = $("#doom");
-  if (!!st.doom === !box.classList.contains("hidden")) return;
-  box.classList.toggle("hidden", !st.doom);
-  clearInterval(S.doomTimer);
-  if (st.doom) {
-    S.doomSeen = 0;
-    S.doomTimer = setInterval(async () => {
-      const f = await invoke("doom_frame", { seen: S.doomSeen || 0 });
-      if (f) { S.doomSeen = f[0]; $("#doom-view").src = f[1]; }
-    }, 45);
-  } else {
-    $("#doom-view").removeAttribute("src");
-  }
+  // Le jeu s'affiche sur les touches ; la fenêtre ne montre que les commandes.
+  $("#doom").classList.toggle("hidden", !st.doom);
 }
 
 function setupEasterEgg() {
@@ -2708,7 +2697,6 @@ async function mockInvoke(cmd, args) {
     case "set_placement": return null;
     case "preview_animation": return null;
     case "start_doom": if (location.search.includes("doom")) { setTimeout(() => onStatus(Object.assign({}, S.status, { doom: true })), 300); return "freedoom1.wad"; } throw "no_wad";
-    case "doom_frame": return window.__doomShown ? null : (window.__doomShown = true, [1, "doom-sample.png"]);
     case "download_freedoom": return null;
     case "stop_doom": onStatus(Object.assign({}, S.status, { doom: false })); return null;
     case "list_profiles": return ["Benjamin", "Laura", "Streaming"];

@@ -8,7 +8,7 @@
 //!
 //! HubForge découpe ensuite chaque image en 15 morceaux de 72 × 72, un par
 //! touche, et n'envoie que les touches qui ont changé, au rythme que le module
-//! accepte.
+//! accepte. Le jeu s'affiche uniquement sur les touches, pas sur l'écran du PC.
 
 use image::RgbImage;
 use std::collections::VecDeque;
@@ -70,9 +70,6 @@ pub struct Frame {
     pub damage: u8,
     pub bonus: u8,
 }
-
-/// Dernière image en JPEG, pour l'afficher aussi dans la fenêtre de HubForge.
-pub static VIEW: Mutex<Option<(u64, Arc<Vec<u8>>)>> = Mutex::new(None);
 
 // ---------------------------------------------------------------------------
 // Côté HubForge : lancer et piloter le processus de Doom
@@ -174,7 +171,6 @@ impl Drop for Session {
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
         let _ = self.child.kill();
         let _ = self.child.wait();
-        *VIEW.lock().unwrap() = None;
         log::info!("👹 Doom arrêté");
     }
 }

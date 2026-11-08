@@ -863,14 +863,3 @@ pub fn stop_doom(state: State<AppState>) {
 pub fn doom_key(state: State<AppState>, pressed: bool, code: u8) {
     let _ = state.engine.lock().unwrap().send(EngineMsg::DoomKey { pressed, code });
 }
-
-/// Dernière image de Doom (JPEG en data URL) si elle est plus récente que `seen`.
-#[tauri::command]
-pub fn doom_frame(seen: u64) -> Option<(u64, String)> {
-    let v = crate::doom::VIEW.lock().unwrap();
-    let (seq, jpeg) = v.as_ref()?;
-    if *seq == seen {
-        return None;
-    }
-    Some((*seq, format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(jpeg.as_slice()))))
-}
