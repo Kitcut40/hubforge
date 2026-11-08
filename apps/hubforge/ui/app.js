@@ -114,6 +114,11 @@ const MODULE_SIZE = { keys15: [4, 3], faders5: [4, 2], rollers2: [4, 1] };
 /* Disposition d'origine du kit (touches en haut, faders, molettes en bas). */
 const DEFAULT_PLACEMENT = { keys15: { col: 0, row: 0, rot: 0 }, faders5: { col: 0, row: 3, rot: 0 }, rollers2: { col: 0, row: 5, rot: 0 } };
 const MODULE_NAMES = { keys15: "15xKey", faders5: "5xFader", rollers2: "2xRoller" };
+// Modèles d'animation (identiques à lights.rs) : identifiant, nom, nombre de couleurs.
+const LIGHT_PRESETS = [["breathe", "Respiration", 1], ["rainbow", "Arc-en-ciel", 0], ["wave", "Vague", 2], ["comet", "Comète", 1],
+  ["heartbeat", "Battement de cœur", 1], ["police", "Gyrophare", 2], ["fire", "Feu de camp", 0], ["fill", "Remplissage", 1], ["strobe", "Stroboscope", 1]];
+const BASE_ROTS = [[0, "Verticale (comme dans le kit)"], [90, "Horizontale, tournée vers la droite"], [270, "Horizontale, tournée vers la gauche"], [180, "Verticale, à l'envers"]];
+const FLAG_NAMES = ["aucun", "bleu", "jaune", "noir", "blanc", "damier (arrivée)", "pénalité"];
 
 // ---------------------------------------------------------------------------
 // État
@@ -168,6 +173,7 @@ async function init() {
   S.version = ini.version;
   $("#version").textContent = "v" + ini.version;
   S.icons = (await invoke("list_icons")) || [];
+  S.layout = (await invoke("get_layout")) || { base_rot: 0, placements: {} };
 
   buildLibrary();
   renderAll();
@@ -222,6 +228,9 @@ function normalize(cfg) {
   cfg.faders = cfg.faders || [];
   while (cfg.faders.length < 5) cfg.faders.push({ target: "none", color: "#FFFFFF" });
   cfg.rollers = Object.assign({ right: "volume", left: "scroll", volume_step: 2, scroll_step: 3, invert_right: false, invert_left: false }, cfg.rollers || {});
+  cfg.lights = Object.assign({ base_mode: "hardware", base_animation: "", faders_mode: "fixed", faders_animation: "",
+    gradient: ["0:#00E676", "60:#FFD000", "100:#FF1744"], fps: 15, animations: [] }, cfg.lights || {});
+  cfg.lights.game = Object.assign({ enabled: true, rev_lights: true, rev_start: 70, rev_limit: 96, limiter_base: true, flags: true }, cfg.lights.game || {});
   return cfg;
 }
 
@@ -425,21 +434,74 @@ function renderDevice() {
   const base = $("#base");
   base.innerHTML = "";
   const U = unit();
-  const c = S.cfg.general.base_color || "#00C8FF";
-  const fx = S.cfg.general.base_effect;
+  const rot = (S.layout && S.layout.base_rot) || 0;
+  const dev = $("#device");
+  dev.classList.remove("rot-90", "rot-180", "rot-270");
+  if (rot) dev.classList.add("rot-" + rot);
   base.classList.toggle("selected", S.sel.type === "base");
   base.onclick = (e) => { if (!e.target.closest(".module")) select({ type: "base" }); };
-  if (fx !== 0) base.append(el("div", { class: `base-glow fx-${fx}`, style: `box-shadow:0 0 0 2px ${c}66, 0 0 26px ${c}66` }));
+  base.append(el("div", { class: "base-glow", id: "base-glow" }));
+  paintBaseGlow();
   for (const m of layout()) {
     const slot = el("div", { class: "slot", style: `left:${14 + m.box.col * U}px;top:${14 + m.box.row * U}px;width:${m.box.w * U}px;height:${m.box.h * U}px` });
     const mod = moduleElement(m.kind, !m.connected);
     // Les images des touches restent droites (HubForge les tourne aussi sur le MasterHUB).
-    if (m.kind === "keys15") document.documentElement.style.setProperty("--key-rot", `${-(m.p.rot || 0)}deg`);
+    if (m.kind === "keys15") document.documentElement.style.setProperty("--key-rot", `${-((m.p.rot || 0) + rot)}deg`);
     mod.style.transform = `translate(-50%, -50%)` + (m.p.rot ? ` rotate(${m.p.rot}deg)` : "");
     slot.append(mod);
     base.append(slot);
   }
   updateFaderLive();
+}
+
+/** Lueur de la base : couleur envoyée en ce moment par HubForge, sinon effet intégré. */
+function paintBaseGlow() {
+  const glow = $("#base-glow");
+  if (!glow) return;
+  const live = S.status.leds && S.status.leds.base;
+  const g = S.cfg.general;
+  const c = live || g.base_color || "#00C8FF";
+  const fx = live ? 1 : g.base_effect;
+  glow.className = "base-glow" + (live ? "" : ` fx-${fx}`);
+  glow.style.display = fx === 0 ? "none" : "";
+  glow.style.boxShadow = `0 0 0 2px ${c}${live ? "AA" : "66"}, 0 0 26px ${c}${live ? "99" : "66"}`;
+}
+
+/** Couleur actuelle de la LED d'un fader. */
+function faderLedColor(i) {
+  const live = S.status.leds && S.status.leds.faders && S.status.leds.faders[i];
+  if (live) return live;
+  if (S.cfg.lights.faders_mode === "position" && S.status.faders) return gradientAt(S.cfg.lights.gradient, S.status.faders[i]);
+  return (S.cfg.faders[i] && S.cfg.faders[i].color) || "#FFFFFF";
+}
+
+/** Couleur du dégradé à une position (même calcul que lights.rs). */
+function gradientAt(stops, v) {
+  const pts = stops.map((x) => { const [p, c] = x.split(":"); return [Number(p), c]; }).filter(([p, c]) => !isNaN(p) && /^#[0-9a-f]{6}$/i.test(c || "")).sort((a, b) => a[0] - b[0]);
+  if (!pts.length) return "#FFFFFF";
+  const rgb = (c) => [1, 3, 5].map((k) => parseInt(c.slice(k, k + 2), 16));
+  if (v <= pts[0][0]) return pts[0][1];
+  for (let j = 1; j < pts.length; j++) {
+    if (v <= pts[j][0]) {
+      const k = (v - pts[j - 1][0]) / Math.max(0.001, pts[j][0] - pts[j - 1][0]);
+      const a = rgb(pts[j - 1][1]), b = rgb(pts[j][1]);
+      return "#" + a.map((x, n) => Math.round(x + (b[n] - x) * k).toString(16).padStart(2, "0")).join("").toUpperCase();
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+function updateLedLive() {
+  paintBaseGlow();
+  document.querySelectorAll("#faders .fader-led").forEach((led, i) => {
+    const c = faderLedColor(i);
+    led.style.background = c;
+    led.style.boxShadow = `0 0 8px ${c}`;
+  });
+  if (S.sel.type === "lights") {
+    const st = $("#sim-status");
+    if (st) st.replaceWith(simStatus());
+  }
 }
 
 function moduleElement(kind, ghost) {
@@ -637,6 +699,8 @@ async function onDropOnKey(k, dt) {
   if (fromKey) {
     const a = Number(fromKey);
     if (a === k) return;
+    const target = keyDef(k);
+    if (target && target.action && target.action.type === "folder" && keyDef(a)) { moveKeyIntoFolder(a, target); return; }
     const da = keyDef(a) ? clone(keyDef(a)) : null;
     const db = keyDef(k) ? clone(keyDef(k)) : null;
     setKeyDef(k, da); setKeyDef(a, db);
@@ -714,7 +778,7 @@ function faderElements() {
     const f = el("div", { class: "fader" + (S.sel.type === "fader" && S.sel.index === i ? " selected" : ""), "data-fader": i },
       el("div", { class: "fader-value" }, "–"),
       el("div", { class: "fader-track" },
-        el("div", { class: "fader-led", style: `background:${slot.color};box-shadow:0 0 8px ${slot.color}` }),
+        el("div", { class: "fader-led", style: `background:${faderLedColor(i)};box-shadow:0 0 8px ${faderLedColor(i)}` }),
         el("div", { class: "fader-thumb", style: "bottom:0%" })),
       el("div", { class: "fader-name", title: slot.target }, faderName(slot)),
     );
@@ -747,6 +811,7 @@ function rollerElements() {
 // Sélection et inspecteur
 // ---------------------------------------------------------------------------
 function select(sel) {
+  if (S.previewing && sel.type !== "lights") { invoke("preview_animation", { animation: null }); S.previewing = null; }
   S.sel = sel;
   S.capturing = false;
   S.iconPickerOpen = false;
@@ -765,6 +830,7 @@ function renderInspector() {
   else if (S.sel.type === "page") box.append(...pageInspector());
   else if (S.sel.type === "base") box.append(...baseInspector());
   else if (S.sel.type === "addons") box.append(...addonsInspector());
+  else if (S.sel.type === "lights") box.append(...lightsInspector());
   else box.append(...settingsInspector());
 }
 
@@ -1225,8 +1291,48 @@ function faderInspector(i) {
     out.push(field("Applis qui jouent du son en ce moment", running,
       el("p", { class: "hint" }, "Une appli n'apparaît ici que lorsqu'elle joue (ou a joué) du son.")));
   }
-  out.push(colorField("Couleur de la LED", slot.color, (v) => { if (!v) return; slot.color = v; changed(); renderDevice(); }));
+  const L = S.cfg.lights;
+  out.push(el("h2", {}, "LED des faders"));
+  out.push(field("Les 5 LED", el("select", { class: "input", onchange: (e) => { L.faders_mode = e.target.value; if (L.faders_mode === "animation" && !L.faders_animation && L.animations[0]) L.faders_animation = L.animations[0].name; changed(); renderInspector(); } },
+    ...[["fixed", "Une couleur fixe par fader"], ["position", "Couleur selon la position du fader"], ["animation", "Animation"]].map(([v, l]) => el("option", { value: v, selected: v === L.faders_mode }, l)))));
+  if (L.faders_mode === "position") {
+    out.push(gradientEditor());
+  } else if (L.faders_mode === "animation") {
+    out.push(animationPicker(L.faders_animation, (v) => { L.faders_animation = v; changed(); }));
+  } else {
+    out.push(colorField(`Couleur de la LED du fader ${i + 1}`, slot.color, (v) => { if (!v) return; slot.color = v; changed(); renderDevice(); }));
+  }
+  out.push(el("button", { class: "btn", style: "width:100%", onclick: () => select({ type: "lights" }) }, "Animations et jeux de course…"));
   return out;
+}
+
+/** Éditeur du dégradé « position du fader → couleur ». */
+function gradientEditor() {
+  const L = S.cfg.lights;
+  const stops = () => L.gradient.map((s) => { const [p, c] = s.split(":"); return { p: Number(p) || 0, c: c || "#FFFFFF" }; }).sort((a, b) => a.p - b.p);
+  const save = (list) => { L.gradient = list.sort((a, b) => a.p - b.p).map((x) => `${Math.round(x.p)}:${x.c}`); changed(); };
+  const list = stops();
+  const bar = el("div", { class: "gradient-bar", style: `background:linear-gradient(90deg, ${list.map((x) => `${x.c} ${x.p}%`).join(", ")})` });
+  const rows = list.map((x, idx) => el("div", { class: "row gradient-row" },
+    el("input", { type: "color", value: x.c, oninput: (e) => { list[idx].c = e.target.value.toUpperCase(); save(list); bar.style.background = `linear-gradient(90deg, ${list.map((y) => `${y.c} ${y.p}%`).join(", ")})`; } }),
+    el("input", { class: "input", type: "number", min: 0, max: 100, value: x.p, style: "width:74px", onchange: (e) => { list[idx].p = Math.max(0, Math.min(100, Number(e.target.value) || 0)); save(list); renderInspector(); } }),
+    el("span", { class: "hint", style: "margin:0" }, "%"),
+    el("span", { class: "spacer" }),
+    list.length > 2 ? el("button", { class: "btn small", onclick: () => { list.splice(idx, 1); save(list); renderInspector(); } }, "Retirer") : null));
+  return field("Couleurs selon la position", bar, ...rows,
+    el("button", { class: "btn small", style: "margin-top:6px", onclick: () => { list.push({ p: 50, c: "#FFFFFF" }); save(list); renderInspector(); } }, "+ Ajouter une couleur"),
+    el("p", { class: "hint" }, "Exemple : vert en bas, jaune à 60 %, rouge en haut. La LED change de couleur en direct quand tu bouges le fader."));
+}
+
+/** Liste déroulante des animations du profil. */
+function animationPicker(value, onChange) {
+  const anims = S.cfg.lights.animations;
+  if (!anims.length) {
+    return field("Animation", el("p", { class: "hint", style: "margin:0" }, "Aucune animation pour l'instant."),
+      el("button", { class: "btn small", style: "margin-top:6px", onclick: () => select({ type: "lights" }) }, "Créer une animation…"));
+  }
+  return field("Animation", el("select", { class: "input", onchange: (e) => onChange(e.target.value) },
+    ...anims.map((a) => el("option", { value: a.name, selected: a.name === value }, a.name))));
 }
 
 // --- Molettes ---
@@ -1468,25 +1574,200 @@ function addonsInspector() {
   return out;
 }
 
-// --- LED de la base ---
+// --- LED de la base, orientation et positions ---
 function baseInspector() {
-  const g = S.cfg.general;
-  const out = [title("LED de la base", "Profil " + (S.profile || ""))];
-  const prev = el("div", { class: "led-preview" });
-  const paint = () => {
-    const off = g.base_effect === 0;
-    prev.style.background = off ? "#0b0c10" : `linear-gradient(90deg, ${g.base_color}22, ${g.base_color}, ${g.base_color}22)`;
-    prev.className = "led-preview" + (off ? "" : ` fx-${g.base_effect}`);
-  };
-  paint();
-  out.push(prev);
-  out.push(colorField("Couleur", g.base_color, (v) => { if (!v) return; g.base_color = v; paint(); renderDevice(); changed(); }));
-  out.push(field("Effet", el("select", { class: "input", onchange: (e) => { g.base_effect = Number(e.target.value); paint(); renderDevice(); changed(); } },
-    ...BASE_EFFECTS.map(([v, l]) => el("option", { value: v, selected: v === g.base_effect }, l))),
-    el("p", { class: "hint" }, "Les effets animés (respiration, arc-en-ciel…) ne fonctionnent que sur la base ; les LED des faders restent en couleur fixe.")));
+  const g = S.cfg.general, L = S.cfg.lights;
+  const out = [title("Base", "Profil " + (S.profile || ""))];
+  out.push(field("Orientation sur le bureau", el("select", { class: "input", onchange: async (e) => {
+    const rot = Number(e.target.value);
+    S.layout.base_rot = rot;
+    await invoke("set_base_rot", { rot });
+    renderDevice(); fitDevice();
+  } }, ...BASE_ROTS.map(([v, l]) => el("option", { value: v, selected: v === ((S.layout && S.layout.base_rot) || 0) }, l))),
+    el("p", { class: "hint" }, "Les images des touches sont tournées pour rester lisibles. Commun à tous les profils.")));
+
+  out.push(el("h2", {}, "LED de la base"));
+  out.push(field("Lumière", el("select", { class: "input", onchange: (e) => { L.base_mode = e.target.value; if (L.base_mode === "animation" && !L.base_animation && L.animations[0]) L.base_animation = L.animations[0].name; changed(); renderInspector(); renderDevice(); } },
+    el("option", { value: "hardware", selected: L.base_mode !== "animation" }, "Effet intégré de la base"),
+    el("option", { value: "animation", selected: L.base_mode === "animation" }, "Animation HubForge"))));
+  if (L.base_mode === "animation") {
+    out.push(animationPicker(L.base_animation, (v) => { L.base_animation = v; changed(); }));
+  } else {
+    const prev = el("div", { class: "led-preview" });
+    const paint = () => {
+      const off = g.base_effect === 0;
+      prev.style.background = off ? "#0b0c10" : `linear-gradient(90deg, ${g.base_color}22, ${g.base_color}, ${g.base_color}22)`;
+      prev.className = "led-preview" + (off ? "" : ` fx-${g.base_effect}`);
+    };
+    paint();
+    out.push(prev);
+    out.push(colorField("Couleur", g.base_color, (v) => { if (!v) return; g.base_color = v; paint(); renderDevice(); changed(); }));
+    out.push(field("Effet", el("select", { class: "input", onchange: (e) => { g.base_effect = Number(e.target.value); paint(); renderDevice(); changed(); } },
+      ...BASE_EFFECTS.map(([v, l]) => el("option", { value: v, selected: v === g.base_effect }, l)))));
+  }
   out.push(rangeField("Luminosité des LED (base et faders)", g.led_brightness, 0, 100, " %", (v) => { g.led_brightness = v; changed(); }));
-  out.push(el("p", { class: "hint" }, "La couleur de chaque fader se règle en cliquant sur le fader."));
+  out.push(el("button", { class: "btn", style: "width:100%", onclick: () => select({ type: "lights" }) }, "Animations et jeux de course…"));
+
+  // Positions des modules
+  out.push(el("h2", {}, "Position des modules"));
+  const mods = (S.status.modules || []).filter((m) => MODULE_SIZE[m.kind]);
+  if (!mods.length) out.push(el("p", { class: "hint" }, "Aucun module connecté."));
+  for (const m of mods) {
+    const key = `${m.kind}:${m.port}`;
+    const manual = S.layout && S.layout.placements && S.layout.placements[key];
+    const state = !m.port ? "port inconnu" : manual ? "position saisie à la main" : m.placement ? "détectée automatiquement ✓" : "position non reconnue";
+    const box = el("div", { class: "place-card" + (!m.placement && m.port ? " warn" : "") },
+      el("div", { class: "row" }, el("b", {}, MODULE_NAMES[m.kind] || m.kind), el("span", { class: "spacer" }), el("span", { class: "hint", style: "margin:0" }, state)));
+    if (m.port && (!m.placement || manual)) {
+      const p = Object.assign({ col: 0, row: 0, rot: 0 }, m.placement || {});
+      const sel = (label, k, values) => el("label", { class: "mini" }, label, el("select", { class: "input", onchange: (e) => { p[k] = Number(e.target.value); } },
+        ...values.map((v) => el("option", { value: v, selected: v === p[k] }, k === "rot" ? v + "°" : String(v + 1)))));
+      box.append(el("p", { class: "hint" }, `Branchement ${m.port} inconnu de HubForge : indique où est le module (colonne et ligne de son coin haut-gauche, base vue verticale).`),
+        el("div", { class: "row" }, sel("Colonne", "col", [0, 1, 2, 3]), sel("Ligne", "row", [0, 1, 2, 3, 4, 5]), sel("Rotation", "rot", [0, 90, 180, 270])),
+        el("div", { class: "row", style: "margin-top:6px" },
+          el("button", { class: "btn small primary", onclick: async () => { await invoke("set_placement", { kind: m.kind, code: m.port, placement: p }); S.layout = await invoke("get_layout"); toast("Position enregistrée."); } }, "Enregistrer"),
+          manual ? el("button", { class: "btn small", onclick: async () => { await invoke("set_placement", { kind: m.kind, code: m.port, placement: null }); S.layout = await invoke("get_layout"); renderInspector(); } }, "Oublier") : null));
+    }
+    out.push(box);
+  }
+  out.push(el("p", { class: "hint" }, "HubForge reconnaît la position et le sens des modules d'après leur branchement dans la base. Si un branchement n'est pas encore connu, tu peux le saisir ici ; envoie-nous le rapport de diagnostic pour qu'il soit reconnu pour tout le monde."));
   return out;
+}
+
+// --- Lumières : animations et jeux ---
+function presetName(id) { const p = LIGHT_PRESETS.find((x) => x[0] === id); return p ? p[1] : "Faite à la main"; }
+
+function newAnimation(preset) {
+  const L = S.cfg.lights;
+  let base = preset ? presetName(preset) : "Mon animation", name = base, n = 2;
+  while (L.animations.some((a) => a.name === name)) name = `${base} ${n++}`;
+  const a = { name, preset: preset || "", colors: ["#00C8FF", "#FF2D9A"], speed: 1, steps: [] };
+  if (!preset) a.steps = [
+    { ms: 600, fade: true, base: "#FF7A1A", faders: ["#FF7A1A", "#000000", "#000000", "#000000", "#FF7A1A"] },
+    { ms: 600, fade: true, base: "#2040FF", faders: ["#000000", "#2040FF", "#2040FF", "#2040FF", "#000000"] },
+  ];
+  L.animations.push(a);
+  S.editAnim = L.animations.length - 1;
+  changed();
+  renderInspector();
+}
+
+function renameAnimation(a, name) {
+  const L = S.cfg.lights;
+  name = name.trim();
+  if (!name || name === a.name) return;
+  if (L.animations.some((x) => x !== a && x.name === name)) { toast("Une animation porte déjà ce nom.", true); renderInspector(); return; }
+  if (L.base_animation === a.name) L.base_animation = name;
+  if (L.faders_animation === a.name) L.faders_animation = name;
+  a.name = name;
+  changed();
+}
+
+async function previewAnim(a) {
+  if (S.previewing === a) { await invoke("preview_animation", { animation: null }); S.previewing = null; renderInspector(); return; }
+  S.previewing = a;
+  await invoke("preview_animation", { animation: clean(a) });
+  renderInspector();
+}
+
+function simStatus() {
+  const sim = S.status.sim;
+  let text, cls = "sim-status";
+  if (!S.cfg.lights.game.enabled) text = "Réactions aux jeux désactivées.";
+  else if (!sim) text = "Assetto Corsa n'est pas lancé.";
+  else if (!sim.live) { text = `${sim.name} détecté — en attente que tu sois en piste.`; cls += " on"; }
+  else {
+    cls += " on live";
+    text = `${sim.name} — en piste · ${sim.rpm} / ${sim.max_rpm || "?"} tr/min · drapeau ${FLAG_NAMES[sim.flag] || "aucun"}`;
+  }
+  return el("div", { class: cls, id: "sim-status" }, text);
+}
+
+function lightsInspector() {
+  const L = S.cfg.lights, G = L.game;
+  const out = [title("Lumières et jeux", "Profil " + (S.profile || ""))];
+
+  out.push(el("h2", {}, "Animations"));
+  if (!L.animations.length) out.push(el("p", { class: "hint" }, "Crée une animation à partir d'un modèle ou fais-la toi-même étape par étape, puis choisis-la pour la base ou pour les faders."));
+  L.animations.forEach((a, i) => {
+    const used = [L.base_mode === "animation" && L.base_animation === a.name ? "base" : null, L.faders_mode === "animation" && L.faders_animation === a.name ? "faders" : null].filter(Boolean);
+    out.push(el("div", { class: "anim-card" + (S.editAnim === i ? " open" : "") },
+      el("div", { class: "row" },
+        el("div", { class: "grow" }, el("b", {}, a.name), el("div", { class: "hint", style: "margin:2px 0 0" }, presetName(a.preset) + (used.length ? " · sur " + used.join(" et ") : ""))),
+        el("button", { class: "btn small" + (S.previewing === a ? " primary" : ""), title: "Jouer sur le MasterHUB", onclick: () => previewAnim(a) }, S.previewing === a ? "■ Arrêter" : "▶ Essayer"),
+        el("button", { class: "btn small", onclick: () => { S.editAnim = S.editAnim === i ? null : i; renderInspector(); } }, S.editAnim === i ? "Fermer" : "Modifier")),
+      S.editAnim === i ? animationEditor(a, i) : null));
+  });
+  out.push(el("div", { class: "row", style: "margin:8px 0 4px" },
+    el("select", { class: "input grow", id: "new-anim-preset" }, ...LIGHT_PRESETS.map(([id, name]) => el("option", { value: id }, "Modèle : " + name)), el("option", { value: "" }, "Faite à la main (étapes)")),
+    el("button", { class: "btn primary", onclick: () => newAnimation($("#new-anim-preset").value) }, "Créer")));
+
+  out.push(el("h2", {}, "Jeux de course"));
+  out.push(simStatus());
+  out.push(switchRow("Réagir à Assetto Corsa", G.enabled, (v) => { G.enabled = v; changed(); renderInspector(); }));
+  if (G.enabled) {
+    out.push(switchRow("Faders = témoins de régime (shift lights)", G.rev_lights, (v) => { G.rev_lights = v; changed(); }));
+    out.push(rangeField("Premier témoin allumé à", G.rev_start, 30, 95, " %", (v) => { G.rev_start = v; changed(); }));
+    out.push(rangeField("Rupteur (tout clignote) à", G.rev_limit, 50, 100, " %", (v) => { G.rev_limit = v; changed(); }));
+    out.push(switchRow("La base clignote en rouge au rupteur", G.limiter_base, (v) => { G.limiter_base = v; changed(); }));
+    out.push(switchRow("La base prend la couleur des drapeaux", G.flags, (v) => { G.flags = v; changed(); }));
+    out.push(el("p", { class: "hint" }, "Bleu, jaune, blanc, damier qui clignote à l'arrivée, rouge pour une pénalité. HubForge lit les données qu'Assetto Corsa publie pour les applications externes : rien n'est modifié dans le jeu. Avec ACC, seuls les témoins de régime fonctionnent pour l'instant."));
+  }
+
+  out.push(el("h2", {}, "Fluidité"));
+  out.push(rangeField("Images par seconde envoyées aux LED", L.fps, 5, 30, " i/s", (v) => { L.fps = v; changed(); },
+    "Si les LED saccadent ou retardent, baisse cette valeur."));
+  return out;
+}
+
+function animationEditor(a, i) {
+  const L = S.cfg.lights;
+  const box = el("div", { class: "anim-editor" });
+  box.append(field("Nom", el("input", { class: "input", value: a.name, onchange: (e) => renameAnimation(a, e.target.value) })));
+  const restart = () => { if (S.previewing === a) invoke("preview_animation", { animation: clean(a) }); };
+  if (a.preset) {
+    const n = (LIGHT_PRESETS.find((x) => x[0] === a.preset) || [0, 0, 1])[2];
+    a.colors = a.colors || [];
+    for (let c = 0; c < n; c++) {
+      box.append(colorField(n > 1 ? `Couleur ${c + 1}` : "Couleur", a.colors[c] || "#00C8FF", (v) => { if (!v) return; a.colors[c] = v; changed(); restart(); }));
+    }
+    box.append(rangeField("Vitesse", Math.round((a.speed || 1) * 100), 25, 400, " %", (v) => { a.speed = v / 100; changed(); restart(); }));
+  } else {
+    a.steps = a.steps || [];
+    a.steps.forEach((st, j) => {
+      st.faders = st.faders || [];
+      while (st.faders.length < 5) st.faders.push("#000000");
+      const colorIn = (value, set) => el("input", { type: "color", value: value || "#000000", oninput: (e) => { set(e.target.value.toUpperCase()); changed(); restart(); } });
+      box.append(el("div", { class: "step-card" },
+        el("div", { class: "row" },
+          el("b", {}, `Étape ${j + 1}`), el("span", { class: "spacer" }),
+          el("input", { class: "input", type: "number", min: 20, max: 60000, step: 50, value: st.ms, style: "width:84px", onchange: (e) => { st.ms = Math.max(20, Number(e.target.value) || 500); changed(); restart(); } }),
+          el("span", { class: "hint", style: "margin:0" }, "ms")),
+        el("div", { class: "row step-colors" },
+          el("label", { class: "mini" }, "Base", colorIn(st.base, (v) => { st.base = v; })),
+          ...st.faders.slice(0, 5).map((c, f) => el("label", { class: "mini" }, `F${f + 1}`, colorIn(c, (v) => { st.faders[f] = v; })))),
+        el("div", { class: "row" },
+          el("label", { class: "mini check" }, el("input", { type: "checkbox", checked: st.fade !== false, onchange: (e) => { st.fade = e.target.checked; changed(); restart(); } }), "Fondu vers l'étape suivante"),
+          el("span", { class: "spacer" }),
+          el("button", { class: "btn small", title: "Dupliquer", onclick: () => { a.steps.splice(j + 1, 0, clone(st)); changed(); renderInspector(); restart(); } }, "⧉"),
+          a.steps.length > 1 ? el("button", { class: "btn small", title: "Supprimer", onclick: () => { a.steps.splice(j, 1); changed(); renderInspector(); restart(); } }, "✕") : null)));
+    });
+    box.append(el("button", { class: "btn small", onclick: () => { a.steps.push(clone(a.steps[a.steps.length - 1] || { ms: 500, fade: true, base: "#000000", faders: Array(5).fill("#000000") })); changed(); renderInspector(); } }, "+ Ajouter une étape"));
+  }
+  box.append(el("div", { class: "row", style: "margin-top:10px" },
+    el("button", { class: "btn small", onclick: () => { L.base_mode = "animation"; L.base_animation = a.name; changed(); renderInspector(); renderDevice(); toast(`« ${a.name} » joue maintenant sur la base.`); } }, "Sur la base"),
+    el("button", { class: "btn small", onclick: () => { L.faders_mode = "animation"; L.faders_animation = a.name; changed(); renderInspector(); toast(`« ${a.name} » joue maintenant sur les faders.`); } }, "Sur les faders"),
+    el("span", { class: "spacer" }),
+    el("button", { class: "btn small danger", onclick: async () => {
+      if (!(await confirm_(`Supprimer l'animation « ${a.name} » ?`))) return;
+      if (S.previewing === a) { await invoke("preview_animation", { animation: null }); S.previewing = null; }
+      L.animations.splice(i, 1);
+      if (L.base_animation === a.name) { L.base_animation = ""; L.base_mode = "hardware"; }
+      if (L.faders_animation === a.name) { L.faders_animation = ""; L.faders_mode = "fixed"; }
+      S.editAnim = null;
+      changed(); renderInspector(); renderDevice();
+    } }, "Supprimer")));
+  return box;
 }
 
 // --- Profils ---
@@ -1757,6 +2038,46 @@ async function showDiagnostic() {
 }
 
 // --- Supprimer une touche en la glissant hors du MasterHUB ---
+/** Page (index) ouverte par une action « dossier ». */
+function folderPageIndex(to) {
+  to = String(to || "").trim();
+  if (/^\d+$/.test(to)) { const i = Number(to) - 1; return i >= 0 && i < S.cfg.pages.length ? i : -1; }
+  return S.cfg.pages.findIndex((p) => (p.name || "").toLowerCase() === to.toLowerCase());
+}
+
+/** Glisser une touche sur une touche « dossier » la range dans ce dossier. */
+function moveKeyIntoFolder(a, folderDef) {
+  const idx = folderPageIndex(folderDef.action.to);
+  if (idx < 0) { toast("Ce dossier n'ouvre aucune page : choisis-en une dans ses réglages.", true); return; }
+  if (idx === S.page) { toast("Cette touche est déjà dans ce dossier."); return; }
+  const dest = S.cfg.pages[idx];
+  dest.keys = dest.keys || [];
+  const used = new Set(dest.keys.map((d) => d.key));
+  let free = 0;
+  for (let n = 1; n <= 15; n++) if (!used.has(n)) { free = n; break; }
+  if (!free) { toast(`Le dossier « ${dest.name} » est plein (15 touches).`, true); return; }
+  const def = clone(keyDef(a));
+  const from = S.page;
+  def.key = free;
+  dest.keys.push(def);
+  dest.keys.sort((x, y) => x.key - y.key);
+  setKeyDef(a, null);
+  delete S.previews[`${from}:${a}:0`]; delete S.previews[`${from}:${a}:1`];
+  updateKeyNode(a);
+  if (S.sel.type === "key" && S.sel.key === a) renderInspector();
+  changed();
+  toast(`Touche rangée dans le dossier « ${dest.name} » (touche ${free}).`, false, { label: "Annuler", fn: () => {
+    const page = S.cfg.pages[idx], back = S.cfg.pages[from];
+    if (!page || !back || (back.keys || []).some((d) => d.key === a)) return;
+    page.keys = (page.keys || []).filter((d) => d.key !== free);
+    def.key = a;
+    back.keys.push(def);
+    back.keys.sort((x, y) => x.key - y.key);
+    changed();
+    if (S.page === from) refreshPreviews(from, a);
+  } });
+}
+
 function setupTrashDrop() {
   const outside = (e) => S.draggingKey && !e.target.closest("#keys");
   document.addEventListener("dragover", (e) => {
@@ -1852,7 +2173,8 @@ function settingsInspector() {
   const out = [title("Réglages généraux")];
   out.push(rangeField("Luminosité des écrans", g.brightness, 0, 100, " %", (v) => { g.brightness = v; changed(); }));
   out.push(rangeField("Luminosité des LED", g.led_brightness, 0, 100, " %", (v) => { g.led_brightness = v; changed(); }));
-  out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => select({ type: "base" }) }, "Régler la LED de la base…"));
+  out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => select({ type: "base" }) }, "Base : LED, orientation, positions…"));
+  out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => select({ type: "lights" }) }, "Animations et jeux de course…"));
   out.push(el("p", { class: "hint", style: "margin-top:0" }, "Astuce : tu peux aussi cliquer directement sur la base dans le dessin."));
   out.push(el("div", { class: "sep" }));
   out.push(switchRow("Assombrir la touche pendant l'appui", g.press_feedback, (v) => { g.press_feedback = v; changed(); }));
@@ -2200,6 +2522,8 @@ function onStatus(st) {
   if (layoutChanged) { renderModulesChips(); renderDevice(); fitDevice(); }
   if (errChanged) renderBanner();
   updateFaderLive();
+  updateLedLive();
+  if (S.layout && st.base_rot !== undefined && st.base_rot !== S.layout.base_rot) { S.layout.base_rot = st.base_rot; renderDevice(); fitDevice(); }
   if (pageChanged) {
     S.devicePage = st.page;
     // La page a changé depuis le MasterHUB : l'interface suit.
@@ -2287,6 +2611,10 @@ async function mockInvoke(cmd, args) {
     : [{ kind: "keys15", port: "24", placement: { col: 0, row: 0, rot: 0 } }, { kind: "faders5", port: "41", placement: { col: 0, row: 3, rot: 0 } },
        { kind: "rollers2", port: "121", placement: { col: 0, row: 5, rot: 0 } }, { kind: "base" }];
   switch (cmd) {
+    case "get_layout": return window.__mockLayout || (window.__mockLayout = { base_rot: location.search.includes("rot=90") ? 90 : 0, placements: {} });
+    case "set_base_rot": window.__mockLayout.base_rot = args.rot; return null;
+    case "set_placement": return null;
+    case "preview_animation": return null;
     case "list_profiles": return ["Benjamin", "Laura", "Streaming"];
     case "list_backups": return [0, 1, 2].map((i) => ({ file: `${1794000000 - i * 3600}.toml`, time: Date.now() / 1000 - i * 5400 - 300, size: 4000, pages: 3, keys: 30 - i * 2 }));
     case "get_diagnostic": return { version: "0.8.1", os: "windows x86_64", profile: "Benjamin", config_dir: "C:\\Users\\benja\\AppData\\Roaming\\HubForge",
@@ -2300,7 +2628,10 @@ async function mockInvoke(cmd, args) {
     case "addon_pages": return [{ name: "Fusion 360", apps: ["Fusion360.exe"], keys: [{ key: 1, label: "Esquisse", color: "#1565C0", action: { type: "hotkey", keys: "s" } }] }];
     case "get_initial":
       return { update: window.__mockUpdate(), whats_new: location.search.includes("new") ? "### Nouveautés\n- **Installateur Windows** : menu Démarrer, désinstallation propre.\n- **Mises à jour depuis GitHub** en un clic.\n- Double-clic sur un fichier `.forge`." : null, profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.8.1",
-        status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false) } };
+        status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false),
+          leds: location.search.includes("leds") ? { base: "#FFC800", faders: ["#00E676", "#00E676", "#FFC800", "#FFC800", "#000000"] } : { base: null, faders: [] },
+          sim: location.search.includes("leds") ? { name: "Assetto Corsa", live: true, rpm: 7120, max_rpm: 8000, flag: 2 } : null,
+          base_rot: location.search.includes("rot=90") ? 90 : 0 } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;
     case "list_audio_apps": return ["chrome.exe", "discord.exe", "spotify.exe"];

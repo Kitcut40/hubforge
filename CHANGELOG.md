@@ -4,6 +4,17 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.9.0] — 2026-11-08
+
+### Nouveautés
+- **Animations des LED** : 9 modèles prêts à l'emploi (respiration, arc-en-ciel, vague, comète, battement de cœur, gyrophare, feu de camp, remplissage, stroboscope) avec leurs couleurs et leur vitesse, ou des animations faites à la main étape par étape (couleur de la base et de chaque fader, durée, fondu). Bouton « Essayer » pour les voir en direct sur le MasterHUB.
+- **Faders qui changent de couleur selon leur position** : dégradé réglable (par exemple vert en bas, jaune au milieu, rouge en haut).
+- **Animations sur les faders** : les LED des faders peuvent maintenant être animées, et plus seulement fixes.
+- **Jeux de course : Assetto Corsa** : les faders deviennent des témoins de régime qui clignotent au rupteur, la base clignote en rouge au rupteur et prend la couleur des drapeaux (bleu, jaune, blanc, damier, pénalité). HubForge lit seulement les données publiées par le jeu.
+- **Ranger une touche dans un dossier** : glisse-la sur la touche du dossier.
+- **Orientation de la base** : verticale, horizontale vers la droite ou la gauche, ou à l'envers. Les images des touches restent lisibles.
+- **Position des modules** : si un branchement n'est pas encore reconnu, tu peux indiquer où est le module dans les réglages de la base.
+
 ## [0.8.1] — 2026-11-07
 
 ### Nouveautés

@@ -23,11 +23,13 @@ mod engine;
 mod foreground;
 mod game;
 mod icons_data;
+mod lights;
 mod logging;
 mod official;
 mod profiles;
 mod render;
 mod share;
+mod telemetry;
 mod topology;
 mod ui;
 mod update;
@@ -206,6 +208,11 @@ fn main() {
             ui::import_profile_data,
             ui::get_diagnostic,
             ui::reconnect_modules,
+            ui::light_presets,
+            ui::preview_animation,
+            ui::get_layout,
+            ui::set_base_rot,
+            ui::set_placement,
             ui::reset_base,
             ui::list_addons,
             ui::addons_signature,

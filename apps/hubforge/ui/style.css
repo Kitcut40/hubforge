@@ -464,3 +464,30 @@ body.dragging-key.over-trash .stage { box-shadow: inset 0 0 0 2px rgba(198, 40, 
 .diag-grid b { display: block; font-size: 11px; color: var(--faint); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 2px; }
 .diag-pre { background: #0d0e12; border: 1px solid var(--line-2); border-radius: 10px; padding: 10px; font: 12px/1.5 ui-monospace, Consolas, monospace; color: #c9ccd6; white-space: pre-wrap; margin: 4px 0 10px; }
 .diag-log { max-height: 190px; overflow-y: auto; }
+
+/* Orientation de la base sur le bureau */
+.device.rot-90, .device.rot-270 { width: calc(var(--u) * 6 + 28px); height: calc(var(--u) * 4 + 28px); }
+.device.rot-90 .base, .device.rot-270 .base { position: absolute; left: 50%; top: 50%; }
+.device.rot-90 .base { transform: translate(-50%, -50%) rotate(90deg); }
+.device.rot-270 .base { transform: translate(-50%, -50%) rotate(270deg); }
+.device.rot-180 .base { transform: rotate(180deg); }
+
+/* Lumières */
+.gradient-bar { height: 16px; border-radius: 8px; border: 1px solid var(--line-2); margin-bottom: 8px; }
+.gradient-row { margin-bottom: 6px; align-items: center; }
+.gradient-row input[type=color], .step-colors input[type=color] { width: 34px; height: 28px; padding: 0; border: 1px solid var(--line-2); border-radius: 7px; background: none; cursor: pointer; }
+.anim-card { border: 1px solid var(--line-2); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; background: #12141a; }
+.anim-card.open { border-color: var(--accent); }
+.anim-editor { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-2); }
+.step-card { border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; background: #0f1116; }
+.step-colors { gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+label.mini { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); }
+label.mini.check { flex-direction: row; gap: 6px; font-size: 12px; }
+label.mini select { min-width: 64px; }
+.sim-status { padding: 9px 12px; border-radius: 10px; background: #12141a; border: 1px solid var(--line-2); font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.sim-status.on { color: #e6e8ee; border-color: #3a4a2e; }
+.sim-status.live { background: #13201a; border-color: #2f7a4a; }
+.place-card { border: 1px solid var(--line-2); border-radius: 10px; padding: 9px 11px; margin-bottom: 8px; background: #12141a; }
+.place-card.warn { border-color: #8a6a1e; background: #1d1a10; }
+.place-card .row { gap: 8px; }
+.anim-editor > .row:last-child { flex-wrap: wrap; gap: 6px; }

@@ -5,12 +5,12 @@
 //! fait le logiciel officiel. On lit ce chemin dans Windows
 //! (propriété « LocationPaths » du périphérique USB).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Emplacement d'un module sur la grille de la base (4 colonnes × 6 lignes,
 /// base vue avec les modules dans leur sens « normal »).
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Placement {
     pub col: u8,
     pub row: u8,

@@ -763,3 +763,58 @@ pub async fn app_info(state: State<'_, AppState>, target: String) -> Result<AppI
 pub async fn list_running_apps() -> Vec<String> {
     crate::foreground::running_apps()
 }
+
+// ---------------------------------------------------------------------------
+// Lumières et disposition
+// ---------------------------------------------------------------------------
+
+/// Modèles d'animation : (identifiant, nom, nombre de couleurs).
+#[tauri::command]
+pub fn light_presets() -> Vec<(String, String, usize)> {
+    crate::lights::PRESETS.iter().map(|(id, name, n)| (id.to_string(), name.to_string(), *n)).collect()
+}
+
+/// Joue une animation sur les LED pour l'essayer (None = arrêter l'essai).
+#[tauri::command]
+pub fn preview_animation(state: State<AppState>, animation: Option<crate::lights::Animation>) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::PreviewAnimation(animation));
+}
+
+#[derive(serde::Serialize)]
+pub struct LayoutSettings {
+    pub base_rot: u16,
+    pub placements: std::collections::HashMap<String, crate::topology::Placement>,
+}
+
+#[tauri::command]
+pub fn get_layout(state: State<AppState>) -> LayoutSettings {
+    let st = crate::profiles::load_settings(&state.cfg_dir);
+    LayoutSettings { base_rot: st.base_rot, placements: st.placements }
+}
+
+/// Orientation de la base sur le bureau : 0, 90, 180 ou 270 degrés.
+#[tauri::command]
+pub fn set_base_rot(state: State<AppState>, rot: u16) {
+    let mut st = crate::profiles::load_settings(&state.cfg_dir);
+    st.base_rot = rot % 360 / 90 * 90;
+    crate::profiles::save_settings(&state.cfg_dir, &st);
+    let _ = state.engine.lock().unwrap().send(EngineMsg::ReloadLayout);
+}
+
+/// Position saisie à la main pour un branchement non reconnu (None = l'oublier).
+#[tauri::command]
+pub fn set_placement(state: State<AppState>, kind: String, code: String, placement: Option<crate::topology::Placement>) {
+    let mut st = crate::profiles::load_settings(&state.cfg_dir);
+    let key = format!("{kind}:{code}");
+    match placement {
+        Some(p) => {
+            log::info!("position saisie à la main : {key} → col {} lig {} {}°", p.col, p.row, p.rot);
+            st.placements.insert(key, p);
+        }
+        None => {
+            st.placements.remove(&key);
+        }
+    }
+    crate::profiles::save_settings(&state.cfg_dir, &st);
+    let _ = state.engine.lock().unwrap().send(EngineMsg::ReloadLayout);
+}

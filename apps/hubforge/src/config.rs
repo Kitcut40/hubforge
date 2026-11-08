@@ -15,6 +15,9 @@ pub struct Config {
     pub rollers: Rollers,
     #[serde(default)]
     pub pages: Vec<Page>,
+    /// Animations des LED, couleur des faders selon leur position, jeux.
+    #[serde(default)]
+    pub lights: crate::lights::Lights,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

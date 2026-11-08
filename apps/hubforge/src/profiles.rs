@@ -30,6 +30,12 @@ pub struct Settings {
     pub last_update_check: u64,
     /// Dernière version lancée (pour afficher les nouveautés après une mise à jour).
     pub last_version_run: String,
+    /// Orientation de la base sur le bureau (degrés, sens horaire) :
+    /// 0 verticale, 90 horizontale (tournée vers la droite), 180, 270.
+    pub base_rot: u16,
+    /// Positions saisies à la main pour les branchements que HubForge ne
+    /// reconnaît pas encore : « type:code » → emplacement.
+    pub placements: std::collections::HashMap<String, crate::topology::Placement>,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.
@@ -155,6 +161,7 @@ pub fn blank_config() -> Config {
             close_after: false,
             keys: Vec::new(),
         }],
+        lights: Default::default(),
     }
 }
 

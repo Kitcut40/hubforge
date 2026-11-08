@@ -9,6 +9,8 @@ use crate::render::{self, KeyVisual};
 use crate::foreground;
 use crate::widgets;
 use crate::game::{self, Game};
+use crate::lights::{self, Rgb};
+use crate::telemetry::{AcReader, Telemetry};
 use crate::profiles::{self, SharedActive};
 use crate::topology::{self, Placement};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
@@ -32,6 +34,28 @@ pub enum EngineMsg {
     StartGame,
     /// Fermer et rouvrir tous les modules (ils sont redétectés tout de suite).
     Reconnect,
+    /// Jouer une animation sur les LED pour l'essayer (None = arrêter).
+    PreviewAnimation(Option<lights::Animation>),
+    /// Orientation de la base ou positions manuelles modifiées.
+    ReloadLayout,
+}
+
+/// Couleurs envoyées en ce moment aux LED (pour l'aperçu dans l'interface).
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+pub struct LedStatus {
+    /// None = effet intégré de la base.
+    pub base: Option<String>,
+    pub faders: Vec<String>,
+}
+
+/// Jeu détecté et ses données.
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+pub struct GameStatus {
+    pub name: String,
+    pub live: bool,
+    pub rpm: i32,
+    pub max_rpm: i32,
+    pub flag: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,6 +83,16 @@ pub struct Status {
     pub profile: String,
     /// Partie de mini-jeu en cours.
     pub game: bool,
+    /// Couleurs actuelles des LED.
+    pub leds: LedStatus,
+    /// Jeu de course détecté (Assetto Corsa).
+    pub sim: Option<GameStatus>,
+    /// Orientation de la base (degrés).
+    pub base_rot: u16,
+}
+
+fn hex(c: Rgb) -> String {
+    format!("#{:02X}{:02X}{:02X}", c.0, c.1, c.2)
 }
 
 pub type Notify = Box<dyn Fn(&Status) + Send>;
@@ -125,6 +159,25 @@ pub struct Engine {
     gif_last: Instant,
     config_error: Option<String>,
     notify: Notify,
+    /// Lumières : début des animations, prochaine image, couleurs déjà
+    /// envoyées à chaque module, base pilotée par HubForge (et non par son effet intégré).
+    lights_t0: Instant,
+    led_due: Instant,
+    sent_base: HashMap<String, Rgb>,
+    sent_faders: HashMap<String, [Rgb; 5]>,
+    base_soft: bool,
+    leds: LedStatus,
+    leds_notified: Instant,
+    preview: Option<(lights::Animation, Instant)>,
+    /// Données d'Assetto Corsa.
+    ac: AcReader,
+    tel: Option<Telemetry>,
+    tel_due: Instant,
+    tel_acc: bool,
+    tel_fg_due: Instant,
+    /// Orientation de la base et positions saisies à la main.
+    base_rot: u16,
+    placements: HashMap<String, Placement>,
 }
 
 fn kind_id(k: Kind) -> &'static str {
@@ -179,7 +232,23 @@ impl Engine {
             gif_last: Instant::now(),
             config_error: None,
             notify,
+            lights_t0: Instant::now(),
+            led_due: Instant::now(),
+            sent_base: HashMap::new(),
+            sent_faders: HashMap::new(),
+            base_soft: false,
+            leds: LedStatus::default(),
+            leds_notified: Instant::now(),
+            preview: None,
+            ac: AcReader::default(),
+            tel: None,
+            tel_due: Instant::now(),
+            tel_acc: false,
+            tel_fg_due: Instant::now(),
+            base_rot: 0,
+            placements: HashMap::new(),
         };
+        e.load_layout();
         e.render_all();
         Ok(e)
     }
@@ -190,7 +259,7 @@ impl Engine {
             .iter()
             .map(|(s, k)| {
                 let port = self.ports.get(s).cloned();
-                let placement = port.as_deref().and_then(|p| topology::placement(kind_id(*k), p));
+                let placement = port.as_deref().and_then(|p| self.placement_of(*k, p));
                 ModuleStatus { kind: kind_id(*k).into(), name: k.name().into(), serial: s.clone(), port, placement }
             })
             .collect();
@@ -204,7 +273,27 @@ impl Engine {
             config_error: self.config_error.clone(),
             profile: self.active.lock().map(|a| a.name.clone()).unwrap_or_default(),
             game: self.game.is_some(),
+            leds: self.leds.clone(),
+            sim: self.tel.map(|t| GameStatus {
+                name: if self.tel_acc { "Assetto Corsa Competizione".into() } else { "Assetto Corsa".into() },
+                live: t.live,
+                rpm: t.rpm,
+                max_rpm: t.max_rpm,
+                flag: t.flag,
+            }),
+            base_rot: self.base_rot,
         }
+    }
+
+    /// Position d'un module : saisie à la main, sinon table de la base.
+    fn placement_of(&self, kind: Kind, code: &str) -> Option<Placement> {
+        self.placements.get(&format!("{}:{code}", kind_id(kind))).copied().or_else(|| topology::placement(kind_id(kind), code))
+    }
+
+    fn load_layout(&mut self) {
+        let st = profiles::load_settings(&self.cfg_dir);
+        self.base_rot = st.base_rot % 360 / 90 * 90;
+        self.placements = st.placements;
     }
 
     fn notify(&self) {
@@ -237,7 +326,8 @@ impl Engine {
             } else if Instant::now() >= self.widgets_due {
                 self.update_widgets(false);
             }
-            let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() && self.game.is_none() { 30 } else { 5 };
+            let busy_lights = self.preview.is_some() || self.base_soft || self.cfg.lights.faders_mode == "animation" || self.tel.map(|t| t.live).unwrap_or(false);
+            let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() && self.game.is_none() && !busy_lights { 30 } else { 5 };
             match self.events.recv_timeout(Duration::from_millis(timeout)) {
                 Ok(ev) => {
                     self.handle(ev);
@@ -261,6 +351,7 @@ impl Engine {
                 Err(RecvTimeoutError::Disconnected) => break,
             }
             self.tick_animations();
+            self.tick_lights();
         }
         self.shutdown();
     }
@@ -292,6 +383,23 @@ impl Engine {
                 if self.modules_changed {
                     self.modules_changed = false;
                     self.ports = topology::port_codes();
+                }
+                self.notify();
+            }
+            EngineMsg::PreviewAnimation(a) => {
+                self.preview = a.map(|a| (a, Instant::now()));
+                self.led_due = Instant::now();
+                if self.preview.is_none() {
+                    self.restore_leds();
+                }
+            }
+            EngineMsg::ReloadLayout => {
+                self.load_layout();
+                let rot = self.detected_keys_rot();
+                if rot != self.keys_rot {
+                    self.keys_rot = rot;
+                    self.render_all();
+                    self.show_page();
                 }
                 self.notify();
             }
@@ -350,10 +458,14 @@ impl Engine {
             let leds_changed = old.faders.iter().map(|f| &f.color).ne(self.cfg.faders.iter().map(|f| &f.color))
                 || old.general.base_color != self.cfg.general.base_color
                 || old.general.base_effect != self.cfg.general.base_effect
-                || old.general.led_brightness != self.cfg.general.led_brightness;
+                || old.general.led_brightness != self.cfg.general.led_brightness
+                || old.lights != self.cfg.lights;
             if k == Kind::Keys15 || leds_changed {
                 self.setup_module(&s, k);
             }
+        }
+        if old.lights.animations != self.cfg.lights.animations {
+            self.lights_t0 = Instant::now();
         }
         // Applique tout de suite les volumes selon la position actuelle des faders.
         let current: Vec<(String, [u8; FADER_COUNT])> = self.faders.drain().collect();
@@ -368,9 +480,9 @@ impl Engine {
             .iter()
             .find(|(_, k)| matches!(k, Kind::Keys15))
             .and_then(|(s, _)| self.ports.get(s))
-            .and_then(|p| topology::placement("keys15", p))
-            .map(|p| p.rot)
-            .unwrap_or(0)
+            .and_then(|p| self.placement_of(Kind::Keys15, p))
+            .map(|p| (p.rot + self.base_rot) % 360)
+            .unwrap_or(self.base_rot)
     }
 
     fn render_all(&mut self) {
@@ -431,21 +543,30 @@ impl Engine {
                 self.show_page();
             }
             Kind::Faders5 => {
-                let colors: Vec<(u8, (u8, u8, u8))> = self
-                    .cfg
-                    .faders
-                    .iter()
-                    .take(FADER_COUNT)
-                    .enumerate()
-                    .map(|(i, slot)| (i as u8, parse_color(&slot.color).unwrap_or((255, 255, 255))))
-                    .collect();
-                // Les effets animés ne fonctionnent pas sur les faders : couleur fixe.
+                // Les effets intégrés ne fonctionnent pas sur les faders : HubForge
+                // envoie lui-même chaque couleur (fixe, selon la position ou animée).
+                let now = Instant::now();
+                let target = self.fader_target(serial, now);
+                let colors: Vec<(u8, (u8, u8, u8))> = target.iter().enumerate().map(|(i, c)| (i as u8, *c)).collect();
                 self.setup_leds(serial, 1, &colors, 1);
+                self.sent_faders.insert(serial.to_string(), target);
                 self.mgr.send(serial, Command::QueryFaders);
             }
             Kind::BaseLed => {
-                let c = parse_color(&g.base_color).unwrap_or((0, 200, 255));
-                self.setup_leds(serial, 0, &[(0, c)], g.base_effect);
+                let now = Instant::now();
+                match self.base_target(now) {
+                    Some(c) => {
+                        self.setup_leds(serial, 0, &[(0, c)], 1);
+                        self.sent_base.insert(serial.to_string(), c);
+                        self.base_soft = true;
+                    }
+                    None => {
+                        let c = parse_color(&g.base_color).unwrap_or((0, 200, 255));
+                        self.setup_leds(serial, 0, &[(0, c)], g.base_effect);
+                        self.sent_base.remove(serial);
+                        self.base_soft = false;
+                    }
+                }
             }
             _ => {}
         }
@@ -460,6 +581,8 @@ impl Engine {
                 self.setup_module(&info.serial, info.kind);
             }
             Event::Disconnected { serial } => {
+                self.sent_base.remove(&serial);
+                self.sent_faders.remove(&serial);
                 if let Some(k) = self.modules.remove(&serial) {
                     log::info!("✗ {} débranché", k.name());
                 }
@@ -987,11 +1110,199 @@ impl Engine {
     }
 
     // ------------------------------------------------------------------
+    // Lumières
+    // ------------------------------------------------------------------
+
+    fn anim_t(&self, now: Instant) -> u64 {
+        now.saturating_duration_since(self.lights_t0).as_millis() as u64
+    }
+
+    fn overlay(&self, now: Instant) -> lights::GameOverlay {
+        match self.tel {
+            Some(t) => lights::game_overlay(&self.cfg.lights.game, &t, self.anim_t(now)),
+            None => lights::GameOverlay::default(),
+        }
+    }
+
+    /// Couleur voulue pour la base (None = effet intégré de la base).
+    fn base_target(&self, now: Instant) -> Option<Rgb> {
+        if let Some((a, t0)) = &self.preview {
+            return Some(lights::frame(a, now.saturating_duration_since(*t0).as_millis() as u64).base);
+        }
+        if let Some(c) = self.overlay(now).base {
+            return Some(c);
+        }
+        let l = &self.cfg.lights;
+        if l.base_mode == "animation" {
+            if let Some(a) = lights::find(l, &l.base_animation) {
+                return Some(lights::frame(a, self.anim_t(now)).base);
+            }
+        }
+        None
+    }
+
+    /// Couleurs voulues pour les 5 faders d'un module.
+    fn fader_target(&self, serial: &str, now: Instant) -> [Rgb; 5] {
+        if let Some((a, t0)) = &self.preview {
+            return lights::frame(a, now.saturating_duration_since(*t0).as_millis() as u64).faders;
+        }
+        if let Some(f) = self.overlay(now).faders {
+            return f;
+        }
+        let l = &self.cfg.lights;
+        match l.faders_mode.as_str() {
+            "animation" => {
+                if let Some(a) = lights::find(l, &l.faders_animation) {
+                    return lights::frame(a, self.anim_t(now)).faders;
+                }
+            }
+            "position" => {
+                let values = self.faders.get(serial).copied().unwrap_or([0; FADER_COUNT]);
+                let mut out = [(0, 0, 0); 5];
+                for (i, c) in out.iter_mut().enumerate() {
+                    *c = lights::gradient_color(&l.gradient, values[i]);
+                }
+                return out;
+            }
+            _ => {}
+        }
+        let mut out = [(255, 255, 255); 5];
+        for (i, c) in out.iter_mut().enumerate() {
+            if let Some(slot) = self.cfg.faders.get(i) {
+                *c = parse_color(&slot.color).unwrap_or((255, 255, 255));
+            }
+        }
+        out
+    }
+
+    /// Remet les LED dans leur état habituel (fin d'un essai d'animation).
+    fn restore_leds(&mut self) {
+        let serials: Vec<(String, Kind)> = self.modules.iter().map(|(s, k)| (s.clone(), *k)).collect();
+        for (s, k) in serials {
+            if matches!(k, Kind::Faders5 | Kind::BaseLed) {
+                self.setup_module(&s, k);
+            }
+        }
+    }
+
+    /// Lit les données du jeu de course, s'il tourne.
+    fn poll_telemetry(&mut self, now: Instant) {
+        if now < self.tel_due {
+            return;
+        }
+        let live = self.tel.map(|t| t.live).unwrap_or(false);
+        self.tel_due = now + Duration::from_millis(if live { 30 } else { 500 });
+        if self.tel.is_some() && now >= self.tel_fg_due {
+            self.tel_fg_due = now + Duration::from_secs(2);
+            if let Some(exe) = foreground::foreground_exe() {
+                if exe.starts_with("ac2-") {
+                    self.tel_acc = true;
+                } else if exe == "acs.exe" || exe == "acs_x86.exe" {
+                    self.tel_acc = false;
+                }
+            }
+        }
+        let before = self.tel;
+        self.tel = if self.cfg.lights.game.enabled { self.ac.poll(self.tel_acc) } else { None };
+        let changed = match (before, self.tel) {
+            (Some(a), Some(b)) => a.live != b.live || a.flag != b.flag || a.max_rpm != b.max_rpm,
+            (a, b) => a.is_some() != b.is_some(),
+        };
+        if changed {
+            if let Some(t) = self.tel {
+                if before.is_none() {
+                    log::info!("🏁 Assetto Corsa détecté");
+                }
+                if t.live != before.map(|b| b.live).unwrap_or(false) {
+                    log::info!("Assetto Corsa : {}", if t.live { "en piste" } else { "hors piste" });
+                }
+            }
+            self.led_due = now;
+            self.notify();
+        }
+    }
+
+    /// Met à jour les LED de la base et des faders (animations, position, jeux).
+    fn tick_lights(&mut self) {
+        let now = Instant::now();
+        self.poll_telemetry(now);
+        if self.game.is_some() || now < self.led_due {
+            return;
+        }
+        let fps = self.cfg.lights.fps.clamp(1, 30) as u64;
+        self.led_due = now + Duration::from_millis(1000 / fps);
+
+        let mut changed = false;
+        let base = self.base_target(now);
+        let bases: Vec<String> = self.modules.iter().filter(|(_, k)| **k == Kind::BaseLed).map(|(s, _)| s.clone()).collect();
+        for s in &bases {
+            match base {
+                Some(c) => {
+                    if self.sent_base.get(s) != Some(&c) {
+                        self.mgr.send(s, Command::Output(protocol::led_color(0, 0, c.0, c.1, c.2, false)));
+                        self.mgr.send(s, Command::Sleep(6));
+                        self.mgr.send(s, Command::Output(protocol::led_mode(0, 0, 1, false)));
+                        if !self.base_soft {
+                            self.mgr.send(s, Command::Sleep(6));
+                            self.mgr.send(s, Command::Output(protocol::led_brightness(0, 0, self.cfg.general.led_brightness)));
+                        }
+                        self.sent_base.insert(s.clone(), c);
+                        changed = true;
+                    }
+                }
+                None if self.base_soft => {
+                    // Retour à l'effet intégré de la base.
+                    self.setup_module(s, Kind::BaseLed);
+                    changed = true;
+                }
+                None => {}
+            }
+        }
+        self.base_soft = base.is_some() && !bases.is_empty();
+
+        let faders: Vec<String> = self.modules.iter().filter(|(_, k)| **k == Kind::Faders5).map(|(s, _)| s.clone()).collect();
+        let mut first: Option<[Rgb; 5]> = None;
+        for s in &faders {
+            let target = self.fader_target(s, now);
+            first.get_or_insert(target);
+            let prev = self.sent_faders.get(s).copied();
+            if prev == Some(target) {
+                continue;
+            }
+            for (i, c) in target.iter().enumerate() {
+                if prev.map(|p| p[i] != *c).unwrap_or(true) {
+                    self.mgr.send(s, Command::Output(protocol::led_color(1, i as u8, c.0, c.1, c.2, false)));
+                    self.mgr.send(s, Command::Sleep(5));
+                }
+            }
+            self.mgr.send(s, Command::Output(protocol::led_mode(1, 0xFF, 1, false)));
+            self.sent_faders.insert(s.clone(), target);
+            changed = true;
+        }
+
+        let status = LedStatus {
+            base: base.map(hex),
+            faders: first.map(|f| f.iter().map(|c| hex(*c)).collect()).unwrap_or_default(),
+        };
+        if changed || status != self.leds {
+            self.leds = status;
+            // L'interface n'a pas besoin de plus de 8 images par seconde.
+            if now.saturating_duration_since(self.leds_notified) >= Duration::from_millis(120) {
+                self.leds_notified = now;
+                self.notify();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Faders et molettes
     // ------------------------------------------------------------------
 
     fn faders_changed(&mut self, serial: String, values: [u8; FADER_COUNT]) {
         let previous = self.faders.insert(serial, values);
+        if self.cfg.lights.faders_mode == "position" {
+            self.led_due = self.led_due.min(Instant::now());
+        }
         for (i, &v) in values.iter().enumerate() {
             if previous.map(|p| p[i] == v).unwrap_or(false) {
                 continue;
