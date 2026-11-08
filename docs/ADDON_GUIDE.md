@@ -2,7 +2,7 @@
 
 Un addon ajoute à HubForge des **actions prêtes à l'emploi** (avec leurs icônes), des **pages toutes faites** et la **détection d'une application**. Ce guide décrit le **niveau 1** : un addon déclaratif, sans aucun code, donc sans aucun risque pour l'utilisateur.
 
-> Exemple complet : [`assets/addons/fusion360/`](../assets/addons/fusion360/) (addon officiel Fusion 360).
+> Plus aucun addon n'est livré avec HubForge : ils seront proposés dans un catalogue à télécharger.
 
 ---
 

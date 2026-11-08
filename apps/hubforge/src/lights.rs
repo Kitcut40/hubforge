@@ -1,12 +1,11 @@
-//! Lumières de HubForge : animations des LED de la base et des faders,
-//! couleur des faders selon leur position, et réactions aux jeux.
+//! Lumières de HubForge : animations des LED de la base et des faders, et
+//! couleur d'un fader selon sa position ou le niveau sonore.
 //!
 //! Tout est calculé ici, sans matériel : une animation donne, pour un instant
 //! `t` (millisecondes), la couleur de la base et celle des 5 faders. Le moteur
 //! envoie ensuite ces couleurs aux modules (uniquement quand elles changent).
 
 use crate::config::parse_color;
-use crate::telemetry::Telemetry;
 use serde::{Deserialize, Serialize};
 
 pub type Rgb = (u8, u8, u8);
@@ -18,7 +17,8 @@ pub struct Frame {
     pub faders: [Rgb; 5],
 }
 
-/// Réglages des lumières d'un profil (`[lights]` dans le profil).
+/// Réglages des lumières d'un profil (`[lights]` dans le profil). Les LED de
+/// chaque fader se règlent dans `[[faders]]` (champs `led`, `gradient`, `animation`).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct Lights {
@@ -26,18 +26,19 @@ pub struct Lights {
     /// `[general]`) ou "animation" (animation HubForge).
     pub base_mode: String,
     pub base_animation: String,
-    /// LED des faders : "fixed" (couleur de chaque fader), "position"
-    /// (couleur selon la position, voir `gradient`) ou "animation".
-    pub faders_mode: String,
-    pub faders_animation: String,
-    /// Dégradé « position → couleur » : "0:#00FF00", "70:#FFD000", "100:#FF0000".
-    pub gradient: Vec<String>,
     /// Images par seconde au maximum envoyées aux LED.
     pub fps: u8,
     /// Animations du profil.
     pub animations: Vec<Animation>,
-    /// Réactions aux jeux.
-    pub game: GameLights,
+    /// Anciens réglages (0.9), repris par `config::migrate` puis oubliés.
+    #[serde(skip_serializing)]
+    pub faders_mode: String,
+    #[serde(skip_serializing)]
+    pub faders_animation: String,
+    #[serde(skip_serializing)]
+    pub gradient: Vec<String>,
+    #[serde(skip_serializing)]
+    pub game: Option<toml::Value>,
 }
 
 impl Default for Lights {
@@ -45,14 +46,19 @@ impl Default for Lights {
         Lights {
             base_mode: "hardware".into(),
             base_animation: String::new(),
-            faders_mode: "fixed".into(),
-            faders_animation: String::new(),
-            gradient: vec!["0:#00E676".into(), "60:#FFD000".into(), "100:#FF1744".into()],
             fps: 15,
             animations: Vec::new(),
-            game: GameLights::default(),
+            faders_mode: String::new(),
+            faders_animation: String::new(),
+            gradient: Vec::new(),
+            game: None,
         }
     }
+}
+
+/// Dégradé par défaut des faders : vert, jaune, rouge.
+pub fn default_gradient() -> Vec<String> {
+    vec!["0:#00E676".into(), "60:#FFD000".into(), "100:#FF1744".into()]
 }
 
 /// Une animation : un modèle tout prêt (`preset`) avec ses couleurs et sa
@@ -94,29 +100,6 @@ pub struct Step {
 impl Default for Step {
     fn default() -> Self {
         Step { ms: 500, fade: true, base: "#000000".into(), faders: vec!["#000000".into(); 5] }
-    }
-}
-
-/// Réactions aux jeux (Assetto Corsa pour l'instant).
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields, default)]
-pub struct GameLights {
-    pub enabled: bool,
-    /// Faders = témoins de régime (shift lights).
-    pub rev_lights: bool,
-    /// Régime (% du maximum) où le premier fader s'allume.
-    pub rev_start: u8,
-    /// Régime (% du maximum) considéré comme le rupteur : tout clignote.
-    pub rev_limit: u8,
-    /// La base clignote en rouge au rupteur.
-    pub limiter_base: bool,
-    /// La base prend la couleur du drapeau agité.
-    pub flags: bool,
-}
-
-impl Default for GameLights {
-    fn default() -> Self {
-        GameLights { enabled: true, rev_lights: true, rev_start: 70, rev_limit: 96, limiter_base: true, flags: true }
     }
 }
 
@@ -334,65 +317,6 @@ pub fn gradient_color(stops: &[String], value: u8) -> Rgb {
     pts[pts.len() - 1].1
 }
 
-/// Ce que le jeu impose aux LED à l'instant `t` (None = rien de spécial).
-/// `base` et chaque fader sont optionnels : None laisse la couleur habituelle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct GameOverlay {
-    pub base: Option<Rgb>,
-    pub faders: Option<[Rgb; 5]>,
-}
-
-/// Couleur d'un drapeau (codes d'Assetto Corsa), avec clignotement.
-fn flag_color(flag: i32, t: u64) -> Option<Rgb> {
-    let blink = |period: u64| (t / period) % 2 == 0;
-    match flag {
-        1 => Some((0, 90, 255)),                                            // bleu
-        2 => Some(if blink(400) { (255, 200, 0) } else { (90, 70, 0) }),   // jaune
-        3 => Some(if blink(500) { (255, 255, 255) } else { BLACK }),       // noir (disqualification)
-        4 => Some((255, 255, 255)),                                         // blanc
-        5 => Some(if blink(250) { (255, 255, 255) } else { BLACK }),       // damier : arrivée
-        6 => Some(if blink(500) { (255, 0, 0) } else { (60, 0, 0) }),      // pénalité
-        _ => None,
-    }
-}
-
-/// Réaction aux données d'un jeu.
-pub fn game_overlay(cfg: &GameLights, tel: &Telemetry, t: u64) -> GameOverlay {
-    let mut o = GameOverlay::default();
-    if !cfg.enabled || !tel.live {
-        return o;
-    }
-    let ratio = if tel.max_rpm > 0 { tel.rpm.max(0) as f32 / tel.max_rpm as f32 * 100.0 } else { 0.0 };
-    let start = cfg.rev_start.min(99) as f32;
-    let limit = (cfg.rev_limit as f32).clamp(start + 1.0, 100.0);
-    let at_limiter = tel.max_rpm > 0 && ratio >= limit;
-    let flash = (t / 70) % 2 == 0;
-
-    if cfg.rev_lights && tel.max_rpm > 0 {
-        let palette: [Rgb; 5] = [(0, 230, 90), (0, 230, 90), (255, 200, 0), (255, 200, 0), (255, 20, 40)];
-        let mut faders = [BLACK; 5];
-        if at_limiter {
-            faders = if flash { [(255, 20, 40); 5] } else { [(0, 60, 255); 5] };
-        } else if ratio >= start {
-            let lit = (ratio - start) / (limit - start) * 5.0;
-            for (i, f) in faders.iter_mut().enumerate() {
-                let k = (lit - i as f32).clamp(0.0, 1.0);
-                *f = scale(palette[i], k);
-            }
-        }
-        o.faders = Some(faders);
-    }
-    if cfg.flags {
-        if let Some(c) = flag_color(tel.flag, t) {
-            o.base = Some(c);
-        }
-    }
-    if o.base.is_none() && cfg.limiter_base && at_limiter {
-        o.base = Some(if flash { (255, 20, 40) } else { BLACK });
-    }
-    o
-}
-
 /// Trouve une animation du profil par son nom.
 pub fn find<'a>(lights: &'a Lights, name: &str) -> Option<&'a Animation> {
     lights.animations.iter().find(|a| a.name == name)
@@ -436,27 +360,5 @@ mod tests {
                 let _ = frame(&a, t);
             }
         }
-    }
-
-    #[test]
-    fn rev_lights_fill_then_flash() {
-        let cfg = GameLights::default();
-        let mut tel = Telemetry { live: true, rpm: 3000, max_rpm: 8000, flag: 0, gear: 3 };
-        let low = game_overlay(&cfg, &tel, 0);
-        assert_eq!(low.faders, Some([BLACK; 5]));
-        assert_eq!(low.base, None);
-        tel.rpm = 7000; // 87,5 % → 3 faders et demi
-        let mid = game_overlay(&cfg, &tel, 0).faders.unwrap();
-        assert_ne!(mid[0], BLACK);
-        assert_ne!(mid[2], BLACK);
-        assert_eq!(mid[4], BLACK);
-        tel.rpm = 7900; // rupteur
-        let lim = game_overlay(&cfg, &tel, 0);
-        assert_eq!(lim.faders, Some([(255, 20, 40); 5]));
-        assert_eq!(lim.base, Some((255, 20, 40)));
-        tel.flag = 2; // drapeau jaune : prioritaire sur le rupteur pour la base
-        assert_eq!(game_overlay(&cfg, &tel, 0).base, Some((255, 200, 0)));
-        tel.live = false;
-        assert_eq!(game_overlay(&cfg, &tel, 0), GameOverlay::default());
     }
 }

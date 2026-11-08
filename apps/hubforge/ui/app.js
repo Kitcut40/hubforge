@@ -107,7 +107,9 @@ const WIDGET_STYLES = {
 
 const FADER_TARGETS = [["master", "Volume général"], ["mic", "Micro"], ["app", "Application(s)"], ["none", "Rien"]];
 const ROLLER_MODES = [["volume", "Volume général"], ["scroll", "Défilement vertical"], ["hscroll", "Défilement horizontal"], ["zoom", "Zoom (Ctrl + molette)"], ["none", "Rien"]];
-const BASE_EFFECTS = [[1, "Fixe"], [2, "Respiration"], [3, "Stroboscope"], [5, "Cycle de couleurs"], [6, "Aléatoire"], [7, "Vague"], [8, "Eau"], [9, "Arc-en-ciel"], [0, "Éteint"]];
+// Effets intégrés de la base. Le stroboscope intégré (3) clignote mal : il est
+// remplacé par l'animation HubForge « Stroboscope ».
+const BASE_EFFECTS = [[1, "Fixe"], [2, "Respiration"], [5, "Cycle de couleurs"], [6, "Aléatoire"], [7, "Vague"], [8, "Eau"], [9, "Arc-en-ciel"], [0, "Éteint"]];
 
 /* Taille des modules sur la base (en unités), dans leur sens normal. */
 const MODULE_SIZE = { keys15: [4, 3], faders5: [4, 2], rollers2: [4, 1] };
@@ -117,8 +119,8 @@ const MODULE_NAMES = { keys15: "15xKey", faders5: "5xFader", rollers2: "2xRoller
 // Modèles d'animation (identiques à lights.rs) : identifiant, nom, nombre de couleurs.
 const LIGHT_PRESETS = [["breathe", "Respiration", 1], ["rainbow", "Arc-en-ciel", 0], ["wave", "Vague", 2], ["comet", "Comète", 1],
   ["heartbeat", "Battement de cœur", 1], ["police", "Gyrophare", 2], ["fire", "Feu de camp", 0], ["fill", "Remplissage", 1], ["strobe", "Stroboscope", 1]];
+const FADER_LED_MODES = [["fixed", "Couleur fixe"], ["position", "Couleur selon la position du fader"], ["status", "Lumière d'état (coupé, lancé)"], ["vu", "VU-mètre (niveau sonore)"], ["animation", "Animation"]];
 const BASE_ROTS = [[0, "Verticale (comme dans le kit)"], [90, "Horizontale, tournée vers la droite"], [270, "Horizontale, tournée vers la gauche"], [180, "Verticale, à l'envers"]];
-const FLAG_NAMES = ["aucun", "bleu", "jaune", "noir", "blanc", "damier (arrivée)", "pénalité"];
 
 // ---------------------------------------------------------------------------
 // État
@@ -225,14 +227,14 @@ async function init() {
 }
 
 function normalize(cfg) {
-  cfg.general = Object.assign({ brightness: 80, led_brightness: 100, base_color: "#00C8FF", press_feedback: true, gif_max_fps: 28, base_effect: 1, auto_pages: true }, cfg.general || {});
+  cfg.general = Object.assign({ brightness: 80, led_brightness: 100, base_color: "#00C8FF", press_feedback: true, gif_max_fps: 28, base_effect: 1, auto_pages: true,
+    long_press_ms: 500, double_press_ms: 300 }, cfg.general || {});
   cfg.pages = cfg.pages && cfg.pages.length ? cfg.pages : [{ name: "Accueil", keys: [] }];
   cfg.faders = cfg.faders || [];
   while (cfg.faders.length < 5) cfg.faders.push({ target: "none", color: "#FFFFFF" });
   cfg.rollers = Object.assign({ right: "volume", left: "scroll", volume_step: 2, scroll_step: 3, invert_right: false, invert_left: false }, cfg.rollers || {});
-  cfg.lights = Object.assign({ base_mode: "hardware", base_animation: "", faders_mode: "fixed", faders_animation: "",
-    gradient: ["0:#00E676", "60:#FFD000", "100:#FF1744"], fps: 15, animations: [] }, cfg.lights || {});
-  cfg.lights.game = Object.assign({ enabled: true, rev_lights: true, rev_start: 70, rev_limit: 96, limiter_base: true, flags: true }, cfg.lights.game || {});
+  cfg.lights = Object.assign({ base_mode: "hardware", base_animation: "", fps: 15, animations: [] }, cfg.lights || {});
+  for (const k of ["faders_mode", "faders_animation", "gradient", "game"]) delete cfg.lights[k];
   return cfg;
 }
 
@@ -469,12 +471,22 @@ function paintBaseGlow() {
   glow.style.boxShadow = `0 0 0 2px ${c}${live ? "AA" : "66"}, 0 0 26px ${c}${live ? "99" : "66"}`;
 }
 
+/** Réglage du fader `i` sur la page affichée : celui de la page, sinon le réglage commun. */
+function pageFader(i, page = currentPage()) {
+  return (page.faders || []).find((f) => f.index === i + 1) || null;
+}
+function effFader(i) { return pageFader(i) || S.cfg.faders[i]; }
+const DEFAULT_GRADIENT = ["0:#00E676", "60:#FFD000", "100:#FF1744"];
+function faderGradient(slot) { return slot.gradient && slot.gradient.length ? slot.gradient : DEFAULT_GRADIENT; }
+
 /** Couleur actuelle de la LED d'un fader. */
 function faderLedColor(i) {
   const live = S.status.leds && S.status.leds.faders && S.status.leds.faders[i];
   if (live) return live;
-  if (S.cfg.lights.faders_mode === "position" && S.status.faders) return gradientAt(S.cfg.lights.gradient, S.status.faders[i]);
-  return (S.cfg.faders[i] && S.cfg.faders[i].color) || "#FFFFFF";
+  const slot = effFader(i);
+  if (slot.led === "position" && S.status.faders) return gradientAt(faderGradient(slot), S.status.faders[i]);
+  if (slot.led === "vu") return gradientAt(faderGradient(slot), 0);
+  return slot.color || "#FFFFFF";
 }
 
 /** Couleur du dégradé à une position (même calcul que lights.rs). */
@@ -500,10 +512,6 @@ function updateLedLive() {
     led.style.background = c;
     led.style.boxShadow = `0 0 8px ${c}`;
   });
-  if (S.sel.type === "lights") {
-    const st = $("#sim-status");
-    if (st) st.replaceWith(simStatus());
-  }
 }
 
 function moduleElement(kind, ghost) {
@@ -776,8 +784,10 @@ function faderName(slot) {
 }
 
 function faderElements() {
-  return S.cfg.faders.slice(0, 5).map((slot, i) => {
-    const f = el("div", { class: "fader" + (S.sel.type === "fader" && S.sel.index === i ? " selected" : ""), "data-fader": i },
+  return S.cfg.faders.slice(0, 5).map((_, i) => {
+    const slot = effFader(i);
+    const own = !!pageFader(i);
+    const f = el("div", { class: "fader" + (own ? " page-own" : "") + (S.sel.type === "fader" && S.sel.index === i ? " selected" : ""), "data-fader": i, title: own ? "Réglage propre à cette page" : "" },
       el("div", { class: "fader-value" }, "–"),
       el("div", { class: "fader-track" },
         el("div", { class: "fader-led", style: `background:${faderLedColor(i)};box-shadow:0 0 8px ${faderLedColor(i)}` }),
@@ -801,12 +811,20 @@ function updateFaderLive() {
   }
 }
 
+/** Action de la molette `side` sur la page affichée (page, sinon réglage commun). */
+function effRoller(side) {
+  const own = currentPage()["roller_" + side];
+  return own != null ? own : S.cfg.rollers[side];
+}
+
 function rollerElements() {
   const mode = (m) => (ROLLER_MODES.find(([v]) => v === m) || [0, "—"])[1].split(" (")[0];
-  return [["left", "Gauche"], ["right", "Droite"]].map(([side, label]) =>
-    el("div", { class: "roller", title: `Molette ${label.toLowerCase()} : ${mode(S.cfg.rollers[side])}` },
+  return [["left", "Gauche"], ["right", "Droite"]].map(([side, label]) => {
+    const own = currentPage()["roller_" + side] != null;
+    return el("div", { class: "roller" + (own ? " page-own" : ""), title: `Molette ${label.toLowerCase()} : ${mode(effRoller(side))}${own ? " (propre à cette page)" : ""}` },
       el("div", { class: "roller-drum" }),
-      el("div", { class: "roller-name" }, `${label} · ${mode(S.cfg.rollers[side])}`)));
+      el("div", { class: "roller-name" }, `${label} · ${mode(effRoller(side))}`));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -924,6 +942,7 @@ function keyInspector(k) {
     ? "Action lancée quand la touche est dans l'état 1 ; elle passe ensuite à l'état 2."
     : "Action lancée quand la touche est dans l'état 2 ; elle revient ensuite à l'état 1."));
   out.push(...actionEditor(st, k, () => keyChanged(k)));
+  if (S.editState === 0) out.push(...gestureEditors(def, k));
   out.push(el("div", { class: "sep" }));
   out.push(el("div", { class: "row", style: "margin-bottom:8px" },
     el("button", { class: "btn grow", title: "Ctrl+C", onclick: () => copyKey(k) }, "Copier"),
@@ -932,6 +951,26 @@ function keyInspector(k) {
     if (!(await confirm_(`Vider la touche ${k} ?`))) return;
     setKeyDef(k, null); delete S.previews[`${S.page}:${k}:0`]; delete S.previews[`${S.page}:${k}:1`]; updateKeyNode(k); changed(); renderInspector();
   } }, "Vider la touche"));
+  return out;
+}
+
+/** Appui long et double appui d'une touche (actions supplémentaires). */
+function gestureEditors(def, k) {
+  const out = [el("div", { class: "sep" }), el("h2", {}, "Appui long et double appui")];
+  for (const [prop, label, hint] of [
+    ["long", "Appui long", `Garder la touche enfoncée ${(S.cfg.general.long_press_ms / 1000).toLocaleString("fr-FR")} s lance une autre action.`],
+    ["double", "Double appui", `Deux appuis rapides lancent une autre action. L'appui simple attend alors ${S.cfg.general.double_press_ms} ms pour être sûr que ce n'en est pas un.`],
+  ]) {
+    out.push(switchRow(label, !!def[prop], (v) => {
+      if (v) def[prop] = { type: "none" }; else delete def[prop];
+      keyChanged(k); renderInspector();
+    }));
+    if (def[prop]) {
+      const box = { action: def[prop] };
+      out.push(el("div", { class: "gesture-box" }, ...actionEditor(box, k, () => { def[prop] = box.action; keyChanged(k); }, { extra: label === "Appui long" ? "Quand je garde la touche enfoncée" : "Quand j'appuie deux fois" }),
+        el("p", { class: "hint" }, hint)));
+    }
+  }
   return out;
 }
 
@@ -1039,9 +1078,9 @@ function stepSummary(a) {
 function actionEditor(st, k, onChange, opts = {}) {
   if (!st.action) st.action = { type: "none" };
   const a = st.action;
-  const nested = !!opts.nested;
+  const nested = !!opts.nested || !!opts.extra;
   const upd = (fn) => { fn(st.action); onChange(); };
-  let types = nested
+  let types = opts.nested
     ? [...ACTION_TYPES.filter(([v]) => v !== "macro"), ["wait", "Attendre (pause)"]]
     : ACTION_TYPES;
   if (S.gameBest > 0 || a.type === "game") types = [...types, ["game", "🎮 Mini-jeu tape-taupe"]];
@@ -1057,7 +1096,7 @@ function actionEditor(st, k, onChange, opts = {}) {
     onChange();
     renderInspector();
   };
-  const out = nested ? [field("Type", typeSel)] : [el("h2", {}, "Action"), field("Quand j'appuie sur la touche", typeSel)];
+  const out = opts.extra ? [field(opts.extra, typeSel)] : nested ? [field("Type", typeSel)] : [el("h2", {}, "Action"), field("Quand j'appuie sur la touche", typeSel)];
   const t = actionTypeId(a);
   const autoIcon = (p) => {
     if (nested) return;
@@ -1264,10 +1303,22 @@ function comboFromEvent(e) {
 
 // --- Fader ---
 function faderInspector(i) {
-  const slot = S.cfg.faders[i];
+  const page = currentPage();
+  const own = pageFader(i);
+  const slot = own || S.cfg.faders[i];
+  const pageName = page.name || `Page ${S.page + 1}`;
   const out = [title(`Fader ${i + 1}`, ["le plus à gauche", "", "au milieu", "", "le plus à droite"][i] || "")];
   const live = S.status.faders ? S.status.faders[i] + " %" : "non connecté";
-  out.push(el("p", { class: "hint", style: "margin:-6px 0 14px" }, "Position actuelle : ", el("b", { id: "fader-live" }, live)));
+  out.push(el("p", { class: "hint", style: "margin:-6px 0 10px" }, "Position actuelle : ", el("b", { id: "fader-live" }, live)));
+
+  // Réglage commun ou propre à la page
+  out.push(el("div", { class: "tabs scope-tabs" },
+    el("button", { class: own ? "" : "on", onclick: () => { if (!own) return; page.faders = (page.faders || []).filter((f) => f.index !== i + 1); if (!page.faders.length) delete page.faders; changed(); renderDevice(); } }, "Commun à toutes les pages"),
+    el("button", { class: own ? "on" : "", onclick: () => { if (own) return; page.faders = page.faders || []; page.faders.push(Object.assign(clone(S.cfg.faders[i]), { index: i + 1 })); changed(); renderDevice(); } }, `Propre à « ${pageName} »`)));
+  out.push(el("p", { class: "hint", style: "margin:-4px 0 12px" }, own
+    ? `Sur cette page, ce fader a son propre réglage. Les autres pages gardent le réglage commun.`
+    : `Ce réglage s'applique sur toutes les pages qui n'ont pas le leur.`));
+
   const t = (slot.target || "none").trim();
   const kind = t.startsWith("app:") ? "app" : t;
   const sel = el("select", { class: "input" }, ...FADER_TARGETS.map(([v, l]) => el("option", { value: v, selected: v === kind }, l)));
@@ -1293,26 +1344,37 @@ function faderInspector(i) {
     out.push(field("Applis qui jouent du son en ce moment", running,
       el("p", { class: "hint" }, "Une appli n'apparaît ici que lorsqu'elle joue (ou a joué) du son.")));
   }
-  const L = S.cfg.lights;
-  out.push(el("h2", {}, "LED des faders"));
-  out.push(field("Les 5 LED", el("select", { class: "input", onchange: (e) => { L.faders_mode = e.target.value; if (L.faders_mode === "animation" && !L.faders_animation && L.animations[0]) L.faders_animation = L.animations[0].name; changed(); renderInspector(); } },
-    ...[["fixed", "Une couleur fixe par fader"], ["position", "Couleur selon la position du fader"], ["animation", "Animation"]].map(([v, l]) => el("option", { value: v, selected: v === L.faders_mode }, l)))));
-  if (L.faders_mode === "position") {
-    out.push(gradientEditor());
-  } else if (L.faders_mode === "animation") {
-    out.push(animationPicker(L.faders_animation, (v) => { L.faders_animation = v; changed(); }));
+
+  // LED de ce fader
+  out.push(el("h2", {}, "LED de ce fader"));
+  const mode = slot.led || "fixed";
+  out.push(field("La LED", el("select", { class: "input", onchange: (e) => {
+    slot.led = e.target.value;
+    if (slot.led === "animation" && !slot.animation && S.cfg.lights.animations[0]) slot.animation = S.cfg.lights.animations[0].name;
+    if ((slot.led === "position" || slot.led === "vu") && !(slot.gradient && slot.gradient.length)) slot.gradient = DEFAULT_GRADIENT.slice();
+    changed(); renderInspector(); renderDevice();
+  } }, ...FADER_LED_MODES.map(([v, l]) => el("option", { value: v, selected: v === mode }, l)))));
+  if (mode === "position" || mode === "vu") {
+    out.push(gradientEditor(slot, mode === "vu"
+      ? "Couleur selon le niveau sonore : la LED s'allume plus fort quand ça joue fort."
+      : "Exemple : vert en bas, jaune à 60 %, rouge en haut. La LED change de couleur en direct quand tu bouges le fader."));
+  } else if (mode === "animation") {
+    out.push(animationPicker(slot.animation, (v) => { slot.animation = v; changed(); }));
   } else {
-    out.push(colorField(`Couleur de la LED du fader ${i + 1}`, slot.color, (v) => { if (!v) return; slot.color = v; changed(); renderDevice(); }));
+    out.push(colorField(mode === "status" ? "Couleur quand le son passe" : "Couleur", slot.color, (v) => { if (!v) return; slot.color = v; changed(); renderDevice(); }));
+    if (mode === "status") out.push(el("p", { class: "hint" }, kind === "app"
+      ? "Rouge si l'appli est coupée, éteinte si elle n'est pas lancée."
+      : "Rouge quand c'est coupé."));
   }
-  out.push(el("button", { class: "btn", style: "width:100%", onclick: () => select({ type: "lights" }) }, "Animations et jeux de course…"));
+  if (mode === "vu" && kind === "none") out.push(el("p", { class: "hint warn-text" }, "Choisis d'abord ce que le fader contrôle : le VU-mètre mesure ce son-là."));
+  out.push(el("button", { class: "btn", style: "width:100%", onclick: () => select({ type: "lights" }) }, "Gérer les animations…"));
   return out;
 }
 
-/** Éditeur du dégradé « position du fader → couleur ». */
-function gradientEditor() {
-  const L = S.cfg.lights;
-  const stops = () => L.gradient.map((s) => { const [p, c] = s.split(":"); return { p: Number(p) || 0, c: c || "#FFFFFF" }; }).sort((a, b) => a.p - b.p);
-  const save = (list) => { L.gradient = list.sort((a, b) => a.p - b.p).map((x) => `${Math.round(x.p)}:${x.c}`); changed(); };
+/** Éditeur du dégradé d'un fader (position ou niveau sonore → couleur). */
+function gradientEditor(slot, hint) {
+  const stops = () => faderGradient(slot).map((s) => { const [p, c] = s.split(":"); return { p: Number(p) || 0, c: c || "#FFFFFF" }; }).sort((a, b) => a.p - b.p);
+  const save = (list) => { slot.gradient = list.sort((a, b) => a.p - b.p).map((x) => `${Math.round(x.p)}:${x.c}`); changed(); };
   const list = stops();
   const bar = el("div", { class: "gradient-bar", style: `background:linear-gradient(90deg, ${list.map((x) => `${x.c} ${x.p}%`).join(", ")})` });
   const rows = list.map((x, idx) => el("div", { class: "row gradient-row" },
@@ -1321,9 +1383,9 @@ function gradientEditor() {
     el("span", { class: "hint", style: "margin:0" }, "%"),
     el("span", { class: "spacer" }),
     list.length > 2 ? el("button", { class: "btn small", onclick: () => { list.splice(idx, 1); save(list); renderInspector(); } }, "Retirer") : null));
-  return field("Couleurs selon la position", bar, ...rows,
+  return field("Couleurs", bar, ...rows,
     el("button", { class: "btn small", style: "margin-top:6px", onclick: () => { list.push({ p: 50, c: "#FFFFFF" }); save(list); renderInspector(); } }, "+ Ajouter une couleur"),
-    el("p", { class: "hint" }, "Exemple : vert en bas, jaune à 60 %, rouge en haut. La LED change de couleur en direct quand tu bouges le fader."));
+    el("p", { class: "hint" }, hint));
 }
 
 /** Liste déroulante des animations du profil. */
@@ -1340,16 +1402,24 @@ function animationPicker(value, onChange) {
 // --- Molettes ---
 function rollersInspector() {
   const r = S.cfg.rollers;
-  const out = [title("Molettes")];
+  const page = currentPage();
+  const pageName = page.name || `Page ${S.page + 1}`;
+  const out = [title("Molettes", pageName)];
   for (const [side, label] of [["left", "Molette de gauche"], ["right", "Molette de droite"]]) {
+    const key = "roller_" + side;
+    const own = page[key] != null;
     out.push(el("h2", {}, label));
-    out.push(field("Action", el("select", { class: "input", onchange: (e) => { r[side] = e.target.value; changed(); renderDevice(); } },
-      ...ROLLER_MODES.map(([v, l]) => el("option", { value: v, selected: v === r[side] }, l)))));
+    out.push(el("div", { class: "tabs scope-tabs" },
+      el("button", { class: own ? "" : "on", onclick: () => { delete page[key]; changed(); renderDevice(); } }, "Commune"),
+      el("button", { class: own ? "on" : "", onclick: () => { if (!own) { page[key] = r[side]; changed(); renderDevice(); } } }, `Propre à « ${pageName} »`)));
+    out.push(field("Action", el("select", { class: "input", onchange: (e) => { if (own) page[key] = e.target.value; else r[side] = e.target.value; changed(); renderDevice(); } },
+      ...ROLLER_MODES.map(([v, l]) => el("option", { value: v, selected: v === (own ? page[key] : r[side]) }, l)))));
     out.push(switchRow("Inverser le sens", r["invert_" + side], (v) => { r["invert_" + side] = v; changed(); }));
   }
   out.push(el("div", { class: "sep" }));
   out.push(rangeField("Volume par cran", r.volume_step, 1, 10, " %", (v) => { r.volume_step = v; changed(); }));
   out.push(rangeField("Lignes par cran (défilement)", r.scroll_step, 1, 10, "", (v) => { r.scroll_step = v; changed(); }));
+  out.push(el("p", { class: "hint" }, "« Commune » : la même action sur toutes les pages qui n'ont pas la leur. Le sens et les pas sont communs à toutes les pages."));
   return out;
 }
 
@@ -1608,7 +1678,7 @@ function baseInspector() {
       ...BASE_EFFECTS.map(([v, l]) => el("option", { value: v, selected: v === g.base_effect }, l)))));
   }
   out.push(rangeField("Luminosité des LED (base et faders)", g.led_brightness, 0, 100, " %", (v) => { g.led_brightness = v; changed(); }));
-  out.push(el("button", { class: "btn", style: "width:100%", onclick: () => select({ type: "lights" }) }, "Animations et jeux de course…"));
+  out.push(el("button", { class: "btn", style: "width:100%", onclick: () => select({ type: "lights" }) }, "Animations…"));
 
   // Positions des modules
   out.push(el("h2", {}, "Position des modules"));
@@ -1660,7 +1730,7 @@ function renameAnimation(a, name) {
   if (!name || name === a.name) return;
   if (L.animations.some((x) => x !== a && x.name === name)) { toast("Une animation porte déjà ce nom.", true); renderInspector(); return; }
   if (L.base_animation === a.name) L.base_animation = name;
-  if (L.faders_animation === a.name) L.faders_animation = name;
+  [...S.cfg.faders, ...S.cfg.pages.flatMap((p) => p.faders || [])].forEach((f) => { if (f.animation === a.name) f.animation = name; });
   a.name = name;
   changed();
 }
@@ -1672,27 +1742,16 @@ async function previewAnim(a) {
   renderInspector();
 }
 
-function simStatus() {
-  const sim = S.status.sim;
-  let text, cls = "sim-status";
-  if (!S.cfg.lights.game.enabled) text = "Réactions aux jeux désactivées.";
-  else if (!sim) text = "Assetto Corsa n'est pas lancé.";
-  else if (!sim.live) { text = `${sim.name} détecté — en attente que tu sois en piste.`; cls += " on"; }
-  else {
-    cls += " on live";
-    text = `${sim.name} — en piste · ${sim.rpm} / ${sim.max_rpm || "?"} tr/min · drapeau ${FLAG_NAMES[sim.flag] || "aucun"}`;
-  }
-  return el("div", { class: cls, id: "sim-status" }, text);
-}
 
 function lightsInspector() {
-  const L = S.cfg.lights, G = L.game;
-  const out = [title("Lumières et jeux", "Profil " + (S.profile || ""))];
+  const L = S.cfg.lights;
+  const out = [title("Lumières", "Profil " + (S.profile || ""))];
 
   out.push(el("h2", {}, "Animations"));
   if (!L.animations.length) out.push(el("p", { class: "hint" }, "Crée une animation à partir d'un modèle ou fais-la toi-même étape par étape, puis choisis-la pour la base ou pour les faders."));
   L.animations.forEach((a, i) => {
-    const used = [L.base_mode === "animation" && L.base_animation === a.name ? "base" : null, L.faders_mode === "animation" && L.faders_animation === a.name ? "faders" : null].filter(Boolean);
+    const faders = S.cfg.faders.map((f, n) => (f.led === "animation" && f.animation === a.name ? n + 1 : 0)).filter(Boolean);
+    const used = [L.base_mode === "animation" && L.base_animation === a.name ? "base" : null, faders.length ? "fader" + (faders.length > 1 ? "s " : " ") + faders.join(", ") : null].filter(Boolean);
     out.push(el("div", { class: "anim-card" + (S.editAnim === i ? " open" : "") },
       el("div", { class: "row" },
         el("div", { class: "grow" }, el("b", {}, a.name), el("div", { class: "hint", style: "margin:2px 0 0" }, presetName(a.preset) + (used.length ? " · sur " + used.join(" et ") : ""))),
@@ -1703,18 +1762,6 @@ function lightsInspector() {
   out.push(el("div", { class: "row", style: "margin:8px 0 4px" },
     el("select", { class: "input grow", id: "new-anim-preset" }, ...LIGHT_PRESETS.map(([id, name]) => el("option", { value: id }, "Modèle : " + name)), el("option", { value: "" }, "Faite à la main (étapes)")),
     el("button", { class: "btn primary", onclick: () => newAnimation($("#new-anim-preset").value) }, "Créer")));
-
-  out.push(el("h2", {}, "Jeux de course"));
-  out.push(simStatus());
-  out.push(switchRow("Réagir à Assetto Corsa", G.enabled, (v) => { G.enabled = v; changed(); renderInspector(); }));
-  if (G.enabled) {
-    out.push(switchRow("Faders = témoins de régime (shift lights)", G.rev_lights, (v) => { G.rev_lights = v; changed(); }));
-    out.push(rangeField("Premier témoin allumé à", G.rev_start, 30, 95, " %", (v) => { G.rev_start = v; changed(); }));
-    out.push(rangeField("Rupteur (tout clignote) à", G.rev_limit, 50, 100, " %", (v) => { G.rev_limit = v; changed(); }));
-    out.push(switchRow("La base clignote en rouge au rupteur", G.limiter_base, (v) => { G.limiter_base = v; changed(); }));
-    out.push(switchRow("La base prend la couleur des drapeaux", G.flags, (v) => { G.flags = v; changed(); }));
-    out.push(el("p", { class: "hint" }, "Bleu, jaune, blanc, damier qui clignote à l'arrivée, rouge pour une pénalité. HubForge lit les données qu'Assetto Corsa publie pour les applications externes : rien n'est modifié dans le jeu. Avec ACC, seuls les témoins de régime fonctionnent pour l'instant."));
-  }
 
   out.push(el("h2", {}, "Fluidité"));
   out.push(rangeField("Images par seconde envoyées aux LED", L.fps, 5, 30, " i/s", (v) => { L.fps = v; changed(); },
@@ -1758,14 +1805,15 @@ function animationEditor(a, i) {
   }
   box.append(el("div", { class: "row", style: "margin-top:10px" },
     el("button", { class: "btn small", onclick: () => { L.base_mode = "animation"; L.base_animation = a.name; changed(); renderInspector(); renderDevice(); toast(`« ${a.name} » joue maintenant sur la base.`); } }, "Sur la base"),
-    el("button", { class: "btn small", onclick: () => { L.faders_mode = "animation"; L.faders_animation = a.name; changed(); renderInspector(); toast(`« ${a.name} » joue maintenant sur les faders.`); } }, "Sur les faders"),
+    el("button", { class: "btn small", title: "Les 5 faders (réglage commun)", onclick: () => { S.cfg.faders.forEach((f) => { f.led = "animation"; f.animation = a.name; }); changed(); renderInspector(); renderDevice(); toast(`« ${a.name} » joue maintenant sur les 5 faders.`); } }, "Sur les faders"),
     el("span", { class: "spacer" }),
     el("button", { class: "btn small danger", onclick: async () => {
       if (!(await confirm_(`Supprimer l'animation « ${a.name} » ?`))) return;
       if (S.previewing === a) { await invoke("preview_animation", { animation: null }); S.previewing = null; }
       L.animations.splice(i, 1);
       if (L.base_animation === a.name) { L.base_animation = ""; L.base_mode = "hardware"; }
-      if (L.faders_animation === a.name) { L.faders_animation = ""; L.faders_mode = "fixed"; }
+      const allFaders = [...S.cfg.faders, ...S.cfg.pages.flatMap((p) => p.faders || [])];
+      allFaders.forEach((f) => { if (f.led === "animation" && f.animation === a.name) { f.led = "fixed"; f.animation = ""; } });
       S.editAnim = null;
       changed(); renderInspector(); renderDevice();
     } }, "Supprimer")));
@@ -2016,6 +2064,9 @@ async function showDiagnostic() {
     </div>
     <h4>Modules détectés (${mods.length})</h4>
     <pre class="diag-pre">${(mods.join("\n") || "Aucun module : vérifie le câble USB de la base.").replace(/</g, "&lt;")}</pre>
+    <h4>Zones de lumière de la base <span class="addon-badge">expérimental</span></h4>
+    <p class="hint" style="margin-top:0">Allume une seule LED de la base à la fois, pour savoir si HubForge peut animer le contour zone par zone. Note quels numéros allument quelque chose.</p>
+    <div class="row probe-row"><button class="btn small" id="probe-prev">◀</button><span id="probe-n">—</span><button class="btn small" id="probe-next">▶</button><span class="spacer"></span><button class="btn small" id="probe-stop">Terminer</button></div>
     <h4>Journal</h4>
     <pre class="diag-pre diag-log">${d.log.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>
     <p class="hint">Rien n'est envoyé : « Copier le rapport » met ces informations dans le presse-papiers pour que tu puisses les joindre à une demande d'aide.</p>`;
@@ -2034,10 +2085,16 @@ async function showDiagnostic() {
       el("button", { class: "btn", onclick: async () => {
         try { await navigator.clipboard.writeText(report); toast("Rapport copié dans le presse-papiers."); } catch (_) { toast("Copie impossible.", true); }
       } }, "Copier le rapport"),
-      el("button", { class: "btn primary", onclick: closeDialog }, "Fermer"),
+      el("button", { class: "btn primary", onclick: () => { stopProbe(); closeDialog(); } }, "Fermer"),
     ],
   });
+  let n = -1;
+  const show = () => { $("#probe-n").textContent = n < 0 ? "—" : `LED n° ${n}`; invoke("probe_base_led", { index: n < 0 ? null : n }); };
+  $("#probe-next").onclick = () => { n = Math.min(31, n + 1); S.probing = true; show(); };
+  $("#probe-prev").onclick = () => { n = Math.max(0, n - 1); S.probing = true; show(); };
+  $("#probe-stop").onclick = () => { n = -1; stopProbe(); $("#probe-n").textContent = "—"; };
 }
+function stopProbe() { if (S.probing) { S.probing = false; invoke("probe_base_led", { index: null }); } }
 
 // --- Supprimer une touche en la glissant hors du MasterHUB ---
 /** Page (index) ouverte par une action « dossier ». */
@@ -2254,10 +2311,13 @@ function settingsInspector() {
   out.push(rangeField("Luminosité des écrans", g.brightness, 0, 100, " %", (v) => { g.brightness = v; changed(); }));
   out.push(rangeField("Luminosité des LED", g.led_brightness, 0, 100, " %", (v) => { g.led_brightness = v; changed(); }));
   out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => select({ type: "base" }) }, "Base : LED, orientation, positions…"));
-  out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => select({ type: "lights" }) }, "Animations et jeux de course…"));
+  out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => select({ type: "lights" }) }, "Animations…"));
   out.push(el("p", { class: "hint", style: "margin-top:0" }, "Astuce : tu peux aussi cliquer directement sur la base dans le dessin."));
   out.push(el("div", { class: "sep" }));
   out.push(switchRow("Assombrir la touche pendant l'appui", g.press_feedback, (v) => { g.press_feedback = v; changed(); }));
+  out.push(rangeField("Durée d'un appui long", g.long_press_ms, 200, 1500, " ms", (v) => { g.long_press_ms = v; changed(); }));
+  out.push(rangeField("Délai d'un double appui", g.double_press_ms, 150, 600, " ms", (v) => { g.double_press_ms = v; changed(); },
+    "Temps maximal entre les deux appuis. Plus il est court, plus l'appui simple des touches à double appui est rapide."));
   out.push(switchRow("Pages automatiques selon l'application", g.auto_pages, (v) => { g.auto_pages = v; changed(); }));
   out.push(el("p", { class: "hint", style: "margin-top:-4px" }, "Lie une page à une application avec le bouton ⚙ de l'onglet de la page."));
   out.push(rangeField("Fluidité max. des GIF", g.gif_max_fps, 5, 40, " i/s", (v) => { g.gif_max_fps = v; changed(); },
@@ -2336,7 +2396,7 @@ function openDialog({ title, sub, html, actions, icon }) {
   $("#dialog-progress").classList.add("hidden");
   $("#dialog").classList.remove("hidden");
 }
-function closeDialog() { if (!S.updating) $("#dialog").classList.add("hidden"); }
+function closeDialog() { if (!S.updating) { stopProbe(); $("#dialog").classList.add("hidden"); } }
 
 function showUpdateDialog() {
   const a = S.update && S.update.available;
@@ -2696,6 +2756,7 @@ async function mockInvoke(cmd, args) {
     case "set_base_rot": window.__mockLayout.base_rot = args.rot; return null;
     case "set_placement": return null;
     case "preview_animation": return null;
+    case "probe_base_led": return null;
     case "start_doom": if (location.search.includes("doom")) { setTimeout(() => onStatus(Object.assign({}, S.status, { doom: true })), 300); return "freedoom1.wad"; } throw "no_wad";
     case "download_freedoom": return null;
     case "stop_doom": onStatus(Object.assign({}, S.status, { doom: false })); return null;

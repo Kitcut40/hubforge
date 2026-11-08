@@ -30,7 +30,6 @@ mod official;
 mod profiles;
 mod render;
 mod share;
-mod telemetry;
 mod topology;
 mod ui;
 mod update;
@@ -219,6 +218,7 @@ fn main() {
             ui::get_layout,
             ui::set_base_rot,
             ui::set_placement,
+            ui::probe_base_led,
             ui::start_doom,
             ui::download_freedoom,
             ui::stop_doom,

@@ -11,7 +11,6 @@ use crate::widgets;
 use crate::game::{self, Game};
 use crate::doom;
 use crate::lights::{self, Rgb};
-use crate::telemetry::{AcReader, Telemetry};
 use crate::profiles::{self, SharedActive};
 use crate::topology::{self, Placement};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
@@ -39,11 +38,26 @@ pub enum EngineMsg {
     PreviewAnimation(Option<lights::Animation>),
     /// Orientation de la base ou positions manuelles modifiées.
     ReloadLayout,
+    /// Exploration des LED de la base : allume seulement la LED (ou zone)
+    /// numéro `n` en blanc. None = fin de l'exploration.
+    ProbeBaseLed(Option<u8>),
     /// Easter egg : lancer Doom avec ce fichier WAD.
     StartDoom(std::path::PathBuf),
     StopDoom,
     /// Touche de Doom depuis le clavier du PC (fenêtre de HubForge).
     DoomKey { pressed: bool, code: u8 },
+}
+
+/// Appui sur une touche qui a un appui long ou un double appui : on attend
+/// de savoir lequel c'est avant d'agir.
+struct Gesture {
+    key: u8,
+    page: usize,
+    down_at: Instant,
+    /// Touche relâchée : on attend un éventuel second appui.
+    up_at: Option<Instant>,
+    /// Appui long ou double appui déjà déclenché : plus rien à faire.
+    done: bool,
 }
 
 /// Partie de Doom en cours.
@@ -65,16 +79,6 @@ pub struct LedStatus {
     /// None = effet intégré de la base.
     pub base: Option<String>,
     pub faders: Vec<String>,
-}
-
-/// Jeu détecté et ses données.
-#[derive(Debug, Clone, Serialize, Default, PartialEq)]
-pub struct GameStatus {
-    pub name: String,
-    pub live: bool,
-    pub rpm: i32,
-    pub max_rpm: i32,
-    pub flag: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,8 +108,6 @@ pub struct Status {
     pub game: bool,
     /// Couleurs actuelles des LED.
     pub leds: LedStatus,
-    /// Jeu de course détecté (Assetto Corsa).
-    pub sim: Option<GameStatus>,
     /// Orientation de la base (degrés).
     pub base_rot: u16,
     /// Doom tourne sur le MasterHUB.
@@ -192,12 +194,8 @@ pub struct Engine {
     leds: LedStatus,
     leds_notified: Instant,
     preview: Option<(lights::Animation, Instant)>,
-    /// Données d'Assetto Corsa.
-    ac: AcReader,
-    tel: Option<Telemetry>,
-    tel_due: Instant,
-    tel_acc: bool,
-    tel_fg_due: Instant,
+    /// Appuis longs / doubles en cours d'analyse.
+    gesture: Option<Gesture>,
     /// Orientation de la base et positions saisies à la main.
     base_rot: u16,
     placements: HashMap<String, Placement>,
@@ -265,11 +263,7 @@ impl Engine {
             leds: LedStatus::default(),
             leds_notified: Instant::now(),
             preview: None,
-            ac: AcReader::default(),
-            tel: None,
-            tel_due: Instant::now(),
-            tel_acc: false,
-            tel_fg_due: Instant::now(),
+            gesture: None,
             base_rot: 0,
             placements: HashMap::new(),
             doom: None,
@@ -301,13 +295,6 @@ impl Engine {
             profile: self.active.lock().map(|a| a.name.clone()).unwrap_or_default(),
             game: self.game.is_some(),
             leds: self.leds.clone(),
-            sim: self.tel.map(|t| GameStatus {
-                name: if self.tel_acc { "Assetto Corsa Competizione".into() } else { "Assetto Corsa".into() },
-                live: t.live,
-                rpm: t.rpm,
-                max_rpm: t.max_rpm,
-                flag: t.flag,
-            }),
             base_rot: self.base_rot,
             doom: self.doom.is_some(),
             doom_error: self.doom_error.clone(),
@@ -357,7 +344,7 @@ impl Engine {
             } else if Instant::now() >= self.widgets_due {
                 self.update_widgets(false);
             }
-            let busy_lights = self.preview.is_some() || self.base_soft || self.cfg.lights.faders_mode == "animation" || self.tel.map(|t| t.live).unwrap_or(false);
+            let busy_lights = self.preview.is_some() || self.base_soft || self.gesture.is_some() || (0..FADER_COUNT).any(|i| self.fader_slot(i).led != "fixed");
             let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() && self.game.is_none() && self.doom.is_none() && !busy_lights { 30 } else { 5 };
             match self.events.recv_timeout(Duration::from_millis(timeout)) {
                 Ok(ev) => {
@@ -434,6 +421,22 @@ impl Engine {
                 }
                 self.notify();
             }
+            EngineMsg::ProbeBaseLed(n) => match n {
+                Some(n) => {
+                    let bases: Vec<String> = self.modules.iter().filter(|(_, k)| **k == Kind::BaseLed).map(|(s, _)| s.clone()).collect();
+                    for s in bases {
+                        for j in 0..32u8 {
+                            let c = if j == n { 255 } else { 0 };
+                            self.mgr.send(&s, Command::Output(protocol::led_color(0, j, c, c, c, false)));
+                            self.mgr.send(&s, Command::Sleep(3));
+                        }
+                        self.mgr.send(&s, Command::Output(protocol::led_mode(0, 0, 1, false)));
+                        self.sent_base.remove(&s);
+                    }
+                    log::info!("exploration des LED de la base : n° {n}");
+                }
+                None => self.restore_leds(),
+            },
             EngineMsg::StartDoom(wad) => self.start_doom(&wad),
             EngineMsg::StopDoom => self.end_doom(),
             EngineMsg::DoomKey { pressed, code } => {
@@ -493,8 +496,7 @@ impl Engine {
         let serials: Vec<(String, Kind)> = self.modules.iter().map(|(s, k)| (s.clone(), *k)).collect();
         for (s, k) in serials {
             // On ne renvoie les LED que si elles ont changé (évite un clignotement).
-            let leds_changed = old.faders.iter().map(|f| &f.color).ne(self.cfg.faders.iter().map(|f| &f.color))
-                || old.general.base_color != self.cfg.general.base_color
+            let leds_changed = old.general.base_color != self.cfg.general.base_color
                 || old.general.base_effect != self.cfg.general.base_effect
                 || old.general.led_brightness != self.cfg.general.led_brightness
                 || old.lights != self.cfg.lights;
@@ -777,6 +779,29 @@ impl Engine {
             self.send_image(key, &jpeg);
         }
         let Some(def) = self.key_def(key).cloned() else { return };
+        let now = Instant::now();
+        // Second appui d'un double appui ?
+        if let Some(g) = self.gesture.as_mut() {
+            if g.key == key && g.page == self.page && g.up_at.is_some() && !g.done {
+                g.done = true;
+                g.up_at = None;
+                if let Some(a) = def.double.clone() {
+                    self.run_extra_action(&a);
+                }
+                return;
+            }
+        }
+        // Une autre touche attendait un double appui : c'était un appui simple.
+        self.flush_gesture();
+        if def.long.is_some() || def.double.is_some() {
+            self.gesture = Some(Gesture { key, page: self.page, down_at: now, up_at: None, done: false });
+            return;
+        }
+        self.press_key_action(key, def);
+    }
+
+    /// Action « appui simple » d'une touche (avec ses deux états éventuels).
+    fn press_key_action(&mut self, key: u8, def: KeyDef) {
         let state = if def.toggle.is_some() && self.is_toggled(key) { 1 } else { 0 };
         let action = def.state(state).action;
         if def.toggle.is_some() {
@@ -814,6 +839,22 @@ impl Engine {
         if self.cfg.general.press_feedback {
             let jpeg = self.current_frame(key).jpeg.clone();
             self.send_image(key, &jpeg);
+        }
+        let has_double = self.key_def(key).map(|d| d.double.is_some()).unwrap_or(false);
+        if let Some(g) = self.gesture.as_mut() {
+            if g.key == key {
+                if g.done {
+                    self.gesture = None;
+                } else if has_double {
+                    // On attend un éventuel second appui.
+                    g.up_at = Some(Instant::now());
+                } else {
+                    self.gesture = None;
+                    if let Some(def) = self.key_def(key).cloned() {
+                        self.press_key_action(key, def);
+                    }
+                }
+            }
         }
     }
 
@@ -1166,10 +1207,67 @@ impl Engine {
     }
 
     /// Change de page en relâchant les touches « enfoncées ».
+    /// Action d'un appui long ou d'un double appui.
+    fn run_extra_action(&mut self, action: &Action) {
+        let page_before = self.page;
+        self.execute(action);
+        self.nudge_widgets();
+        let closes = !matches!(action, Action::None | Action::Folder { .. } | Action::Back | Action::Page { .. });
+        if closes && self.page == page_before && self.is_closing_folder(self.page) {
+            self.go_back();
+        }
+    }
+
+    /// Une touche attendait un double appui qui n'est pas venu : appui simple.
+    fn flush_gesture(&mut self) {
+        let Some(g) = self.gesture.take() else { return };
+        if g.done || g.up_at.is_none() || g.page != self.page {
+            return;
+        }
+        if let Some(def) = self.key_def(g.key).cloned() {
+            self.press_key_action(g.key, def);
+        }
+    }
+
+    /// Appui long atteint, ou délai du double appui écoulé.
+    fn tick_gesture(&mut self, now: Instant) {
+        let Some(g) = self.gesture.as_ref() else { return };
+        let (key, down_at, up_at, done) = (g.key, g.down_at, g.up_at, g.done);
+        if done {
+            return;
+        }
+        let def = self.key_def(key).cloned();
+        match up_at {
+            None => {
+                let long_ms = self.cfg.general.long_press_ms.clamp(150, 5000) as u64;
+                if now.saturating_duration_since(down_at) >= Duration::from_millis(long_ms) {
+                    if let Some(a) = def.and_then(|d| d.long) {
+                        if let Some(g) = self.gesture.as_mut() {
+                            g.done = true;
+                        }
+                        self.run_extra_action(&a);
+                    }
+                }
+            }
+            Some(up) => {
+                let double_ms = self.cfg.general.double_press_ms.clamp(100, 1500) as u64;
+                if now.saturating_duration_since(up) >= Duration::from_millis(double_ms) {
+                    self.gesture = None;
+                    if let Some(def) = def {
+                        self.press_key_action(key, def);
+                    }
+                }
+            }
+        }
+    }
+
     fn change_page(&mut self, p: usize) {
         self.pressed = [false; KEY_COUNT];
+        self.gesture = None;
         self.page = p;
         self.show_page();
+        // Les faders et molettes peuvent avoir leurs propres réglages sur cette page.
+        self.led_due = Instant::now();
     }
 
     fn is_folder(&self, page: usize) -> bool {
@@ -1345,20 +1443,26 @@ impl Engine {
         now.saturating_duration_since(self.lights_t0).as_millis() as u64
     }
 
-    fn overlay(&self, now: Instant) -> lights::GameOverlay {
-        match self.tel {
-            Some(t) => lights::game_overlay(&self.cfg.lights.game, &t, self.anim_t(now)),
-            None => lights::GameOverlay::default(),
-        }
+    /// Réglage effectif du fader `i` : celui de la page, sinon le réglage commun.
+    fn fader_slot(&self, i: usize) -> crate::config::FaderSlot {
+        let page = self.cfg.pages.get(self.page);
+        page.and_then(|p| p.faders.iter().find(|f| f.index as usize == i + 1))
+            .or_else(|| self.cfg.faders.get(i))
+            .cloned()
+            .unwrap_or_else(|| crate::config::FaderSlot {
+                index: 0,
+                target: "none".into(),
+                color: "#FFFFFF".into(),
+                led: "fixed".into(),
+                gradient: Vec::new(),
+                animation: String::new(),
+            })
     }
 
     /// Couleur voulue pour la base (None = effet intégré de la base).
     fn base_target(&self, now: Instant) -> Option<Rgb> {
         if let Some((a, t0)) = &self.preview {
             return Some(lights::frame(a, now.saturating_duration_since(*t0).as_millis() as u64).base);
-        }
-        if let Some(c) = self.overlay(now).base {
-            return Some(c);
         }
         let l = &self.cfg.lights;
         if l.base_mode == "animation" {
@@ -1369,36 +1473,42 @@ impl Engine {
         None
     }
 
-    /// Couleurs voulues pour les 5 faders d'un module.
+    /// Couleurs voulues pour les 5 faders d'un module : chaque fader a son propre réglage.
     fn fader_target(&self, serial: &str, now: Instant) -> [Rgb; 5] {
         if let Some((a, t0)) = &self.preview {
             return lights::frame(a, now.saturating_duration_since(*t0).as_millis() as u64).faders;
         }
-        if let Some(f) = self.overlay(now).faders {
-            return f;
-        }
-        let l = &self.cfg.lights;
-        match l.faders_mode.as_str() {
-            "animation" => {
-                if let Some(a) = lights::find(l, &l.faders_animation) {
-                    return lights::frame(a, self.anim_t(now)).faders;
-                }
-            }
-            "position" => {
-                let values = self.faders.get(serial).copied().unwrap_or([0; FADER_COUNT]);
-                let mut out = [(0, 0, 0); 5];
-                for (i, c) in out.iter_mut().enumerate() {
-                    *c = lights::gradient_color(&l.gradient, values[i]);
-                }
-                return out;
-            }
-            _ => {}
-        }
-        let mut out = [(255, 255, 255); 5];
+        let values = self.faders.get(serial).copied().unwrap_or([0; FADER_COUNT]);
+        let mut out = [(0, 0, 0); 5];
         for (i, c) in out.iter_mut().enumerate() {
-            if let Some(slot) = self.cfg.faders.get(i) {
-                *c = parse_color(&slot.color).unwrap_or((255, 255, 255));
-            }
+            let slot = self.fader_slot(i);
+            let color = parse_color(&slot.color).unwrap_or((255, 255, 255));
+            let grad = if slot.gradient.is_empty() { lights::default_gradient() } else { slot.gradient.clone() };
+            *c = match slot.led.as_str() {
+                "position" => lights::gradient_color(&grad, values[i]),
+                "animation" => match lights::find(&self.cfg.lights, &slot.animation) {
+                    Some(a) => lights::frame(a, self.anim_t(now)).faders[i],
+                    None => color,
+                },
+                "status" => {
+                    let m = self.audio.meter(&slot.target);
+                    if slot.target.trim() == "none" || !m.present {
+                        (0, 0, 0)
+                    } else if m.muted {
+                        (255, 25, 25)
+                    } else {
+                        color
+                    }
+                }
+                "vu" => {
+                    let m = self.audio.meter(&slot.target);
+                    let level = (m.peak.clamp(0.0, 1.0).sqrt() * 100.0).round() as u8;
+                    let k = 0.12 + 0.88 * (level as f32 / 100.0);
+                    let c = lights::gradient_color(&grad, level);
+                    ((c.0 as f32 * k) as u8, (c.1 as f32 * k) as u8, (c.2 as f32 * k) as u8)
+                }
+                _ => color,
+            };
         }
         out
     }
@@ -1413,52 +1523,24 @@ impl Engine {
         }
     }
 
-    /// Lit les données du jeu de course, s'il tourne.
-    fn poll_telemetry(&mut self, now: Instant) {
-        if now < self.tel_due {
-            return;
-        }
-        let live = self.tel.map(|t| t.live).unwrap_or(false);
-        self.tel_due = now + Duration::from_millis(if live { 30 } else { 500 });
-        if self.tel.is_some() && now >= self.tel_fg_due {
-            self.tel_fg_due = now + Duration::from_secs(2);
-            if let Some(exe) = foreground::foreground_exe() {
-                if exe.starts_with("ac2-") {
-                    self.tel_acc = true;
-                } else if exe == "acs.exe" || exe == "acs_x86.exe" {
-                    self.tel_acc = false;
-                }
-            }
-        }
-        let before = self.tel;
-        self.tel = if self.cfg.lights.game.enabled { self.ac.poll(self.tel_acc) } else { None };
-        let changed = match (before, self.tel) {
-            (Some(a), Some(b)) => a.live != b.live || a.flag != b.flag || a.max_rpm != b.max_rpm,
-            (a, b) => a.is_some() != b.is_some(),
-        };
-        if changed {
-            if let Some(t) = self.tel {
-                if before.is_none() {
-                    log::info!("🏁 Assetto Corsa détecté");
-                }
-                if t.live != before.map(|b| b.live).unwrap_or(false) {
-                    log::info!("Assetto Corsa : {}", if t.live { "en piste" } else { "hors piste" });
-                }
-            }
-            self.led_due = now;
-            self.notify();
-        }
-    }
-
     /// Met à jour les LED de la base et des faders (animations, position, jeux).
     fn tick_lights(&mut self) {
         let now = Instant::now();
-        self.poll_telemetry(now);
+        self.tick_gesture(now);
         if self.game.is_some() || self.doom.is_some() || now < self.led_due {
             return;
         }
         let fps = self.cfg.lights.fps.clamp(1, 30) as u64;
         self.led_due = now + Duration::from_millis(1000 / fps);
+        // Mesures audio pour les LED « état » et « VU-mètre » (utilisées à l'image suivante).
+        let measured: Vec<String> = (0..FADER_COUNT)
+            .map(|i| self.fader_slot(i))
+            .filter(|s| s.led == "status" || s.led == "vu")
+            .map(|s| s.target)
+            .collect();
+        if !measured.is_empty() {
+            self.audio.send(AudioCmd::Measure(measured));
+        }
 
         let mut changed = false;
         let base = self.base_target(now);
@@ -1528,14 +1610,14 @@ impl Engine {
 
     fn faders_changed(&mut self, serial: String, values: [u8; FADER_COUNT]) {
         let previous = self.faders.insert(serial, values);
-        if self.cfg.lights.faders_mode == "position" {
+        if (0..FADER_COUNT).any(|i| self.fader_slot(i).led == "position") {
             self.led_due = self.led_due.min(Instant::now());
         }
         for (i, &v) in values.iter().enumerate() {
             if previous.map(|p| p[i] == v).unwrap_or(false) {
                 continue;
             }
-            let Some(slot) = self.cfg.faders.get(i) else { continue };
+            let slot = self.fader_slot(i);
             let level = v as f32 / 100.0;
             let target = slot.target.trim().to_lowercase();
             if target == "master" {
@@ -1571,9 +1653,11 @@ impl Engine {
             return;
         }
         let r = &self.cfg.rollers;
+        // Réglage propre à la page, sinon réglage commun.
+        let page = self.cfg.pages.get(self.page);
         let (mode, invert) = match wheel {
-            Wheel::Right => (r.right.clone(), r.invert_right),
-            Wheel::Left => (r.left.clone(), r.invert_left),
+            Wheel::Right => (page.and_then(|p| p.roller_right.clone()).unwrap_or_else(|| r.right.clone()), r.invert_right),
+            Wheel::Left => (page.and_then(|p| p.roller_left.clone()).unwrap_or_else(|| r.left.clone()), r.invert_left),
         };
         // Sens « 01 » = vers le bas (-1) : on le ramène à « vers le haut = + ».
         let mut dir = -(step as i32);

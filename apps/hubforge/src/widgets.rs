@@ -605,6 +605,8 @@ mod tests {
             toggle: None,
             widget: Some(widget.into()),
             widget_style: style.map(String::from),
+            long: None,
+            double: None,
         }
     }
 

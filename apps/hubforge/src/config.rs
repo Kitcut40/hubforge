@@ -39,6 +39,10 @@ pub struct General {
     /// Changer de page tout seul quand une application liée à une page
     /// passe au premier plan.
     pub auto_pages: bool,
+    /// Durée d'un appui long (millisecondes).
+    pub long_press_ms: u32,
+    /// Délai maximal entre les deux appuis d'un double appui (millisecondes).
+    pub double_press_ms: u32,
 }
 
 impl Default for General {
@@ -51,17 +55,46 @@ impl Default for General {
             gif_max_fps: 28,
             base_effect: 1,
             auto_pages: true,
+            long_press_ms: 500,
+            double_press_ms: 300,
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FaderSlot {
+    /// Dans une page : numéro du fader remplacé (1 à 5). Inutilisé dans `[[faders]]`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub index: u8,
     /// "master", "mic", "app:nom.exe" (plusieurs séparés par des virgules), "none"
     pub target: String,
+    /// Couleur de la LED (mode « fixed ») ; couleur « allumé » du mode « status ».
     #[serde(default = "default_fader_color")]
     pub color: String,
+    /// LED : "fixed" (couleur fixe), "position" (selon la position du fader),
+    /// "animation", "status" (rouge si coupé, éteinte si l'appli ne tourne
+    /// pas), "vu" (niveau sonore de ce que le fader contrôle).
+    #[serde(default = "default_led_mode", skip_serializing_if = "is_fixed")]
+    pub led: String,
+    /// Dégradé « position → couleur » (modes « position » et « vu ») : "0:#00FF00", "100:#FF0000".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gradient: Vec<String>,
+    /// Animation (mode « animation »).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub animation: String,
+}
+
+fn default_led_mode() -> String {
+    "fixed".into()
+}
+
+fn is_fixed(s: &String) -> bool {
+    s == "fixed"
+}
+
+fn is_zero(n: &u8) -> bool {
+    *n == 0
 }
 
 fn default_fader_color() -> String {
@@ -110,6 +143,14 @@ pub struct Page {
     pub close_after: bool,
     #[serde(default)]
     pub keys: Vec<KeyDef>,
+    /// Faders propres à cette page (les autres gardent le réglage commun).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub faders: Vec<FaderSlot>,
+    /// Molettes propres à cette page (None = réglage commun).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roller_left: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roller_right: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -146,6 +187,12 @@ pub struct KeyDef {
     /// "graph" pour CPU et RAM). Vide = style par défaut.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widget_style: Option<String>,
+    /// Action d'un appui long (None = pas d'appui long).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long: Option<Action>,
+    /// Action d'un double appui (None = pas de double appui).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub double: Option<Action>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -177,6 +224,8 @@ impl KeyDef {
                 toggle: None,
                 widget: None,
                 widget_style: None,
+                long: self.long.clone(),
+                double: self.double.clone(),
             },
             _ => KeyDef { toggle: None, ..self.clone() },
         }
@@ -279,9 +328,27 @@ pub fn config_dir() -> PathBuf {
 
 pub fn load(path: &Path) -> Result<Config, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("lecture impossible : {e}"))?;
-    let cfg: Config = toml::from_str(&text).map_err(|e| format!("erreur dans config.toml :\n{e}"))?;
+    let mut cfg: Config = toml::from_str(&text).map_err(|e| format!("erreur dans config.toml :\n{e}"))?;
+    migrate(&mut cfg);
     validate(&cfg)?;
     Ok(cfg)
+}
+
+/// Reprend les réglages des anciennes versions (0.9 : LED réglées pour les
+/// 5 faders à la fois ; elles se règlent maintenant fader par fader).
+pub fn migrate(cfg: &mut Config) {
+    let l = &mut cfg.lights;
+    if l.faders_mode == "position" || l.faders_mode == "animation" {
+        for slot in cfg.faders.iter_mut().filter(|s| s.led == "fixed") {
+            slot.led = l.faders_mode.clone();
+            slot.gradient = l.gradient.clone();
+            slot.animation = l.faders_animation.clone();
+        }
+    }
+    l.faders_mode.clear();
+    l.faders_animation.clear();
+    l.gradient.clear();
+    l.game = None;
 }
 
 pub fn validate(cfg: &Config) -> Result<(), String> {
@@ -296,7 +363,7 @@ pub fn validate(cfg: &Config) -> Result<(), String> {
                 }
             }
             let alt = k.toggle.as_ref();
-            for a in std::iter::once(&k.action).chain(alt.map(|t| &t.action)) {
+            for a in std::iter::once(&k.action).chain(alt.map(|t| &t.action)).chain(k.long.iter()).chain(k.double.iter()) {
                 validate_action(a, 0).map_err(|e| format!("page {} touche {} : {e}", p + 1, k.key))?;
             }
             for c in [&k.color, &k.text_color, &alt.and_then(|t| t.color.clone()), &alt.and_then(|t| t.text_color.clone())]
@@ -718,5 +785,55 @@ mod tests {
     fn colors() {
         assert_eq!(parse_color("#FF8000"), Some((255, 128, 0)));
         assert_eq!(parse_color("nope"), None);
+    }
+
+    #[test]
+    fn old_fader_lights_are_migrated_per_fader() {
+        let dir = std::env::temp_dir().join("hubforge-migrate-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("p.toml");
+        std::fs::write(
+            &path,
+            r##"
+[[faders]]
+target = "master"
+color = "#FF0000"
+
+[[faders]]
+target = "mic"
+
+[lights]
+faders_mode = "position"
+gradient = ["0:#000000", "100:#FFFFFF"]
+
+[lights.game]
+enabled = true
+
+[[pages]]
+name = "A"
+
+[[pages.faders]]
+index = 2
+target = "app:discord.exe"
+led = "vu"
+
+[[pages.keys]]
+key = 1
+action = { type = "media", command = "play_pause" }
+long = { type = "lock" }
+double = { type = "media", command = "next" }
+"##,
+        )
+        .unwrap();
+        let cfg = load(&path).unwrap();
+        assert_eq!(cfg.faders[0].led, "position");
+        assert_eq!(cfg.faders[1].gradient, vec!["0:#000000".to_string(), "100:#FFFFFF".to_string()]);
+        assert!(cfg.lights.faders_mode.is_empty() && cfg.lights.game.is_none());
+        assert_eq!(cfg.pages[0].faders[0].index, 2);
+        assert!(cfg.pages[0].keys[0].long.is_some() && cfg.pages[0].keys[0].double.is_some());
+        let text = toml::to_string(&cfg).unwrap();
+        assert!(!text.contains("faders_mode") && !text.contains("[lights.game]"));
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(back.faders[0].led, "position");
     }
 }

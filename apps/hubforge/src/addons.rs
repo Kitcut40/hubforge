@@ -496,6 +496,8 @@ impl AddonAction {
             toggle: None,
             widget: None,
             widget_style: None,
+            long: None,
+            double: None,
         }
     }
 }
@@ -512,6 +514,9 @@ impl Addon {
                 apps: p.apps.clone(),
                 folder: p.folder,
                 close_after: p.close_after,
+                faders: Vec::new(),
+                roller_left: None,
+                roller_right: None,
                 keys: p
                     .keys
                     .iter()
@@ -529,6 +534,8 @@ impl Addon {
                                 toggle: None,
                                 widget: None,
                                 widget_style: None,
+                                long: None,
+                                double: None,
                             }
                         } else {
                             let target = k.open.as_deref().and_then(|o| self.pages.iter().find(|p| p.id == o));
@@ -542,6 +549,8 @@ impl Addon {
                                 toggle: None,
                                 widget: None,
                                 widget_style: None,
+                                long: None,
+                                double: None,
                             }
                         };
                         if let Some(l) = &k.label {

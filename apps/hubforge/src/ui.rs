@@ -863,3 +863,9 @@ pub fn stop_doom(state: State<AppState>) {
 pub fn doom_key(state: State<AppState>, pressed: bool, code: u8) {
     let _ = state.engine.lock().unwrap().send(EngineMsg::DoomKey { pressed, code });
 }
+
+/// Exploration des LED de la base (diagnostic) : n° de LED à allumer, None = fin.
+#[tauri::command]
+pub fn probe_base_led(state: State<AppState>, index: Option<u8>) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::ProbeBaseLed(index));
+}

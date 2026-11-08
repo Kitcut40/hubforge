@@ -150,7 +150,14 @@ pub fn init(cfg_dir: &Path) -> Active {
 pub fn blank_config() -> Config {
     let faders = ["master", "none", "none", "none", "none"]
         .iter()
-        .map(|t| FaderSlot { target: t.to_string(), color: "#FFFFFF".into() })
+        .map(|t| FaderSlot {
+            index: 0,
+            target: t.to_string(),
+            color: "#FFFFFF".into(),
+            led: "fixed".into(),
+            gradient: Vec::new(),
+            animation: String::new(),
+        })
         .collect();
     Config {
         general: General::default(),
@@ -162,6 +169,9 @@ pub fn blank_config() -> Config {
             folder: false,
             close_after: false,
             keys: Vec::new(),
+            faders: Vec::new(),
+            roller_left: None,
+            roller_right: None,
         }],
         lights: Default::default(),
     }

@@ -507,3 +507,12 @@ label.mini select { min-width: 64px; }
 .doom-pad span small { color: #8f7a73; font-size: 9.5px; }
 .doom-pad .fire { background: #5a140a; border-color: #c2361d; color: #fff; font-weight: 700; }
 .doom-glyph { font-size: 24px; background: #3a120a !important; }
+
+/* Réglages propres à une page */
+.scope-tabs { margin-bottom: 8px; }
+.fader.page-own .fader-name, .roller.page-own .roller-name { color: var(--accent-2); }
+.fader.page-own .fader-name::before, .roller.page-own .roller-name::before { content: "● "; font-size: 8px; vertical-align: 2px; }
+.gesture-box { border-left: 2px solid var(--line-2); padding-left: 12px; margin: 4px 0 12px; }
+.warn-text { color: #f0b54a; }
+.probe-row { align-items: center; gap: 8px; margin-bottom: 10px; }
+#probe-n { min-width: 80px; text-align: center; font-weight: 600; }

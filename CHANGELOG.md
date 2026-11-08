@@ -4,6 +4,20 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.11.0] — 2026-11-09
+
+### Nouveautés
+- **Appui long et double appui** : chaque touche peut avoir une action en plus pour l'appui long et une pour le double appui. Durées réglables dans les réglages. Le double appui ne retarde que les touches qui l'utilisent.
+- **Faders et molettes par page** : chaque fader et chaque molette a un réglage commun à toutes les pages, et chaque page peut avoir le sien. Un point orange sur le dessin indique les réglages propres à la page.
+- **Chaque fader a sa propre LED** : couleur fixe, couleur selon la position (dégradé propre au fader), animation, **lumière d'état** (rouge si le son est coupé, éteinte si l'appli n'est pas lancée) ou **VU-mètre** (s'allume avec le niveau sonore de ce que le fader contrôle).
+- **Zones de lumière de la base** (Diagnostic, expérimental) : allume les LED de la base une par une, pour savoir si le contour peut être animé zone par zone.
+
+### Changements
+- Les réactions à Assetto Corsa sont retirées du logiciel : elles reviendront sous forme d'addon « jeux de course ».
+- Plus aucun addon n'est livré avec HubForge (Fusion 360, Discord et PrusaSlicer retirés) : ils seront proposés dans un catalogue à télécharger.
+- L'effet intégré « stroboscope » de la base, qui clignotait mal, est retiré : l'animation « Stroboscope » le remplace.
+- Les anciens réglages de LED des faders (communs aux 5) sont repris automatiquement fader par fader.
+
 ## [0.10.0] — 2026-11-08
 
 ### Easter egg

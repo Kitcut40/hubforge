@@ -1,6 +1,7 @@
 //! Contrôle du volume : général, micro et par application.
 //! Sous Windows : API Core Audio (WASAPI), dans un fil dédié.
 
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +22,19 @@ pub enum AudioCmd {
     ListApps(Sender<Vec<String>>),
     /// Relit le volume général et l'état des micros (touches vivantes)
     Poll,
+    /// Mesure le niveau sonore et l'état (coupé, présent) de ces cibles de
+    /// fader ("master", "mic", "app:a.exe,b.exe"). Résultat dans `meters()`.
+    Measure(Vec<String>),
+}
+
+/// État d'une cible de fader, pour les LED « état » et « VU-mètre ».
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Meter {
+    /// La sortie, le micro ou l'application existe (l'appli joue ou a joué du son).
+    pub present: bool,
+    pub muted: bool,
+    /// Niveau crête actuel (0.0 à 1.0).
+    pub peak: f32,
 }
 
 /// Dernier état connu du son (mis à jour par `AudioCmd::Poll`).
@@ -37,18 +51,26 @@ pub struct AudioState {
 pub struct Audio {
     tx: Sender<AudioCmd>,
     state: Arc<Mutex<AudioState>>,
+    meters: Arc<Mutex<HashMap<String, Meter>>>,
 }
 
 impl Audio {
     pub fn start() -> Audio {
         let (tx, rx) = mpsc::channel::<AudioCmd>();
         let state = Arc::new(Mutex::new(AudioState::default()));
+        let meters = Arc::new(Mutex::new(HashMap::new()));
         let shared = state.clone();
+        let shared_meters = meters.clone();
         std::thread::Builder::new()
             .name("audio".into())
-            .spawn(move || imp::run(rx, shared))
+            .spawn(move || imp::run(rx, shared, shared_meters))
             .ok();
-        Audio { tx, state }
+        Audio { tx, state, meters }
+    }
+
+    /// Dernières mesures demandées avec `AudioCmd::Measure`.
+    pub fn meter(&self, target: &str) -> Meter {
+        self.meters.lock().ok().and_then(|m| m.get(target).copied()).unwrap_or_default()
     }
 
     /// Dernier état connu (demander une mise à jour avec `AudioCmd::Poll`).
@@ -70,32 +92,40 @@ impl Audio {
 
 #[cfg(windows)]
 mod imp {
-    use super::{AudioCmd, AudioState};
+    use super::{AudioCmd, AudioState, Meter};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::sync::mpsc::Receiver;
     use std::time::{Duration, Instant};
     use windows::core::{Interface, PWSTR};
     use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+    use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioMeterInformation};
     use windows::Win32::Media::Audio::{
-        eCapture, eConsole, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
-        ISimpleAudioVolume, MMDeviceEnumerator,
+        eCapture, eConsole, eRender, AudioSessionStateExpired, IAudioSessionControl, IAudioSessionControl2,
+        IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator,
     };
     use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
+    struct Session {
+        vol: ISimpleAudioVolume,
+        ctl: IAudioSessionControl,
+        meter: Option<IAudioMeterInformation>,
+    }
+
     struct State {
         enumerator: IMMDeviceEnumerator,
         master: Option<IAudioEndpointVolume>,
         mic: Option<IAudioEndpointVolume>,
-        sessions: HashMap<String, Vec<ISimpleAudioVolume>>,
+        master_meter: Option<IAudioMeterInformation>,
+        mic_meter: Option<IAudioMeterInformation>,
+        sessions: HashMap<String, Vec<Session>>,
         refreshed: Instant,
     }
 
-    pub fn run(rx: Receiver<AudioCmd>, shared: Arc<Mutex<AudioState>>) {
+    pub fn run(rx: Receiver<AudioCmd>, shared: Arc<Mutex<AudioState>>, meters: Arc<Mutex<HashMap<String, Meter>>>) {
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         }
@@ -110,6 +140,8 @@ mod imp {
             enumerator,
             master: None,
             mic: None,
+            master_meter: None,
+            mic_meter: None,
             sessions: HashMap::new(),
             refreshed: Instant::now() - Duration::from_secs(60),
         };
@@ -129,12 +161,22 @@ mod imp {
                     Ok(())
                 }
                 AudioCmd::Poll => Ok(()),
+                AudioCmd::Measure(targets) => {
+                    let mut out = HashMap::new();
+                    for t in targets {
+                        out.insert(t.clone(), measure(&st, t));
+                    }
+                    if let Ok(mut m) = meters.lock() {
+                        *m = out;
+                    }
+                    Ok(())
+                }
                 AudioCmd::SetApps(names, v) => {
                     let mut found = false;
                     for n in names {
                         if let Some(list) = st.sessions.get(&n.to_lowercase()) {
                             for s in list {
-                                found |= unsafe { s.SetMasterVolume(*v, std::ptr::null()) }.is_ok();
+                                found |= unsafe { s.vol.SetMasterVolume(*v, std::ptr::null()) }.is_ok();
                             }
                         }
                     }
@@ -149,7 +191,7 @@ mod imp {
                 log::debug!("audio : {e}");
                 st.refreshed = Instant::now() - Duration::from_secs(60);
             }
-            if !matches!(cmd, AudioCmd::ListApps(_) | AudioCmd::SetApps(..)) {
+            if !matches!(cmd, AudioCmd::ListApps(_) | AudioCmd::SetApps(..) | AudioCmd::Measure(_)) {
                 let snap = snapshot(&st);
                 if let Ok(mut s) = shared.lock() {
                     *s = snap;
@@ -165,6 +207,48 @@ mod imp {
             let mic_muted = st.mic.as_ref().and_then(|ep| ep.GetMute().ok()).map(|b| b.as_bool());
             AudioState { master, master_muted, mic_muted }
         }
+    }
+
+    fn peak(m: &Option<IAudioMeterInformation>) -> f32 {
+        m.as_ref().and_then(|m| unsafe { m.GetPeakValue() }.ok()).unwrap_or(0.0)
+    }
+
+    fn endpoint_meter(ep: &Option<IAudioEndpointVolume>, m: &Option<IAudioMeterInformation>) -> Meter {
+        match ep {
+            Some(ep) => Meter {
+                present: true,
+                muted: unsafe { ep.GetMute() }.map(|b| b.as_bool()).unwrap_or(false),
+                peak: peak(m),
+            },
+            None => Meter::default(),
+        }
+    }
+
+    fn measure(st: &State, target: &str) -> Meter {
+        let t = target.trim().to_lowercase();
+        if t == "master" {
+            return endpoint_meter(&st.master, &st.master_meter);
+        }
+        if t == "mic" {
+            return endpoint_meter(&st.mic, &st.mic_meter);
+        }
+        let Some(apps) = t.strip_prefix("app:") else { return Meter::default() };
+        let mut out = Meter { present: false, muted: true, peak: 0.0 };
+        for name in apps.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            for s in st.sessions.get(name).into_iter().flatten() {
+                let alive = unsafe { s.ctl.GetState() }.map(|state| state != AudioSessionStateExpired).unwrap_or(false);
+                if !alive {
+                    continue;
+                }
+                out.present = true;
+                out.muted &= unsafe { s.vol.GetMute() }.map(|b| b.as_bool()).unwrap_or(false);
+                out.peak = out.peak.max(peak(&s.meter));
+            }
+        }
+        if !out.present {
+            out.muted = false;
+        }
+        out
     }
 
     fn set_endpoint(ep: &Option<IAudioEndpointVolume>, v: f32) -> windows::core::Result<()> {
@@ -204,6 +288,16 @@ mod imp {
                 .GetDefaultAudioEndpoint(eCapture, eConsole)
                 .and_then(|d| d.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None))
                 .ok();
+            st.master_meter = st
+                .enumerator
+                .GetDefaultAudioEndpoint(eRender, eConsole)
+                .and_then(|d| d.Activate::<IAudioMeterInformation>(CLSCTX_ALL, None))
+                .ok();
+            st.mic_meter = st
+                .enumerator
+                .GetDefaultAudioEndpoint(eCapture, eConsole)
+                .and_then(|d| d.Activate::<IAudioMeterInformation>(CLSCTX_ALL, None))
+                .ok();
             st.sessions.clear();
             let Ok(dev) = st.enumerator.GetDefaultAudioEndpoint(eRender, eConsole) else { return };
             let Ok(mgr) = dev.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None) else { return };
@@ -215,7 +309,8 @@ mod imp {
                 let Ok(pid) = ctl2.GetProcessId() else { continue };
                 let Some(name) = process_name(pid) else { continue };
                 if let Ok(vol) = ctl.cast::<ISimpleAudioVolume>() {
-                    st.sessions.entry(name).or_default().push(vol);
+                    let meter = ctl.cast::<IAudioMeterInformation>().ok();
+                    st.sessions.entry(name).or_default().push(Session { vol, ctl: ctl.clone(), meter });
                 }
             }
         }
@@ -242,11 +337,12 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
-    use super::{AudioCmd, AudioState};
+    use super::{AudioCmd, AudioState, Meter};
+    use std::collections::HashMap;
     use std::sync::mpsc::Receiver;
     use std::sync::{Arc, Mutex};
 
-    pub fn run(rx: Receiver<AudioCmd>, _shared: Arc<Mutex<AudioState>>) {
+    pub fn run(rx: Receiver<AudioCmd>, _shared: Arc<Mutex<AudioState>>, _meters: Arc<Mutex<HashMap<String, Meter>>>) {
         log::warn!("contrôle du volume pas encore disponible sur cette plateforme");
         while let Ok(cmd) = rx.recv() {
             if let AudioCmd::ListApps(reply) = cmd {

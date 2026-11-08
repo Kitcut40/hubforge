@@ -482,6 +482,8 @@ mod tests {
             toggle: None,
             widget: None,
             widget_style: None,
+            long: None,
+            double: None,
         }
     }
 

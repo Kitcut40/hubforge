@@ -1,6 +1,6 @@
 [package]
 name = "hubforge"
-version = "0.10.0"
+version = "0.11.0"
 description = "HubForge — logiciel libre pour le Cooler Master MasterHUB"
 edition.workspace = true
 license.workspace = true
