@@ -9,6 +9,7 @@ use crate::render::{self, KeyVisual};
 use crate::foreground;
 use crate::widgets;
 use crate::game::{self, Game};
+use crate::doom;
 use crate::lights::{self, Rgb};
 use crate::telemetry::{AcReader, Telemetry};
 use crate::profiles::{self, SharedActive};
@@ -38,6 +39,25 @@ pub enum EngineMsg {
     PreviewAnimation(Option<lights::Animation>),
     /// Orientation de la base ou positions manuelles modifiées.
     ReloadLayout,
+    /// Easter egg : lancer Doom avec ce fichier WAD.
+    StartDoom(std::path::PathBuf),
+    StopDoom,
+    /// Touche de Doom depuis le clavier du PC (fenêtre de HubForge).
+    DoomKey { pressed: bool, code: u8 },
+}
+
+/// Partie de Doom en cours.
+struct DoomPlay {
+    sess: doom::Session,
+    seen: u64,
+    tile_hash: [u64; KEY_COUNT],
+    /// Touches de Doom maintenues (nombre de touches du MasterHUB qui les tiennent).
+    held: HashMap<u8, u8>,
+    /// Touches relâchées automatiquement (crans des molettes).
+    pulses: Vec<(Instant, u8)>,
+    esc_since: Option<Instant>,
+    leds_due: Instant,
+    view_due: Instant,
 }
 
 /// Couleurs envoyées en ce moment aux LED (pour l'aperçu dans l'interface).
@@ -89,6 +109,10 @@ pub struct Status {
     pub sim: Option<GameStatus>,
     /// Orientation de la base (degrés).
     pub base_rot: u16,
+    /// Doom tourne sur le MasterHUB.
+    pub doom: bool,
+    /// Dernière erreur au lancement de Doom.
+    pub doom_error: Option<String>,
 }
 
 fn hex(c: Rgb) -> String {
@@ -178,6 +202,8 @@ pub struct Engine {
     /// Orientation de la base et positions saisies à la main.
     base_rot: u16,
     placements: HashMap<String, Placement>,
+    doom: Option<DoomPlay>,
+    doom_error: Option<String>,
 }
 
 fn kind_id(k: Kind) -> &'static str {
@@ -247,6 +273,8 @@ impl Engine {
             tel_fg_due: Instant::now(),
             base_rot: 0,
             placements: HashMap::new(),
+            doom: None,
+            doom_error: None,
         };
         e.load_layout();
         e.render_all();
@@ -282,6 +310,8 @@ impl Engine {
                 flag: t.flag,
             }),
             base_rot: self.base_rot,
+            doom: self.doom.is_some(),
+            doom_error: self.doom_error.clone(),
         }
     }
 
@@ -321,13 +351,15 @@ impl Engine {
                 self.message(m);
             }
             self.run_macro();
-            if self.game.is_some() {
+            if self.doom.is_some() {
+                self.tick_doom();
+            } else if self.game.is_some() {
                 self.tick_game();
             } else if Instant::now() >= self.widgets_due {
                 self.update_widgets(false);
             }
             let busy_lights = self.preview.is_some() || self.base_soft || self.cfg.lights.faders_mode == "animation" || self.tel.map(|t| t.live).unwrap_or(false);
-            let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() && self.game.is_none() && !busy_lights { 30 } else { 5 };
+            let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() && self.game.is_none() && self.doom.is_none() && !busy_lights { 30 } else { 5 };
             match self.events.recv_timeout(Duration::from_millis(timeout)) {
                 Ok(ev) => {
                     self.handle(ev);
@@ -402,6 +434,13 @@ impl Engine {
                     self.show_page();
                 }
                 self.notify();
+            }
+            EngineMsg::StartDoom(wad) => self.start_doom(&wad),
+            EngineMsg::StopDoom => self.end_doom(),
+            EngineMsg::DoomKey { pressed, code } => {
+                if let Some(d) = self.doom.as_mut() {
+                    d.sess.key(pressed, code);
+                }
             }
             EngineMsg::ShowPage(p) => {
                 if p < self.visuals.len() && p != self.page {
@@ -615,6 +654,14 @@ impl Engine {
     }
 
     fn send_image(&self, key: u8, jpeg: &Arc<Vec<u8>>) {
+        // Pendant Doom, c'est lui qui dessine sur les touches.
+        if self.doom.is_some() {
+            return;
+        }
+        self.send_image_raw(key, jpeg);
+    }
+
+    fn send_image_raw(&self, key: u8, jpeg: &Arc<Vec<u8>>) {
         let packets = Arc::new(protocol::keys15_image_packets(key, jpeg));
         self.mgr.send_kind(Kind::Keys15, Command::Packets(packets));
     }
@@ -717,6 +764,10 @@ impl Engine {
         if (key as usize) >= KEY_COUNT {
             return;
         }
+        if self.doom.is_some() {
+            self.doom_pad(key as usize, true);
+            return;
+        }
         if let Some(g) = self.game.as_mut() {
             g.press(key as usize, Instant::now());
             return;
@@ -753,6 +804,10 @@ impl Engine {
     }
 
     fn key_up(&mut self, key: u8) {
+        if (key as usize) < KEY_COUNT && self.doom.is_some() {
+            self.doom_pad(key as usize, false);
+            return;
+        }
         if (key as usize) >= KEY_COUNT || self.game.is_some() {
             return;
         }
@@ -850,6 +905,187 @@ impl Engine {
         self.apply_config(cfg);
         self.show_page();
         self.notify();
+    }
+
+    // ------------------------------------------------------------------
+    // Easter egg : Doom
+    // ------------------------------------------------------------------
+
+    fn start_doom(&mut self, wad: &std::path::Path) {
+        if self.doom.is_some() {
+            return;
+        }
+        if self.game.is_some() {
+            self.game = None;
+        }
+        self.anims.clear();
+        self.macro_queue.clear();
+        self.preview = None;
+        match doom::Session::start(wad, &doom::doom_dir(&self.cfg_dir)) {
+            Ok(sess) => {
+                let now = Instant::now();
+                self.doom = Some(DoomPlay {
+                    sess,
+                    seen: 0,
+                    tile_hash: [0; KEY_COUNT],
+                    held: HashMap::new(),
+                    pulses: Vec::new(),
+                    esc_since: None,
+                    leds_due: now,
+                    view_due: now,
+                });
+                self.doom_error = None;
+                self.pressed = [false; KEY_COUNT];
+            }
+            Err(e) => {
+                log::error!("Doom : {e}");
+                self.doom_error = Some(e);
+            }
+        }
+        self.notify();
+    }
+
+    fn end_doom(&mut self) {
+        if self.doom.take().is_none() {
+            return;
+        }
+        self.pressed = [false; KEY_COUNT];
+        self.show_page();
+        self.restore_leds();
+        self.led_due = Instant::now();
+        self.notify();
+    }
+
+    /// Appui ou relâchement d'une touche du MasterHUB pendant Doom.
+    fn doom_pad(&mut self, physical: usize, down: bool) {
+        let rot = self.keys_rot;
+        let Some(d) = self.doom.as_mut() else { return };
+        let idx = doom::visible_index(rot, physical).min(KEY_COUNT - 1);
+        let codes = doom::PAD[idx];
+        if codes.contains(&doom::key::ESCAPE) {
+            d.esc_since = if down { Some(Instant::now()) } else { None };
+        }
+        for &c in codes {
+            let n = d.held.entry(c).or_insert(0);
+            if down {
+                *n += 1;
+                if *n == 1 {
+                    d.sess.key(true, c);
+                }
+            } else if *n > 0 {
+                *n -= 1;
+                if *n == 0 {
+                    d.held.remove(&c);
+                    d.sess.key(false, c);
+                }
+            }
+        }
+    }
+
+    fn tick_doom(&mut self) {
+        let now = Instant::now();
+        let rot = self.keys_rot;
+        let keys_busy = self.mgr.pending_kind(Kind::Keys15);
+        let leds_busy = self.mgr.pending_kind(Kind::Faders5) + self.mgr.pending_kind(Kind::BaseLed);
+        let Some(d) = self.doom.as_mut() else { return };
+        if !d.sess.alive() {
+            self.end_doom();
+            return;
+        }
+        // Appui long sur Échap : on quitte Doom.
+        if d.esc_since.map(|t| now.saturating_duration_since(t) > Duration::from_millis(1500)).unwrap_or(false) {
+            self.end_doom();
+            return;
+        }
+        // Crans des molettes : relâcher les touches arrivées à échéance.
+        let mut released = Vec::new();
+        d.pulses.retain(|(t, k)| {
+            if now >= *t {
+                released.push(*k);
+                false
+            } else {
+                true
+            }
+        });
+        for k in released {
+            if !d.held.contains_key(&k) {
+                d.sess.key(false, k);
+            }
+        }
+
+        let Some((seq, frame)) = d.sess.frame_after(d.seen) else { return };
+        // Fenêtre de HubForge : jusqu'à 20 images par seconde.
+        if now >= d.view_due {
+            d.view_due = now + Duration::from_millis(50);
+            if let Some(img) = image::RgbImage::from_raw(frame.width as u32, frame.height as u32, frame.rgb.clone()) {
+                *doom::VIEW.lock().unwrap() = Some((seq, Arc::new(render::encode_jpeg(&img, 75))));
+            }
+        }
+        // MasterHUB : seulement quand le module a fini d'afficher l'image précédente.
+        if keys_busy == 0 {
+            d.seen = seq;
+            let tiles = doom::tiles(&frame, rot);
+            let mut to_send = Vec::new();
+            for (k, t) in tiles.iter().enumerate() {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                t.as_raw().hash(&mut h);
+                let hash = h.finish();
+                if d.tile_hash[k] != hash {
+                    d.tile_hash[k] = hash;
+                    to_send.push((k as u8, Arc::new(render::encode_jpeg(t, 55))));
+                }
+            }
+            for (k, jpeg) in to_send {
+                self.send_image_raw(k, &jpeg);
+            }
+        }
+        let Some(d) = self.doom.as_mut() else { return };
+        // LED : vie sur les faders, couleur de l'action sur la base.
+        if now >= d.leds_due && leds_busy == 0 {
+            d.leds_due = now + Duration::from_millis(110);
+            let t = now.saturating_duration_since(self.lights_t0).as_millis() as u64;
+            let faders = doom::health_leds(frame.health, frame.damage, t);
+            let base = if frame.damage > 0 {
+                (255, 0, 0)
+            } else if frame.bonus > 0 {
+                (255, 200, 40)
+            } else {
+                doom::average_color(&frame)
+            };
+            self.send_live_leds(Some(base), Some(faders));
+        }
+    }
+
+    /// Envoie des couleurs aux LED en direct (seulement ce qui a changé).
+    fn send_live_leds(&mut self, base: Option<Rgb>, faders: Option<[Rgb; 5]>) {
+        let mods: Vec<(String, Kind)> = self.modules.iter().map(|(s, k)| (s.clone(), *k)).collect();
+        for (s, k) in mods {
+            match (k, base, faders) {
+                (Kind::BaseLed, Some(c), _) if self.sent_base.get(&s) != Some(&c) => {
+                    self.mgr.send(&s, Command::Output(protocol::led_color(0, 0, c.0, c.1, c.2, false)));
+                    self.mgr.send(&s, Command::Sleep(5));
+                    self.mgr.send(&s, Command::Output(protocol::led_mode(0, 0, 1, false)));
+                    self.sent_base.insert(s.clone(), c);
+                    self.base_soft = true;
+                }
+                (Kind::Faders5, _, Some(target)) => {
+                    let prev = self.sent_faders.get(&s).copied();
+                    if prev == Some(target) {
+                        continue;
+                    }
+                    for (i, c) in target.iter().enumerate() {
+                        if prev.map(|p| p[i] != *c).unwrap_or(true) {
+                            self.mgr.send(&s, Command::Output(protocol::led_color(1, i as u8, c.0, c.1, c.2, false)));
+                            self.mgr.send(&s, Command::Sleep(4));
+                        }
+                    }
+                    self.mgr.send(&s, Command::Output(protocol::led_mode(1, 0xFF, 1, false)));
+                    self.sent_faders.insert(s.clone(), target);
+                }
+                _ => {}
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1226,7 +1462,7 @@ impl Engine {
     fn tick_lights(&mut self) {
         let now = Instant::now();
         self.poll_telemetry(now);
-        if self.game.is_some() || now < self.led_due {
+        if self.game.is_some() || self.doom.is_some() || now < self.led_due {
             return;
         }
         let fps = self.cfg.lights.fps.clamp(1, 30) as u64;
@@ -1323,6 +1559,25 @@ impl Engine {
     }
 
     fn roller(&mut self, wheel: Wheel, step: i8) {
+        if let Some(d) = self.doom.as_mut() {
+            // Molette gauche : tourner. Molette droite : avancer / reculer.
+            let (code, ms) = match (wheel, step > 0) {
+                (Wheel::Left, true) => (doom::key::RIGHT, 90),
+                (Wheel::Left, false) => (doom::key::LEFT, 90),
+                (Wheel::Right, true) => (doom::key::UP, 160),
+                (Wheel::Right, false) => (doom::key::DOWN, 160),
+            };
+            let until = Instant::now() + Duration::from_millis(ms);
+            if let Some(p) = d.pulses.iter_mut().find(|(_, k)| *k == code) {
+                p.0 = until;
+            } else {
+                if !d.held.contains_key(&code) {
+                    d.sess.key(true, code);
+                }
+                d.pulses.push((until, code));
+            }
+            return;
+        }
         let r = &self.cfg.rollers;
         let (mode, invert) = match wheel {
             Wheel::Right => (r.right.clone(), r.invert_right),

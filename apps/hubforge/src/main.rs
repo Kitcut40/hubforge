@@ -19,6 +19,7 @@ mod audio;
 mod autostart;
 mod backups;
 mod config;
+mod doom;
 mod engine;
 mod foreground;
 mod game;
@@ -134,6 +135,11 @@ fn main() {
         return;
     }
 
+    // --doom : processus du moteur de Doom (easter egg), lancé par HubForge lui-même.
+    if args.get(1).map(|a| a == "--doom").unwrap_or(false) && args.len() >= 4 {
+        doom::child_main(&args[2], &args[3]);
+    }
+
     logging::init(&dir);
     let hidden = args.iter().any(|a| a == "--hidden");
     let addon_to_install = addon_argument();
@@ -213,6 +219,11 @@ fn main() {
             ui::get_layout,
             ui::set_base_rot,
             ui::set_placement,
+            ui::start_doom,
+            ui::download_freedoom,
+            ui::stop_doom,
+            ui::doom_key,
+            ui::doom_frame,
             ui::reset_base,
             ui::list_addons,
             ui::addons_signature,

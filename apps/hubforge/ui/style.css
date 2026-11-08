@@ -491,3 +491,20 @@ label.mini select { min-width: 64px; }
 .place-card.warn { border-color: #8a6a1e; background: #1d1a10; }
 .place-card .row { gap: 8px; }
 .anim-editor > .row:last-child { flex-wrap: wrap; gap: 6px; }
+
+/* Easter egg Doom */
+.doom { position: fixed; inset: 0; z-index: 60; background: rgba(5, 3, 3, 0.92); display: grid; place-items: center; backdrop-filter: blur(6px); }
+.doom.hidden { display: none; }
+.doom-card { width: min(920px, 94vw); background: #120c0b; border: 1px solid #4a1a12; border-radius: 18px; padding: 18px 20px; box-shadow: 0 0 80px rgba(255, 40, 0, 0.18); }
+.doom-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.doom-title { font: 900 30px/1 Impact, "Arial Black", sans-serif; letter-spacing: 3px; color: #e8371a; text-shadow: 0 2px 0 #5a0d00, 0 0 18px rgba(255, 60, 0, 0.45); }
+.doom-sub { color: #b9a39c; font-size: 13px; margin-top: 3px; }
+.doom-view { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: contain; background: #000; border-radius: 10px; image-rendering: pixelated; border: 1px solid #2a1512; }
+.doom-help { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; margin-top: 14px; color: #c9b8b2; font-size: 12.5px; }
+.doom-help h4 { margin: 0 0 8px; color: #f0e2dc; font-size: 13px; }
+.doom-help p { margin: 6px 0 0; line-height: 1.5; }
+.doom-pad { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.doom-pad span { background: #1d1311; border: 1px solid #3a2420; border-radius: 6px; padding: 6px 4px; text-align: center; font-size: 11px; line-height: 1.25; }
+.doom-pad span small { color: #8f7a73; font-size: 9.5px; }
+.doom-pad .fire { background: #5a140a; border-color: #c2361d; color: #fff; font-weight: 700; }
+.doom-glyph { font-size: 24px; background: #3a120a !important; }

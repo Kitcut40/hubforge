@@ -552,6 +552,7 @@ pub async fn pick_file(app: AppHandle, kind: String) -> Result<Option<String>, S
         "image" => d.add_filter("Images et GIF", &["png", "jpg", "jpeg", "gif", "webp", "bmp"]),
         "addon" => d.add_filter("Addon HubForge", &["forge"]),
         "profile" => d.add_filter("Profil HubForge", &["hfprofile"]),
+        "wad" => d.add_filter("Fichier de jeu Doom (WAD)", &["wad", "WAD"]),
         "program" => d.add_filter("Programmes", &["exe", "lnk", "bat", "cmd"]).add_filter("Tous les fichiers", &["*"]),
         _ => d,
     };
@@ -817,4 +818,59 @@ pub fn set_placement(state: State<AppState>, kind: String, code: String, placeme
     }
     crate::profiles::save_settings(&state.cfg_dir, &st);
     let _ = state.engine.lock().unwrap().send(EngineMsg::ReloadLayout);
+}
+
+// ---------------------------------------------------------------------------
+// Easter egg : Doom
+// ---------------------------------------------------------------------------
+
+/// Lance Doom sur le MasterHUB. `wad` : fichier choisi par l'utilisateur
+/// (sinon celui retenu, Freedoom ou un Doom installé). Erreur « no_wad » si
+/// aucun fichier de jeu n'est trouvé.
+#[tauri::command]
+pub fn start_doom(state: State<AppState>, wad: Option<String>) -> Result<String, String> {
+    let mut st = crate::profiles::load_settings(&state.cfg_dir);
+    if let Some(w) = wad {
+        if !crate::doom::is_iwad(std::path::Path::new(&w)) {
+            return Err("Ce fichier n'est pas un WAD de jeu complet (IWAD) : choisis DOOM.WAD, DOOM2.WAD ou freedoom1.wad.".into());
+        }
+        st.doom_wad = w;
+        crate::profiles::save_settings(&state.cfg_dir, &st);
+    }
+    let path = crate::doom::find_wad(&state.cfg_dir, &st.doom_wad).ok_or_else(|| "no_wad".to_string())?;
+    let _ = state.engine.lock().unwrap().send(EngineMsg::StartDoom(path.clone()));
+    Ok(path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
+}
+
+/// Télécharge Freedoom (jeu libre compatible Doom, ~24 Mo) puis lance Doom.
+#[tauri::command]
+pub async fn download_freedoom(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let app2 = app.clone();
+    let path = crate::doom::download_freedoom(&state.cfg_dir, move |done, total| {
+        let _ = app2.emit("doom-download", Progress { done, total });
+    })?;
+    let _ = state.engine.lock().unwrap().send(EngineMsg::StartDoom(path));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_doom(state: State<AppState>) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::StopDoom);
+}
+
+/// Touche du clavier du PC pendant Doom (code de touche de Doom).
+#[tauri::command]
+pub fn doom_key(state: State<AppState>, pressed: bool, code: u8) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::DoomKey { pressed, code });
+}
+
+/// Dernière image de Doom (JPEG en data URL) si elle est plus récente que `seen`.
+#[tauri::command]
+pub fn doom_frame(seen: u64) -> Option<(u64, String)> {
+    let v = crate::doom::VIEW.lock().unwrap();
+    let (seq, jpeg) = v.as_ref()?;
+    if *seq == seen {
+        return None;
+    }
+    Some((*seq, format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(jpeg.as_slice()))))
 }

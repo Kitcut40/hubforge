@@ -77,3 +77,8 @@ cargo run --release -p hubforge-probe
 - Les **addons** qui utilisent uniquement l'interface publique d'addons peuvent avoir la licence de leur choix (voir [`ADDON-EXCEPTION.md`](ADDON-EXCEPTION.md)).
 
 HubForge n'est ni affilié à Cooler Master, ni approuvé par Cooler Master. « Cooler Master » et « MasterHUB » sont des marques de leurs propriétaires respectifs. Le protocole a été documenté à des fins d'interopérabilité ; aucun code ni ressource du logiciel officiel n'est inclus dans ce dépôt.
+
+
+## Code tiers
+
+- `third_party/doomgeneric` : moteur de Doom ([doomgeneric](https://github.com/ozkl/doomgeneric), GPL-2.0-or-later) utilisé par l'easter egg. Aucun fichier de jeu (WAD) n'est inclus.

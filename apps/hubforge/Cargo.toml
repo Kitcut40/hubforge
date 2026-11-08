@@ -1,6 +1,6 @@
 [package]
 name = "hubforge"
-version = "0.9.0"
+version = "0.10.0"
 description = "HubForge — logiciel libre pour le Cooler Master MasterHUB"
 edition.workspace = true
 license.workspace = true
@@ -25,6 +25,7 @@ sha2 = "0.10"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

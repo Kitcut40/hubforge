@@ -36,6 +36,8 @@ pub struct Settings {
     /// Positions saisies à la main pour les branchements que HubForge ne
     /// reconnaît pas encore : « type:code » → emplacement.
     pub placements: std::collections::HashMap<String, crate::topology::Placement>,
+    /// Fichier WAD choisi pour l'easter egg Doom.
+    pub doom_wad: String,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.

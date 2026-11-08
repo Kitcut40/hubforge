@@ -14,7 +14,7 @@ pub use protocol::{FADER_COUNT, KEY_COUNT, KEY_IMAGE_SIZE};
 use hidapi::{HidApi, HidDevice};
 use protocol::Input;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
@@ -67,6 +67,8 @@ struct Handle {
     info: ModuleInfo,
     tx: Sender<Command>,
     alive: Arc<AtomicBool>,
+    /// Commandes envoyées mais pas encore exécutées.
+    pending: Arc<AtomicUsize>,
 }
 
 pub struct DeviceManager {
@@ -123,16 +125,18 @@ impl DeviceManager {
         let events = self.events.clone();
         let worker_info = info.clone();
         let worker_alive = alive.clone();
+        let pending = Arc::new(AtomicUsize::new(0));
+        let worker_pending = pending.clone();
         log::info!("module connecté : {} ({})", info.kind.name(), info.serial);
         let _ = self.events.send(Event::Connected(info.clone()));
         thread::Builder::new()
             .name(format!("module-{}", info.serial))
             .spawn(move || {
-                worker(worker_info, dev, rx, events);
+                worker(worker_info, dev, rx, events, worker_pending);
                 worker_alive.store(false, Ordering::Relaxed);
             })
             .ok();
-        self.modules.insert(info.serial.clone(), Handle { info, tx, alive });
+        self.modules.insert(info.serial.clone(), Handle { info, tx, alive, pending });
     }
 
     pub fn modules(&self) -> impl Iterator<Item = &ModuleInfo> {
@@ -140,14 +144,27 @@ impl DeviceManager {
     }
 
     pub fn send(&self, serial: &str, cmd: Command) -> bool {
-        self.modules.get(serial).map(|h| h.tx.send(cmd).is_ok()).unwrap_or(false)
+        self.modules
+            .get(serial)
+            .map(|h| {
+                h.pending.fetch_add(1, Ordering::Relaxed);
+                h.tx.send(cmd).is_ok()
+            })
+            .unwrap_or(false)
     }
 
     /// Envoie une commande à tous les modules d'un type.
     pub fn send_kind(&self, kind: Kind, cmd: Command) {
         for h in self.modules.values().filter(|h| h.info.kind == kind) {
+            h.pending.fetch_add(1, Ordering::Relaxed);
             let _ = h.tx.send(cmd.clone());
         }
+    }
+
+    /// Nombre de commandes en attente pour les modules d'un type (pour ne pas
+    /// en envoyer plus vite que le module ne les traite).
+    pub fn pending_kind(&self, kind: Kind) -> usize {
+        self.modules.values().filter(|h| h.info.kind == kind).map(|h| h.pending.load(Ordering::Relaxed)).max().unwrap_or(0)
     }
 
     /// Arrête proprement tous les modules (attend la fin des envois).
@@ -164,7 +181,7 @@ impl DeviceManager {
     }
 }
 
-fn worker(info: ModuleInfo, dev: HidDevice, rx: Receiver<Command>, events: Sender<Event>) {
+fn worker(info: ModuleInfo, dev: HidDevice, rx: Receiver<Command>, events: Sender<Event>, pending: Arc<AtomicUsize>) {
     let serial = info.serial.clone();
     let mut buf = [0u8; 128];
     let mut keys = [false; KEY_COUNT];
@@ -179,6 +196,7 @@ fn worker(info: ModuleInfo, dev: HidDevice, rx: Receiver<Command>, events: Sende
                     if let Err(e) = execute(&dev, &cmd, &serial, &events) {
                         log::warn!("{serial} : commande échouée : {e}");
                     }
+                    let _ = pending.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_sub(1)));
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
