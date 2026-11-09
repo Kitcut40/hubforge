@@ -172,6 +172,8 @@ pub fn blank_config() -> Config {
             faders: Vec::new(),
             roller_left: None,
             roller_right: None,
+            roller_left_actions: None,
+            roller_right_actions: None,
         }],
         lights: Default::default(),
     }

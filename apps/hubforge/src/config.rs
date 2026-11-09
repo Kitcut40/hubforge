@@ -49,6 +49,10 @@ pub struct General {
     pub sound_volume: u8,
     pub sound_device: String,
     pub sound_device2: String,
+    /// Reprise douce des faders : après un changement de page ou de profil,
+    /// un fader qui contrôle autre chose n'agit qu'une fois passé par le
+    /// volume actuel (pas de saut brutal).
+    pub fader_pickup: bool,
 }
 
 impl Default for General {
@@ -66,6 +70,7 @@ impl Default for General {
             sound_volume: 80,
             sound_device: String::new(),
             sound_device2: String::new(),
+            fader_pickup: true,
         }
     }
 }
@@ -110,6 +115,9 @@ fn default_fader_color() -> String {
     "#FFFFFF".into()
 }
 
+/// Molettes. Modes : "volume" (volume général), "mic", "app:nom.exe"
+/// (volume d'applications), "scroll", "hscroll", "zoom", "actions"
+/// (une action par cran, dans chaque sens) ou "none".
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Rollers {
@@ -119,6 +127,11 @@ pub struct Rollers {
     pub scroll_step: i32,
     pub invert_right: bool,
     pub invert_left: bool,
+    /// Actions du mode « actions ».
+    #[serde(skip_serializing_if = "WheelActions::is_empty")]
+    pub left_actions: WheelActions,
+    #[serde(skip_serializing_if = "WheelActions::is_empty")]
+    pub right_actions: WheelActions,
 }
 
 impl Default for Rollers {
@@ -130,7 +143,25 @@ impl Default for Rollers {
             scroll_step: 3,
             invert_right: false,
             invert_left: false,
+            left_actions: WheelActions::default(),
+            right_actions: WheelActions::default(),
         }
+    }
+}
+
+/// Actions d'une molette en mode « actions » : un cran vers le haut, un cran vers le bas.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WheelActions {
+    #[serde(default)]
+    pub up: Action,
+    #[serde(default)]
+    pub down: Action,
+}
+
+impl WheelActions {
+    pub fn is_empty(&self) -> bool {
+        self.up == Action::None && self.down == Action::None
     }
 }
 
@@ -160,6 +191,11 @@ pub struct Page {
     pub roller_left: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roller_right: Option<String>,
+    /// Actions des molettes propres à cette page (mode « actions »).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roller_left_actions: Option<WheelActions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roller_right_actions: Option<WheelActions>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -295,6 +331,64 @@ pub enum Action {
     },
     /// Pause dans une macro, en millisecondes
     Wait { ms: u64 },
+    /// Variable : "set" (donne la valeur), "add" (ajoute la valeur, négative
+    /// pour retirer), "toggle" (0 ↔ 1). La valeur peut contenir des {variables}.
+    Var {
+        name: String,
+        #[serde(default = "default_var_op")]
+        op: String,
+        #[serde(default)]
+        value: String,
+    },
+    /// Condition : compare `left` et `right` (textes qui peuvent contenir des
+    /// {variables}, ou {app}, {page}, {profile}, {hour}, {minute}, {weekday}),
+    /// puis exécute `then` ou `else`.
+    If {
+        left: String,
+        #[serde(default = "default_cmp")]
+        cmp: String,
+        #[serde(default)]
+        right: String,
+        #[serde(default, rename = "then", skip_serializing_if = "Vec::is_empty")]
+        then_steps: Vec<Action>,
+        #[serde(default, rename = "else", skip_serializing_if = "Vec::is_empty")]
+        else_steps: Vec<Action>,
+    },
+}
+
+impl Action {
+    /// Vrai si cette action, ou une action qu'elle contient (macro, condition), vérifie `f`.
+    pub fn any(&self, f: &dyn Fn(&Action) -> bool) -> bool {
+        f(self)
+            || match self {
+                Action::Macro { steps } => steps.iter().any(|s| s.any(f)),
+                Action::If { then_steps, else_steps, .. } => then_steps.iter().chain(else_steps).any(|s| s.any(f)),
+                _ => false,
+            }
+    }
+
+    /// Actions contenues (étapes d'une macro, branches d'une condition).
+    pub fn children_mut(&mut self) -> Vec<&mut Action> {
+        match self {
+            Action::Macro { steps } => steps.iter_mut().collect(),
+            Action::If { then_steps, else_steps, .. } => then_steps.iter_mut().chain(else_steps.iter_mut()).collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Opérations et comparaisons possibles.
+pub const VAR_OPS: [&str; 3] = ["set", "add", "toggle"];
+pub const CMPS: [&str; 7] = ["==", "!=", ">", "<", ">=", "<=", "contains"];
+/// Profondeur maximale des conditions imbriquées.
+pub const IF_MAX_DEPTH: usize = 4;
+
+fn default_var_op() -> String {
+    "set".into()
+}
+
+fn default_cmp() -> String {
+    "==".into()
 }
 
 /// Nombre maximal d'étapes dans une macro et durée maximale d'une pause.
@@ -309,7 +403,7 @@ fn default_sound_mode() -> String {
     "toggle".into()
 }
 
-fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
+pub fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
     match a {
         Action::Macro { steps } => {
             if depth > 0 {
@@ -321,8 +415,51 @@ fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
             steps.iter().try_for_each(|s| validate_action(s, depth + 1))
         }
         Action::Wait { ms } if *ms > WAIT_MAX_MS => Err(format!("pause trop longue ({ms} ms, maximum {WAIT_MAX_MS} ms)")),
+        Action::Var { name, op, .. } => {
+            if !crate::vars::valid_name(name) {
+                return Err(format!("nom de variable invalide « {name} » (lettres, chiffres, _ et -)"));
+            }
+            if crate::vars::SPECIALS.contains(&name.trim().to_lowercase().as_str()) {
+                return Err(format!("« {name} » est un nom réservé (app, page, profile, hour, minute, weekday)"));
+            }
+            if !VAR_OPS.contains(&op.as_str()) {
+                return Err(format!("opération inconnue « {op} » (set, add ou toggle)"));
+            }
+            Ok(())
+        }
+        Action::If { cmp, then_steps, else_steps, .. } => {
+            if !CMPS.contains(&cmp.as_str()) {
+                return Err(format!("comparaison inconnue « {cmp} »"));
+            }
+            if depth >= IF_MAX_DEPTH {
+                return Err(format!("trop de conditions imbriquées (maximum {IF_MAX_DEPTH})"));
+            }
+            if then_steps.len() + else_steps.len() > MACRO_MAX_STEPS {
+                return Err(format!("condition trop longue (maximum {MACRO_MAX_STEPS} étapes)"));
+            }
+            then_steps.iter().chain(else_steps).try_for_each(|s| validate_action(s, depth + 1))
+        }
         _ => Ok(()),
     }
+}
+
+/// Actions des molettes (réglage commun puis pages), pour la validation.
+fn wheel_actions(cfg: &Config) -> Vec<(String, &Action)> {
+    let mut v = Vec::new();
+    let r = &cfg.rollers;
+    for (side, w) in [("gauche", &r.left_actions), ("droite", &r.right_actions)] {
+        v.push((format!("molette {side}"), &w.up));
+        v.push((format!("molette {side}"), &w.down));
+    }
+    for (p, page) in cfg.pages.iter().enumerate() {
+        for (side, w) in [("gauche", &page.roller_left_actions), ("droite", &page.roller_right_actions)] {
+            if let Some(w) = w {
+                v.push((format!("page {} molette {side}", p + 1), &w.up));
+                v.push((format!("page {} molette {side}", p + 1), &w.down));
+            }
+        }
+    }
+    v
 }
 
 pub fn parse_color(s: &str) -> Option<(u8, u8, u8)> {
@@ -408,6 +545,9 @@ pub fn validate(cfg: &Config) -> Result<(), String> {
             }
         }
     }
+    for (ctx, a) in wheel_actions(cfg) {
+        validate_action(a, 0).map_err(|e| format!("{ctx} : {e}"))?;
+    }
     for (i, f) in cfg.faders.iter().enumerate() {
         if parse_color(&f.color).is_none() {
             return Err(format!("fader {} : couleur invalide « {} »", i + 1, f.color));
@@ -465,7 +605,9 @@ target = "mic"
 color = "#FF3B30"
 
 # ---------------------------------------------------------------------
-#  Molettes : "volume", "scroll", "hscroll", "zoom" ou "none"
+#  Molettes : "volume", "mic", "app:discord.exe", "scroll", "hscroll",
+#  "zoom", "actions" (une action par cran : left_actions / right_actions)
+#  ou "none"
 # ---------------------------------------------------------------------
 [rollers]
 right = "volume"
@@ -811,6 +953,56 @@ mod tests {
         assert_eq!(back.pages.len(), cfg.pages.len());
         assert_eq!(back.pages[0].keys[3].action, cfg.pages[0].keys[3].action);
         assert_eq!(back.faders[1].target, "app:discord.exe");
+    }
+
+    #[test]
+    fn variables_conditions_and_wheel_actions() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [rollers]
+            left = "actions"
+            left_actions = { up = { type = "hotkey", keys = "ctrl+y" }, down = { type = "hotkey", keys = "ctrl+z" } }
+
+            [[pages]]
+            name = "A"
+            roller_right = "actions"
+            roller_right_actions = { up = { type = "var", name = "compteur", op = "add", value = "1" } }
+            [[pages.keys]]
+            key = 1
+            label = "{compteur}"
+            action = { type = "if", left = "{compteur}", cmp = ">=", right = "10", then = [
+                { type = "var", name = "compteur", value = "0" },
+            ], else = [
+                { type = "var", name = "compteur", op = "add", value = "1" },
+                { type = "wait", ms = 100 },
+            ] }
+            "#,
+        )
+        .unwrap();
+        validate(&cfg).unwrap();
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(back.pages[0].keys[0].action, cfg.pages[0].keys[0].action);
+        assert_eq!(back.rollers.left_actions, cfg.rollers.left_actions);
+        assert!(cfg.pages[0].keys[0].action.any(&|a| matches!(a, Action::Wait { .. })));
+        let bad: Config = toml::from_str(
+            r#"
+            [[pages]]
+            [[pages.keys]]
+            key = 1
+            action = { type = "var", name = "a b" }
+            "#,
+        )
+        .unwrap();
+        assert!(validate(&bad).is_err());
+        let bad: Config = toml::from_str(
+            r#"
+            [rollers]
+            right_actions = { up = { type = "macro", steps = [ { type = "macro" } ] } }
+            "#,
+        )
+        .unwrap();
+        assert!(validate(&bad).is_err());
     }
 
     #[test]

@@ -78,6 +78,11 @@ pub struct LocalTime {
     pub second: u8,
 }
 
+/// Heure locale du PC.
+pub fn local_time() -> LocalTime {
+    imp::local_time()
+}
+
 /// Mesures du moment.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Snapshot {

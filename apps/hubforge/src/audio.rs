@@ -14,6 +14,10 @@ pub enum AudioCmd {
     StepMaster(f32),
     /// Volume du micro par défaut (0.0 à 1.0)
     SetMic(f32),
+    /// Variation du volume du micro
+    StepMic(f32),
+    /// Variation du volume d'applications
+    StepApps(Vec<String>, f32),
     /// Volume des applications dont le nom d'exécutable est dans la liste
     SetApps(Vec<String>, f32),
     /// Coupe / rétablit le micro
@@ -35,6 +39,8 @@ pub struct Meter {
     pub muted: bool,
     /// Niveau crête actuel (0.0 à 1.0).
     pub peak: f32,
+    /// Réglage de volume actuel (0.0 à 1.0), pour la reprise douce des faders.
+    pub level: Option<f32>,
 }
 
 /// Dernier état connu du son (mis à jour par `AudioCmd::Poll`).
@@ -71,6 +77,11 @@ impl Audio {
     /// Dernières mesures demandées avec `AudioCmd::Measure`.
     pub fn meter(&self, target: &str) -> Meter {
         self.meters.lock().ok().and_then(|m| m.get(target).copied()).unwrap_or_default()
+    }
+
+    /// Comme `meter`, mais None si cette cible n'a pas encore été mesurée.
+    pub fn meter_opt(&self, target: &str) -> Option<Meter> {
+        self.meters.lock().ok().and_then(|m| m.get(target).copied())
     }
 
     /// Dernier état connu (demander une mise à jour avec `AudioCmd::Poll`).
@@ -153,6 +164,21 @@ mod imp {
                 AudioCmd::SetMaster(v) => set_endpoint(&st.master, *v),
                 AudioCmd::StepMaster(d) => step_endpoint(&st.master, *d),
                 AudioCmd::SetMic(v) => set_endpoint(&st.mic, *v),
+                AudioCmd::StepMic(d) => step_endpoint(&st.mic, *d),
+                AudioCmd::StepApps(names, d) => {
+                    let mut found = false;
+                    for n in names {
+                        for s in st.sessions.get(&n.to_lowercase()).into_iter().flatten() {
+                            if let Ok(cur) = unsafe { s.vol.GetMasterVolume() } {
+                                found |= unsafe { s.vol.SetMasterVolume((cur + d).clamp(0.0, 1.0), std::ptr::null()) }.is_ok();
+                            }
+                        }
+                    }
+                    if !found {
+                        st.refreshed = Instant::now() - Duration::from_secs(60);
+                    }
+                    Ok(())
+                }
                 AudioCmd::ToggleMicMute => toggle_mute(&st.mic),
                 AudioCmd::ListApps(reply) => {
                     let mut names: Vec<String> = st.sessions.keys().cloned().collect();
@@ -191,7 +217,7 @@ mod imp {
                 log::debug!("audio : {e}");
                 st.refreshed = Instant::now() - Duration::from_secs(60);
             }
-            if !matches!(cmd, AudioCmd::ListApps(_) | AudioCmd::SetApps(..) | AudioCmd::Measure(_)) {
+            if !matches!(cmd, AudioCmd::ListApps(_) | AudioCmd::SetApps(..) | AudioCmd::StepApps(..) | AudioCmd::Measure(_)) {
                 let snap = snapshot(&st);
                 if let Ok(mut s) = shared.lock() {
                     *s = snap;
@@ -219,6 +245,7 @@ mod imp {
                 present: true,
                 muted: unsafe { ep.GetMute() }.map(|b| b.as_bool()).unwrap_or(false),
                 peak: peak(m),
+                level: unsafe { ep.GetMasterVolumeLevelScalar() }.ok(),
             },
             None => Meter::default(),
         }
@@ -233,7 +260,7 @@ mod imp {
             return endpoint_meter(&st.mic, &st.mic_meter);
         }
         let Some(apps) = t.strip_prefix("app:") else { return Meter::default() };
-        let mut out = Meter { present: false, muted: true, peak: 0.0 };
+        let mut out = Meter { present: false, muted: true, peak: 0.0, level: None };
         for name in apps.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
             for s in st.sessions.get(name).into_iter().flatten() {
                 let alive = unsafe { s.ctl.GetState() }.map(|state| state != AudioSessionStateExpired).unwrap_or(false);
@@ -243,6 +270,9 @@ mod imp {
                 out.present = true;
                 out.muted &= unsafe { s.vol.GetMute() }.map(|b| b.as_bool()).unwrap_or(false);
                 out.peak = out.peak.max(peak(&s.meter));
+                if out.level.is_none() {
+                    out.level = unsafe { s.vol.GetMasterVolume() }.ok();
+                }
             }
         }
         if !out.present {

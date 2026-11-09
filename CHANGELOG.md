@@ -4,6 +4,22 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.13.0] — 2026-11-09
+
+### Nouveautés
+- **Molettes libres** : une molette peut lancer n'importe quelle action à chaque cran, une pour chaque sens (timeline, changement d'outil, page suivante, compteur…), en réglage commun ou propre à une page. Deux nouveaux modes aussi : **volume du micro** et **volume d'une application** (Discord, Spotify…).
+- **Macros intelligentes** :
+  - action **Variable** : compteur (+1, −1…), interrupteur 0/1 ou valeur libre, gardés même après un redémarrage ;
+  - écris `{nom}` dans le texte d'une touche pour y afficher la valeur, mise à jour en direct ;
+  - action **Condition** (si… alors… sinon) sur une variable, l'application au premier plan, la page, le profil, l'heure ou le jour ;
+  - `{variable}`, `{app}`, `{hour}`… marchent aussi dans « Taper un texte » ;
+  - bibliothèque : nouvelle catégorie « Macros intelligentes » (compteur, interrupteur, condition) ;
+  - réglages : liste des variables et bouton pour les remettre à zéro.
+- **Reprise douce des faders** : en changeant de page ou de profil, un fader qui contrôle autre chose n'agit qu'une fois passé par le volume actuel. Fini les sauts de volume. Sa LED pulse doucement en attendant ; le réglage se coupe dans les réglages.
+
+### Corrections
+- Les actions interdites dans un addon sont aussi refusées quand elles sont cachées dans une macro.
+
 ## [0.12.0] — 2026-11-09
 
 ### Nouveautés

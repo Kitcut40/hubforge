@@ -4,19 +4,20 @@
 
 use crate::actions::{self, Input};
 use crate::audio::{Audio, AudioCmd};
-use crate::config::{self, parse_color, Action, Config, KeyDef};
+use crate::config::{self, parse_color, Action, Config, KeyDef, WheelActions};
 use crate::render::{self, KeyVisual};
 use crate::foreground;
 use crate::widgets;
 use crate::game::{self, Game};
 use crate::doom;
 use crate::sound::{SoundCmd, Sounds};
+use crate::vars::{self, Vars};
 use crate::lights::{self, Rgb};
 use crate::profiles::{self, SharedActive};
 use crate::topology::{self, Placement};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
 use serde::Serialize;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -46,6 +47,16 @@ pub enum EngineMsg {
     StopDoom,
     /// Touche de Doom depuis le clavier du PC (fenêtre de HubForge).
     DoomKey { pressed: bool, code: u8 },
+    /// Remettre toutes les variables à zéro.
+    ClearVars,
+}
+
+/// Reprise douce d'un fader : il n'agit qu'une fois passé par le volume actuel.
+#[derive(Clone, Copy)]
+struct Pickup {
+    /// Côté où se trouvait le fader au premier mouvement (-1 en dessous, +1 au-dessus).
+    side: Option<i8>,
+    since: Instant,
 }
 
 /// Appui sur une touche qui a un appui long ou un double appui : on attend
@@ -114,6 +125,10 @@ pub struct Status {
     pub doom: bool,
     /// Dernière erreur au lancement de Doom.
     pub doom_error: Option<String>,
+    /// Variables des macros.
+    pub vars: BTreeMap<String, String>,
+    /// Faders en attente de reprise douce.
+    pub pickup: Vec<bool>,
 }
 
 fn hex(c: Rgb) -> String {
@@ -205,6 +220,15 @@ pub struct Engine {
     placements: HashMap<String, Placement>,
     doom: Option<DoomPlay>,
     doom_error: Option<String>,
+    /// Variables des macros, et touches dont le texte en affiche une.
+    vars: Vars,
+    var_keys: Vec<(usize, u8)>,
+    /// Une macro est en train d'être déroulée (les conditions insèrent alors
+    /// leurs étapes juste après l'étape en cours).
+    in_macro: bool,
+    /// Reprise douce : faders en attente, et cible de chaque fader au dernier changement.
+    pickup: [Option<Pickup>; FADER_COUNT],
+    fader_targets: [String; FADER_COUNT],
 }
 
 fn kind_id(k: Kind) -> &'static str {
@@ -223,6 +247,7 @@ impl Engine {
         let (mgr, events) = DeviceManager::new()?;
         let cfg_path = active.lock().unwrap().path.clone();
         let cfg_mtime = std::fs::metadata(&cfg_path).and_then(|m| m.modified()).ok();
+        let cfg_dir_for_vars = cfg_dir.clone();
         let mut e = Engine {
             mgr,
             events,
@@ -274,7 +299,13 @@ impl Engine {
             placements: HashMap::new(),
             doom: None,
             doom_error: None,
+            vars: Vars::load(&cfg_dir_for_vars),
+            var_keys: Vec::new(),
+            in_macro: false,
+            pickup: [None; FADER_COUNT],
+            fader_targets: Default::default(),
         };
+        e.sync_fader_targets();
         e.load_layout();
         e.apply_sound_devices();
         e.render_all();
@@ -305,6 +336,8 @@ impl Engine {
             base_rot: self.base_rot,
             doom: self.doom.is_some(),
             doom_error: self.doom_error.clone(),
+            vars: self.vars.all().clone(),
+            pickup: self.pickup.iter().map(|p| p.is_some()).collect(),
         }
     }
 
@@ -344,6 +377,7 @@ impl Engine {
                 self.message(m);
             }
             self.run_macro();
+            self.vars.save_if_due();
             if self.doom.is_some() {
                 self.tick_doom();
             } else if self.game.is_some() {
@@ -351,7 +385,11 @@ impl Engine {
             } else if Instant::now() >= self.widgets_due {
                 self.update_widgets(false);
             }
-            let busy_lights = self.preview.is_some() || self.base_soft || self.gesture.is_some() || (0..FADER_COUNT).any(|i| self.fader_slot(i).led != "fixed");
+            let busy_lights = self.preview.is_some()
+                || self.base_soft
+                || self.gesture.is_some()
+                || self.pickup.iter().any(|p| p.is_some())
+                || (0..FADER_COUNT).any(|i| self.fader_slot(i).led != "fixed");
             let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() && self.game.is_none() && self.doom.is_none() && !busy_lights { 30 } else { 5 };
             match self.events.recv_timeout(Duration::from_millis(timeout)) {
                 Ok(ev) => {
@@ -384,6 +422,7 @@ impl Engine {
     fn shutdown(&mut self) {
         log::info!("arrêt de HubForge…");
         self.release_held();
+        self.vars.save_now();
         // Le module 15 touches retrouve son animation du logo.
         self.mgr.send_kind(Kind::Keys15, Command::Feature(protocol::keys15_sw_mode(false)));
         self.mgr.shutdown();
@@ -432,6 +471,12 @@ impl Engine {
             EngineMsg::TestSound { file, volume } => {
                 self.play_sound("test", &file, volume, "restart");
             }
+            EngineMsg::ClearVars => {
+                self.vars.clear();
+                self.vars.save_now();
+                self.refresh_var_keys();
+                self.notify();
+            }
             EngineMsg::StartDoom(wad) => self.start_doom(&wad),
             EngineMsg::StopDoom => self.end_doom(),
             EngineMsg::DoomKey { pressed, code } => {
@@ -443,9 +488,7 @@ impl Engine {
                 if p < self.visuals.len() && p != self.page {
                     self.auto_from = None;
                     self.page_stack.clear();
-                    self.page = p;
-                    self.pressed = [false; KEY_COUNT];
-                    self.show_page();
+                    self.change_page(p);
                     self.notify();
                 }
             }
@@ -505,6 +548,8 @@ impl Engine {
         if old.lights.animations != self.cfg.lights.animations {
             self.lights_t0 = Instant::now();
         }
+        // Faders qui contrôlent maintenant autre chose : reprise douce.
+        self.arm_pickups();
         // Applique tout de suite les volumes selon la position actuelle des faders.
         let current: Vec<(String, [u8; FADER_COUNT])> = self.faders.drain().collect();
         for (s, v) in current {
@@ -529,29 +574,76 @@ impl Engine {
         let rot = self.keys_rot;
         self.widget_sig.clear();
         self.game_cache.clear();
+        let vars = self.vars.all().clone();
+        let mut var_keys = Vec::new();
         self.visuals = self
             .cfg
             .pages
             .iter()
-            .map(|page| {
+            .enumerate()
+            .map(|(p, page)| {
                 (1..=KEY_COUNT as u8)
                     .map(|k| match page.keys.iter().find(|d| d.key == k) {
                         Some(def) => {
-                            let mut states = vec![render::render_key_rot(&def.state(0), &dir, rot)];
-                            if def.toggle.is_some() {
-                                states.push(render::render_key_rot(&def.state(1), &dir, rot));
+                            if key_mentions_vars(def) {
+                                var_keys.push((p, k - 1));
                             }
-                            KeyVisuals { states }
+                            render_key_visuals(def, &vars, &dir, rot)
                         }
                         None => KeyVisuals { states: vec![render::blank()] },
                     })
                     .collect()
             })
             .collect();
+        self.var_keys = var_keys;
         if self.visuals.is_empty() {
             self.visuals.push(vec![KeyVisuals { states: vec![render::blank()] }; KEY_COUNT]);
         }
         log::debug!("rendu des touches en {} ms", t.elapsed().as_millis());
+    }
+
+    /// Redessine les touches qui affichent une variable (après un changement).
+    fn refresh_var_keys(&mut self) {
+        let vars = self.vars.all().clone();
+        let dir = self.cfg_dir.clone();
+        for (p, k) in self.var_keys.clone() {
+            let Some(def) = self.cfg.pages.get(p).and_then(|pg| pg.keys.iter().find(|d| d.key == k + 1)).cloned() else { continue };
+            let v = render_key_visuals(&def, &vars, &dir, self.keys_rot);
+            if let Some(slot) = self.visuals.get_mut(p).and_then(|pg| pg.get_mut(k as usize)) {
+                *slot = v;
+            }
+            if p == self.page && self.game.is_none() {
+                self.widget_sig.remove(&k);
+                let f = self.visual(k).frames[0].clone();
+                let jpeg = if self.pressed[k as usize] && self.cfg.general.press_feedback { f.pressed } else { f.jpeg };
+                self.send_image(k, &jpeg);
+                self.restart_anim(k);
+            }
+        }
+    }
+
+    /// Valeur d'un nom entre accolades : variable, ou état du PC.
+    fn lookup(&self, name: &str) -> Option<String> {
+        match name {
+            "app" => Some(foreground::foreground_exe().unwrap_or_default()),
+            "page" => Some((self.page + 1).to_string()),
+            "profile" => Some(self.active.lock().map(|a| a.name.clone()).unwrap_or_default()),
+            "hour" => Some(widgets::local_time().hour.to_string()),
+            "minute" => Some(widgets::local_time().minute.to_string()),
+            // 1 = lundi … 7 = dimanche
+            "weekday" => Some(match widgets::local_time().dow {
+                0 => 7,
+                d => d,
+            }
+            .to_string()),
+            _ => self.vars.get(name).cloned(),
+        }
+    }
+
+    /// Remplace les {noms} connus ; `blank_unknown` : les variables inconnues
+    /// valent "" (conditions) au lieu de rester telles quelles (textes).
+    fn expand(&self, text: &str, blank_unknown: bool) -> String {
+        vars::expand(text, &|n| self.lookup(n).or_else(|| if blank_unknown { Some(String::new()) } else { None }))
     }
 
     // ------------------------------------------------------------------
@@ -909,7 +1001,40 @@ impl Engine {
                 self.play_sound(&id, file, *volume, mode);
             }
             Action::StopSounds => self.sounds.send(SoundCmd::StopAll),
-            Action::Text { text } => self.input.text(text),
+            Action::Text { text } => {
+                let t = self.expand(text, false);
+                self.input.text(&t);
+            }
+            Action::Var { name, op, value } => {
+                let v = self.expand(value, true);
+                if self.vars.apply(name, op, &v) {
+                    self.refresh_var_keys();
+                    self.notify();
+                }
+            }
+            Action::If { left, cmp, right, then_steps, else_steps } => {
+                let (l, r) = (self.expand(left, true), self.expand(right, true));
+                let ok = vars::compare(&l, cmp, &r);
+                log::debug!("condition « {l} » {cmp} « {r} » → {}", if ok { "oui" } else { "non" });
+                let branch: Vec<Action> = if ok { then_steps } else { else_steps }
+                    .iter()
+                    .filter(|s| !matches!(s, Action::Macro { .. }))
+                    .cloned()
+                    .collect();
+                if self.macro_queue.len() + branch.len() > 4 * config::MACRO_MAX_STEPS {
+                    log::warn!("trop d'étapes en attente : condition ignorée");
+                    return;
+                }
+                if self.in_macro {
+                    // Dans une macro : la branche passe avant les étapes suivantes.
+                    for s in branch.into_iter().rev() {
+                        self.macro_queue.push_front(s);
+                    }
+                } else {
+                    self.macro_queue.extend(branch);
+                    self.run_macro();
+                }
+            }
             Action::Launch { target, args } => actions::launch(target, args),
             Action::Media { command } if command == "mic_mute" => self.audio.send(AudioCmd::ToggleMicMute),
             Action::Media { command } => self.input.media(command),
@@ -921,7 +1046,9 @@ impl Engine {
                 }
                 // Les étapes s'ajoutent à la suite d'une macro déjà en cours.
                 self.macro_queue.extend(steps.iter().filter(|s| !matches!(s, Action::Macro { .. })).cloned());
-                self.run_macro();
+                if !self.in_macro {
+                    self.run_macro();
+                }
             }
             Action::Wait { .. } => {} // n'a de sens que dans une macro
             Action::OpenConfig => actions::launch(&self.cfg_path.to_string_lossy(), &[]),
@@ -1316,6 +1443,7 @@ impl Engine {
         self.show_page();
         // Les faders et molettes peuvent avoir leurs propres réglages sur cette page.
         self.led_due = Instant::now();
+        self.arm_pickups();
     }
 
     fn is_folder(&self, page: usize) -> bool {
@@ -1371,12 +1499,27 @@ impl Engine {
     /// Exécute les étapes de macro dont le moment est venu (sans bloquer :
     /// les touches, GIF et faders restent réactifs pendant une pause).
     fn run_macro(&mut self) {
+        if self.in_macro {
+            return;
+        }
+        self.in_macro = true;
         let page_before = self.page;
+        // Garde-fou : une suite de conditions et de variables sans pause
+        // s'exécute d'un coup, mais pas indéfiniment.
+        let mut instant_steps = 0;
         while !self.macro_queue.is_empty() && Instant::now() >= self.macro_next {
             let Some(step) = self.macro_queue.pop_front() else { break };
             match step {
                 Action::Wait { ms } => {
                     self.macro_next = Instant::now() + Duration::from_millis(ms.min(config::WAIT_MAX_MS));
+                }
+                // Variables et conditions : rien à attendre côté Windows.
+                step @ (Action::Var { .. } | Action::If { .. } | Action::None) => {
+                    self.execute(&step);
+                    instant_steps += 1;
+                    if instant_steps >= 4 * config::MACRO_MAX_STEPS {
+                        self.macro_next = Instant::now() + Duration::from_millis(MACRO_GAP_MS);
+                    }
                 }
                 other => {
                     self.execute(&other);
@@ -1385,6 +1528,7 @@ impl Engine {
                 }
             }
         }
+        self.in_macro = false;
         if self.page != page_before {
             self.notify();
         }
@@ -1557,6 +1701,12 @@ impl Engine {
                 }
                 _ => color,
             };
+            // En attente de reprise douce : la LED pulse doucement.
+            if self.pickup[i].is_some() {
+                let t = self.anim_t(now) as f32 / 1000.0;
+                let k = 0.15 + 0.35 * (0.5 + 0.5 * (t * std::f32::consts::TAU / 1.2).sin());
+                *c = ((c.0 as f32 * k) as u8, (c.1 as f32 * k) as u8, (c.2 as f32 * k) as u8);
+            }
         }
         out
     }
@@ -1581,14 +1731,11 @@ impl Engine {
         let fps = self.cfg.lights.fps.clamp(1, 30) as u64;
         self.led_due = now + Duration::from_millis(1000 / fps);
         // Mesures audio pour les LED « état » et « VU-mètre » (utilisées à l'image suivante).
-        let measured: Vec<String> = (0..FADER_COUNT)
-            .map(|i| self.fader_slot(i))
-            .filter(|s| s.led == "status" || s.led == "vu")
-            .map(|s| s.target)
-            .collect();
+        let measured = self.measure_targets();
         if !measured.is_empty() {
             self.audio.send(AudioCmd::Measure(measured));
         }
+        self.expire_pickups(now);
 
         let mut changed = false;
         let base = self.base_target(now);
@@ -1656,6 +1803,98 @@ impl Engine {
     // Faders et molettes
     // ------------------------------------------------------------------
 
+    /// Cibles à mesurer : LED « état » et « VU-mètre », faders en reprise douce.
+    fn measure_targets(&self) -> Vec<String> {
+        let mut v: Vec<String> = (0..FADER_COUNT)
+            .map(|i| (i, self.fader_slot(i)))
+            .filter(|(i, s)| s.led == "status" || s.led == "vu" || self.pickup[*i].is_some())
+            .map(|(_, s)| s.target)
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    fn norm_target(t: &str) -> String {
+        t.trim().to_lowercase()
+    }
+
+    /// Note la cible actuelle de chaque fader, sans reprise douce (démarrage).
+    fn sync_fader_targets(&mut self) {
+        for i in 0..FADER_COUNT {
+            self.fader_targets[i] = Self::norm_target(&self.fader_slot(i).target);
+        }
+    }
+
+    /// Après un changement de page ou de configuration : chaque fader qui
+    /// contrôle maintenant autre chose attend d'être passé par le volume actuel.
+    fn arm_pickups(&mut self) {
+        let now = Instant::now();
+        let mut armed = false;
+        for i in 0..FADER_COUNT {
+            let t = Self::norm_target(&self.fader_slot(i).target);
+            if t == self.fader_targets[i] {
+                continue;
+            }
+            self.fader_targets[i] = t.clone();
+            let useful = self.cfg.general.fader_pickup && t != "none" && !t.is_empty() && !self.faders.is_empty();
+            self.pickup[i] = if useful { Some(Pickup { side: None, since: now }) } else { None };
+            armed |= useful;
+        }
+        if armed {
+            self.audio.send(AudioCmd::Measure(self.measure_targets()));
+            self.led_due = now;
+        }
+        if !self.cfg.general.fader_pickup {
+            self.pickup = [None; FADER_COUNT];
+        }
+    }
+
+    /// Une reprise douce dont la cible ne peut pas être mesurée est abandonnée.
+    fn expire_pickups(&mut self, now: Instant) {
+        for i in 0..FADER_COUNT {
+            if let Some(p) = self.pickup[i] {
+                let m = self.audio.meter_opt(&self.fader_slot(i).target);
+                let gone = match m {
+                    Some(m) => !m.present || m.level.is_none(),
+                    None => now.saturating_duration_since(p.since) > Duration::from_secs(2),
+                };
+                if gone {
+                    self.pickup[i] = None;
+                }
+            }
+        }
+    }
+
+    /// Reprise douce : vrai si le fader `i` (à la position `v`) doit encore attendre.
+    fn pickup_waits(&mut self, i: usize, v: u8) -> bool {
+        let Some(p) = self.pickup[i] else { return false };
+        let target = self.fader_slot(i).target;
+        let Some(m) = self.audio.meter_opt(&target) else {
+            // Pas encore mesuré : on attend un peu.
+            return p.since.elapsed() < Duration::from_secs(2) || {
+                self.pickup[i] = None;
+                false
+            };
+        };
+        let Some(level) = m.level.filter(|_| m.present) else {
+            self.pickup[i] = None;
+            return false;
+        };
+        let diff = v as i32 - (level * 100.0).round() as i32;
+        let crossed = p.side.map(|s| diff == 0 || diff.signum() != s as i32).unwrap_or(false);
+        if diff.abs() <= 3 || crossed {
+            log::debug!("fader {} repris à {v} %", i + 1);
+            self.pickup[i] = None;
+            self.led_due = Instant::now();
+            return false;
+        }
+        if p.side.is_none() {
+            self.pickup[i] = Some(Pickup { side: Some(diff.signum() as i8), since: p.since });
+        }
+        true
+    }
+
     fn faders_changed(&mut self, serial: String, values: [u8; FADER_COUNT]) {
         let previous = self.faders.insert(serial, values);
         if (0..FADER_COUNT).any(|i| self.fader_slot(i).led == "position") {
@@ -1663,6 +1902,9 @@ impl Engine {
         }
         for (i, &v) in values.iter().enumerate() {
             if previous.map(|p| p[i] == v).unwrap_or(false) {
+                continue;
+            }
+            if self.pickup_waits(i, v) {
                 continue;
             }
             let slot = self.fader_slot(i);
@@ -1703,24 +1945,67 @@ impl Engine {
         let r = &self.cfg.rollers;
         // Réglage propre à la page, sinon réglage commun.
         let page = self.cfg.pages.get(self.page);
-        let (mode, invert) = match wheel {
-            Wheel::Right => (page.and_then(|p| p.roller_right.clone()).unwrap_or_else(|| r.right.clone()), r.invert_right),
-            Wheel::Left => (page.and_then(|p| p.roller_left.clone()).unwrap_or_else(|| r.left.clone()), r.invert_left),
+        let (mode, invert, actions) = match wheel {
+            Wheel::Right => (
+                page.and_then(|p| p.roller_right.clone()).unwrap_or_else(|| r.right.clone()),
+                r.invert_right,
+                page.and_then(|p| p.roller_right_actions.clone()).unwrap_or_else(|| r.right_actions.clone()),
+            ),
+            Wheel::Left => (
+                page.and_then(|p| p.roller_left.clone()).unwrap_or_else(|| r.left.clone()),
+                r.invert_left,
+                page.and_then(|p| p.roller_left_actions.clone()).unwrap_or_else(|| r.left_actions.clone()),
+            ),
         };
         // Sens « 01 » = vers le bas (-1) : on le ramène à « vers le haut = + ».
         let mut dir = -(step as i32);
         if invert {
             dir = -dir;
         }
+        let vstep = dir as f32 * r.volume_step as f32 / 100.0;
+        let scroll = r.scroll_step;
+        let mode = mode.trim().to_lowercase();
         match mode.as_str() {
             "volume" => {
-                self.audio.send(AudioCmd::StepMaster(dir as f32 * r.volume_step as f32 / 100.0));
+                self.audio.send(AudioCmd::StepMaster(vstep));
                 self.widgets_due = self.widgets_due.min(Instant::now() + Duration::from_millis(80));
             }
-            "scroll" => self.input.scroll(-dir * r.scroll_step, false),
-            "hscroll" => self.input.scroll(dir * r.scroll_step, true),
+            "mic" => self.audio.send(AudioCmd::StepMic(vstep)),
+            "scroll" => self.input.scroll(-dir * scroll, false),
+            "hscroll" => self.input.scroll(dir * scroll, true),
             "zoom" => self.input.zoom(-dir),
-            _ => {}
+            "actions" => self.wheel_action(&actions, dir > 0),
+            m => {
+                if let Some(apps) = m.strip_prefix("app:") {
+                    let names: Vec<String> = apps.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                    if !names.is_empty() {
+                        self.audio.send(AudioCmd::StepApps(names, vstep));
+                    }
+                }
+            }
         }
     }
+
+    /// Mode « actions » : l'action du cran vers le haut ou vers le bas.
+    fn wheel_action(&mut self, w: &WheelActions, up: bool) {
+        let a = if up { &w.up } else { &w.down };
+        if *a != Action::None {
+            self.run_extra_action(&a.clone());
+        }
+    }
+}
+
+/// La touche affiche-t-elle une variable dans son texte ?
+fn key_mentions_vars(def: &KeyDef) -> bool {
+    vars::mentions(&def.label) || def.toggle.as_ref().map(|t| vars::mentions(&t.label)).unwrap_or(false)
+}
+
+/// Visuels d'une touche, avec les {variables} de son texte remplacées.
+fn render_key_visuals(def: &KeyDef, vars: &BTreeMap<String, String>, dir: &std::path::Path, rot: u16) -> KeyVisuals {
+    let def = if key_mentions_vars(def) { vars::key_with_values(def, vars) } else { def.clone() };
+    let mut states = vec![render::render_key_rot(&def.state(0), dir, rot)];
+    if def.toggle.is_some() {
+        states.push(render::render_key_rot(&def.state(1), dir, rot));
+    }
+    KeyVisuals { states }
 }

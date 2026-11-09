@@ -31,6 +31,7 @@ mod profiles;
 mod render;
 mod share;
 mod sound;
+mod vars;
 mod topology;
 mod ui;
 mod update;
@@ -223,6 +224,7 @@ fn main() {
             ui::import_sound,
             ui::import_sound_data,
             ui::test_sound,
+            ui::clear_vars,
             ui::start_doom,
             ui::download_freedoom,
             ui::stop_doom,

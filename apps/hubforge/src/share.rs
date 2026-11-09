@@ -49,22 +49,30 @@ fn key_icons(cfg: &mut Config) -> Vec<&mut Option<String>> {
     v
 }
 
-/// Fichiers son des touches (soundboard), y compris dans les macros, le
+/// Fichiers son des touches et des molettes (soundboard), y compris dans les macros, les conditions, le
 /// second état, l'appui long et le double appui.
 fn key_sounds(cfg: &mut Config) -> Vec<&mut String> {
     fn collect<'a>(a: &'a mut crate::config::Action, v: &mut Vec<&'a mut String>) {
         match a {
             crate::config::Action::Sound { file, .. } => v.push(file),
-            crate::config::Action::Macro { steps } => {
-                for s in steps.iter_mut() {
+            other => {
+                for s in other.children_mut() {
                     collect(s, v);
                 }
             }
-            _ => {}
         }
     }
     let mut v = Vec::new();
+    let r = &mut cfg.rollers;
+    for w in [&mut r.left_actions, &mut r.right_actions] {
+        collect(&mut w.up, &mut v);
+        collect(&mut w.down, &mut v);
+    }
     for p in cfg.pages.iter_mut() {
+        for w in [p.roller_left_actions.as_mut(), p.roller_right_actions.as_mut()].into_iter().flatten() {
+            collect(&mut w.up, &mut v);
+            collect(&mut w.down, &mut v);
+        }
         for k in p.keys.iter_mut() {
             let KeyDef { action, toggle, long, double, .. } = k;
             collect(action, &mut v);

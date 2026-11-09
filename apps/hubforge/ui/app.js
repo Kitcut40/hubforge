@@ -49,6 +49,14 @@ const LIBRARY = [
     { name: "Jouer un son", label: "Son", icon: "music", color: "#AD1457", action: { type: "sound", file: "", volume: 100, mode: "toggle" } },
     { name: "Arrêter tous les sons", label: "Stop sons", icon: "square", color: "#B71C1C", action: { type: "stop_sounds" } },
   ]},
+  { cat: "Macros intelligentes", items: [
+    { name: "Compteur (+1, appui long = 0)", label: "{compteur}", icon: "plus", color: "#00695C",
+      action: { type: "var", name: "compteur", op: "add", value: "1" }, long: { type: "var", name: "compteur", op: "set", value: "0" } },
+    { name: "Compteur −1", label: "−1", icon: "minus", color: "#00695C", action: { type: "var", name: "compteur", op: "add", value: "-1" } },
+    { name: "Interrupteur (0 / 1)", label: "{interrupteur}", icon: "toggle-left", color: "#37474F", action: { type: "var", name: "interrupteur", op: "toggle", value: "" } },
+    { name: "Condition (si… alors… sinon)", label: "Si…", icon: "git-branch", color: "#4527A0",
+      action: { type: "if", left: "{app}", cmp: "contains", right: "", then: [{ type: "hotkey", keys: "" }], else: [] } },
+  ]},
   { cat: "Système", items: [
     { name: "Verrouiller le PC", label: "Verrouiller", icon: "lock", color: "#6A1B9A", action: { type: "lock" } },
     { name: "Capture d'écran", label: "Capture", icon: "scan", color: "#00897B", action: { type: "hotkey", keys: "win+shift+s" } },
@@ -90,7 +98,7 @@ const ACTION_TYPES = [
   ["none", "Aucune action"], ["hotkey", "Raccourci clavier"], ["hold", "Maintenir des touches"], ["text", "Taper un texte"],
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
   ["media", "Multimédia"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
-  ["macro", "Macro (plusieurs actions à la suite)"],
+  ["macro", "Macro (plusieurs actions à la suite)"], ["var", "Variable (compteur, interrupteur…)"], ["if", "Condition (si… alors… sinon)"],
   ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
   ["profile", "Changer de profil"],
 ];
@@ -111,7 +119,28 @@ const WIDGET_STYLES = {
 };
 
 const FADER_TARGETS = [["master", "Volume général"], ["mic", "Micro"], ["app", "Application(s)"], ["none", "Rien"]];
-const ROLLER_MODES = [["volume", "Volume général"], ["scroll", "Défilement vertical"], ["hscroll", "Défilement horizontal"], ["zoom", "Zoom (Ctrl + molette)"], ["none", "Rien"]];
+const ROLLER_MODES = [["volume", "Volume général"], ["mic", "Volume du micro"], ["app", "Volume d'applications"], ["scroll", "Défilement vertical"],
+  ["hscroll", "Défilement horizontal"], ["zoom", "Zoom (Ctrl + molette)"], ["actions", "Actions (une par cran)"], ["none", "Rien"]];
+const rollerKind = (m) => (m || "").startsWith("app:") ? "app" : (m || "none");
+const CMPS = [["==", "est égal à", "="], ["!=", "est différent de", "≠"], [">", "est plus grand que", ">"], ["<", "est plus petit que", "<"],
+  [">=", "est plus grand ou égal à", "≥"], ["<=", "est plus petit ou égal à", "≤"], ["contains", "contient", "contient"]];
+const VAR_SPECIALS = [["{app}", "appli au premier plan"], ["{page}", "numéro de page"], ["{profile}", "profil"], ["{hour}", "heure"], ["{minute}", "minute"], ["{weekday}", "jour (1 = lundi)"]];
+
+/** Actions contenues dans une action (étapes de macro, branches d'une condition). */
+function childActions(a) {
+  if (!a) return [];
+  if (a.type === "macro") return a.steps || [];
+  if (a.type === "if") return [...(a.then || []), ...(a["else"] || [])];
+  return [];
+}
+
+/** Noms des variables utilisées dans le profil et de celles qui ont une valeur. */
+function knownVars() {
+  const names = new Set(Object.keys((S.status && S.status.vars) || {}));
+  const walk = (a) => { if (!a) return; if (a.type === "var" && a.name) names.add(a.name.trim().toLowerCase()); childActions(a).forEach(walk); };
+  for (const p of S.cfg.pages) for (const d of p.keys) { walk(d.action); if (d.toggle) walk(d.toggle.action); walk(d.long); walk(d.double); }
+  return [...names].sort();
+}
 // Effets intégrés de la base. Le stroboscope intégré (3) clignote mal : il est
 // remplacé par l'animation HubForge « Stroboscope ».
 const BASE_EFFECTS = [[1, "Fixe"], [2, "Respiration"], [5, "Cycle de couleurs"], [6, "Aléatoire"], [7, "Vague"], [8, "Eau"], [9, "Arc-en-ciel"], [0, "Éteint"]];
@@ -233,7 +262,7 @@ async function init() {
 
 function normalize(cfg) {
   cfg.general = Object.assign({ brightness: 80, led_brightness: 100, base_color: "#00C8FF", press_feedback: true, gif_max_fps: 28, base_effect: 1, auto_pages: true,
-    long_press_ms: 500, double_press_ms: 300, sound_volume: 80, sound_device: "", sound_device2: "" }, cfg.general || {});
+    long_press_ms: 500, double_press_ms: 300, sound_volume: 80, sound_device: "", sound_device2: "", fader_pickup: true }, cfg.general || {});
   cfg.pages = cfg.pages && cfg.pages.length ? cfg.pages : [{ name: "Accueil", keys: [] }];
   cfg.faders = cfg.faders || [];
   while (cfg.faders.length < 5) cfg.faders.push({ target: "none", color: "#FFFFFF" });
@@ -740,6 +769,7 @@ async function onDropOnKey(k, dt) {
       def.action = { type: "folder", to: String(idx + 1) };
     }
     if (item.toggle) def.toggle = clone(item.toggle);
+    if (item.long) def.long = clone(item.long);
     if (item.widget) { def.widget = item.widget; delete def.icon; }
     setKeyDef(k, def);
     S.editState = 0;
@@ -838,7 +868,8 @@ function effRoller(side) {
 }
 
 function rollerElements() {
-  const mode = (m) => (ROLLER_MODES.find(([v]) => v === m) || [0, "—"])[1].split(" (")[0];
+  const mode = (m) => rollerKind(m) === "app" ? "Volume " + (m.slice(4).split(",")[0] || "appli").replace(/\.exe$/, "")
+    : (ROLLER_MODES.find(([v]) => v === m) || [0, "—"])[1].split(" (")[0];
   return [["left", "Gauche"], ["right", "Droite"]].map(([side, label]) => {
     const own = currentPage()["roller_" + side] != null;
     return el("div", { class: "roller" + (own ? " page-own" : ""), title: `Molette ${label.toLowerCase()} : ${mode(effRoller(side))}${own ? " (propre à cette page)" : ""}` },
@@ -1073,6 +1104,8 @@ const ACTION_DEFAULTS = {
   macro: { type: "macro", steps: [{ type: "hotkey", keys: "" }] }, wait: { type: "wait", ms: 500 },
   folder: { type: "folder", to: "" }, back: { type: "back" },
   profile: { type: "profile", to: "next" }, game: { type: "game" },
+  var: { type: "var", name: "compteur", op: "add", value: "1" },
+  if: { type: "if", left: "", cmp: "==", right: "", then: [], else: [] },
 };
 
 /** Résumé d'une étape de macro (affiché dans son en-tête). */
@@ -1093,6 +1126,13 @@ function stepSummary(a) {
     case "back": return "Retour (fermer le dossier)";
     case "profile": return a.to === "next" ? "Profil suivant" : a.to === "previous" ? "Profil précédent" : `Profil « ${a.to} »`;
     case "game": return "Mini-jeu";
+    case "var": {
+      const n = a.name || "?";
+      if (a.op === "toggle") return `Basculer ${n}`;
+      if (a.op === "add") { const v = String(a.value || "0").trim(); return v.startsWith("-") ? `${n} − ${v.slice(1)}` : `${n} + ${v}`; }
+      return `${n} = ${a.value || "(vide)"}`;
+    }
+    case "if": return `Si ${a.left || "…"} ${(CMPS.find(([v]) => v === a.cmp) || CMPS[0])[2]} ${a.right || "(vide)"}`;
     default: return "Aucune action";
   }
 }
@@ -1171,7 +1211,8 @@ function actionEditor(st, k, onChange, opts = {}) {
   } else if (t === "stop_sounds") {
     out.push(el("p", { class: "hint" }, "Coupe tous les sons de la soundboard en cours de lecture."));
   } else if (t === "text") {
-    out.push(field("Texte à taper", el("textarea", { class: "input", oninput: (e) => upd((x) => { x.text = e.target.value; }) }, a.text || "")));
+    out.push(field("Texte à taper", el("textarea", { class: "input", oninput: (e) => upd((x) => { x.text = e.target.value; }) }, a.text || ""),
+      el("p", { class: "hint" }, "Astuce : {nom} tape la valeur d'une variable, {app} l'appli au premier plan, {hour}:{minute} l'heure.")));
   } else if (t === "launch:program") {
     const inp = el("input", { class: "input grow", value: a.target || "", placeholder: "ex. notepad.exe ou C:\\…\\appli.exe", spellcheck: "false", oninput: (e) => upd((x) => { x.target = e.target.value; }) });
     out.push(field("Application", el("div", { class: "row" }, inp, el("button", { class: "btn", onclick: async () => {
@@ -1218,6 +1259,33 @@ function actionEditor(st, k, onChange, opts = {}) {
     out.push(field("Durée (millisecondes)", el("div", { class: "row" }, inp, sec), quick));
   } else if (t === "macro") {
     out.push(...macroEditor(a, k, onChange));
+  } else if (t === "var") {
+    const listId = "vars-" + Math.random().toString(36).slice(2);
+    out.push(field("Nom de la variable", el("input", { class: "input", value: a.name || "", list: listId, spellcheck: "false", placeholder: "ex. compteur",
+      oninput: (e) => upd((x) => { x.name = e.target.value.trim(); }) }),
+      el("datalist", { id: listId }, ...knownVars().map((n) => el("option", { value: n })))));
+    out.push(field("Opération", el("select", { class: "input", onchange: (e) => { upd((x) => { x.op = e.target.value; if (x.op === "toggle") x.value = ""; }); renderInspector(); } },
+      ...[["add", "Ajouter (nombre négatif pour retirer)"], ["set", "Donner la valeur"], ["toggle", "Basculer 0 ↔ 1"]].map(([v, l]) => el("option", { value: v, selected: v === (a.op || "set") }, l)))));
+    if (a.op !== "toggle") out.push(field(a.op === "add" ? "Nombre à ajouter" : "Valeur", el("input", { class: "input", value: a.value ?? "", spellcheck: "false",
+      placeholder: a.op === "add" ? "ex. 1 ou -1" : "ex. 0, oui, {autre}", oninput: (e) => upd((x) => { x.value = e.target.value; }) })));
+    const cur = S.status && S.status.vars && a.name ? S.status.vars[a.name.toLowerCase()] : undefined;
+    out.push(el("p", { class: "hint" }, cur !== undefined ? `Valeur actuelle : ${cur}. ` : "",
+      "Pour l'afficher sur une touche, écris ", el("b", {}, `{${a.name || "nom"}}`), " dans son texte. Les variables sont gardées même après un redémarrage."));
+  } else if (t === "if") {
+    if (!Array.isArray(a.then)) a.then = [];
+    if (!Array.isArray(a["else"])) a["else"] = [];
+    const left = el("input", { class: "input", value: a.left || "", spellcheck: "false", placeholder: "ex. {compteur} ou {app}", oninput: (e) => upd((x) => { x.left = e.target.value; }) });
+    const chips = el("div", { class: "chips", style: "margin-top:6px" },
+      ...[...knownVars().map((n) => ["{" + n + "}", "variable"]), ...VAR_SPECIALS].map(([v, l]) =>
+        el("span", { class: "chip add", title: l, onclick: () => { left.value = v; upd((x) => { x.left = v; }); } }, v)));
+    out.push(field("Si", left, chips));
+    out.push(field("", el("select", { class: "input", onchange: (e) => upd((x) => { x.cmp = e.target.value; }) },
+      ...CMPS.map(([v, l]) => el("option", { value: v, selected: v === (a.cmp || "==") }, l)))));
+    out.push(field("Valeur", el("input", { class: "input", value: a.right || "", spellcheck: "false", placeholder: "ex. 10, obs64.exe, {autre}",
+      oninput: (e) => upd((x) => { x.right = e.target.value; }) }),
+      el("p", { class: "hint" }, "Compare des nombres si les deux côtés en sont, sinon du texte (sans tenir compte des majuscules). Une variable jamais utilisée vaut 0.")));
+    out.push(...stepsEditor(a.then, k, onChange, { title: "Alors", hint: "Exécuté si la condition est vraie.", compact: true }));
+    out.push(...stepsEditor(a["else"], k, onChange, { title: "Sinon", hint: "Exécuté si elle est fausse (peut rester vide).", compact: true }));
   } else if (t === "folder") {
     const cur = Number(a.to) - 1;
     const folders = S.cfg.pages.map((p, i) => [i, p]).filter(([i, p]) => p.folder || i === cur);
@@ -1279,6 +1347,7 @@ function fixPageRefs(removed) {
   const fix = (a) => {
     if (!a) return a;
     if (a.type === "macro") { a.steps = (a.steps || []).map(fix).filter(Boolean); return a; }
+    if (a.type === "if") { a.then = (a.then || []).map(fix).filter(Boolean); a["else"] = (a["else"] || []).map(fix).filter(Boolean); return a; }
     if ((a.type === "page" || a.type === "folder") && /^\d+$/.test(a.to || "")) {
       const n = Number(a.to);
       if (n === removed + 1) return a.type === "folder" ? { type: "none" } : { type: "page", to: "1" };
@@ -1289,13 +1358,22 @@ function fixPageRefs(removed) {
   for (const p of S.cfg.pages) for (const d of p.keys) {
     d.action = fix(d.action) || { type: "none" };
     if (d.toggle) d.toggle.action = fix(d.toggle.action) || { type: "none" };
+    if (d.long) d.long = fix(d.long) || { type: "none" };
+    if (d.double) d.double = fix(d.double) || { type: "none" };
   }
+  for (const w of wheelActionSets()) { w.up = fix(w.up) || { type: "none" }; w.down = fix(w.down) || { type: "none" }; }
 }
 
 /** Liste des étapes d'une macro, chacune avec son propre éditeur. */
 function macroEditor(a, k, onChange) {
   if (!Array.isArray(a.steps)) a.steps = [];
-  const steps = a.steps;
+  return stepsEditor(a.steps, k, onChange, {
+    title: "Étapes", hint: "Exécutées dans l'ordre, de haut en bas. Ajoute des pauses pour laisser le temps à une application de s'ouvrir.",
+  });
+}
+
+/** Éditeur d'une liste d'étapes (macro, branches « alors » / « sinon » d'une condition). */
+function stepsEditor(steps, k, onChange, opts) {
   const changedAndRedraw = () => { onChange(); renderInspector(); };
   const list = el("div", { class: "steps" });
   steps.forEach((step, i) => {
@@ -1317,8 +1395,8 @@ function macroEditor(a, k, onChange) {
     list.append(card);
   });
   return [
-    el("h2", { style: "margin-top:4px" }, `Étapes (${steps.length})`),
-    el("p", { class: "hint", style: "margin:-4px 0 10px" }, "Exécutées dans l'ordre, de haut en bas. Ajoute des pauses pour laisser le temps à une application de s'ouvrir."),
+    opts.compact ? el("div", { class: "step-branch" }, `${opts.title} (${steps.length})`) : el("h2", { style: "margin-top:4px" }, `${opts.title} (${steps.length})`),
+    el("p", { class: "hint", style: "margin:-4px 0 10px" }, opts.hint),
     steps.length ? list : el("p", { class: "hint" }, "Aucune étape pour l'instant."),
     el("div", { class: "row", style: "margin-top:10px" },
       el("button", { class: "btn grow", disabled: steps.length >= 100, onclick: () => { steps.push({ type: "hotkey", keys: "" }); changedAndRedraw(); } }, "+ Étape"),
@@ -1354,6 +1432,8 @@ function faderInspector(i) {
   const out = [title(`Fader ${i + 1}`, ["le plus à gauche", "", "au milieu", "", "le plus à droite"][i] || "")];
   const live = S.status.faders ? S.status.faders[i] + " %" : "non connecté";
   out.push(el("p", { class: "hint", style: "margin:-6px 0 10px" }, "Position actuelle : ", el("b", { id: "fader-live" }, live)));
+  if (S.status.pickup && S.status.pickup[i]) out.push(el("p", { class: "hint warn-text", style: "margin:-4px 0 10px" },
+    "En attente de reprise : passe le fader par le volume actuel pour qu'il reprenne la main (sa LED pulse en attendant)."));
 
   // Réglage commun ou propre à la page
   out.push(el("div", { class: "tabs scope-tabs" },
@@ -1444,20 +1524,53 @@ function animationPicker(value, onChange) {
 }
 
 // --- Molettes ---
+/** Tous les jeux d'actions de molettes (réglage commun et pages). */
+function wheelActionSets() {
+  const r = S.cfg.rollers, out = [];
+  for (const side of ["left", "right"]) if (r[side + "_actions"]) out.push(r[side + "_actions"]);
+  for (const p of S.cfg.pages) for (const side of ["left", "right"]) if (p[`roller_${side}_actions`]) out.push(p[`roller_${side}_actions`]);
+  return out;
+}
+
 function rollersInspector() {
   const r = S.cfg.rollers;
   const page = currentPage();
   const pageName = page.name || `Page ${S.page + 1}`;
   const out = [title("Molettes", pageName)];
   for (const [side, label] of [["left", "Molette de gauche"], ["right", "Molette de droite"]]) {
-    const key = "roller_" + side;
+    const key = "roller_" + side, akey = `roller_${side}_actions`;
     const own = page[key] != null;
+    const mode = own ? page[key] : r[side];
+    const setMode = (v) => { if (own) page[key] = v; else r[side] = v; changed(); renderDevice(); };
     out.push(el("h2", {}, label));
     out.push(el("div", { class: "tabs scope-tabs" },
-      el("button", { class: own ? "" : "on", onclick: () => { delete page[key]; changed(); renderDevice(); } }, "Commune"),
-      el("button", { class: own ? "on" : "", onclick: () => { if (!own) { page[key] = r[side]; changed(); renderDevice(); } } }, `Propre à « ${pageName} »`)));
-    out.push(field("Action", el("select", { class: "input", onchange: (e) => { if (own) page[key] = e.target.value; else r[side] = e.target.value; changed(); renderDevice(); } },
-      ...ROLLER_MODES.map(([v, l]) => el("option", { value: v, selected: v === (own ? page[key] : r[side]) }, l)))));
+      el("button", { class: own ? "" : "on", onclick: () => { delete page[key]; delete page[akey]; changed(); renderDevice(); } }, "Commune"),
+      el("button", { class: own ? "on" : "", onclick: () => {
+        if (own) return;
+        page[key] = r[side];
+        if (r[side + "_actions"]) page[akey] = clone(r[side + "_actions"]);
+        changed(); renderDevice();
+      } }, `Propre à « ${pageName} »`)));
+    const kind = rollerKind(mode);
+    out.push(field("Action", el("select", { class: "input", onchange: (e) => { setMode(e.target.value === "app" ? "app:" : e.target.value); renderInspector(); } },
+      ...ROLLER_MODES.map(([v, l]) => el("option", { value: v, selected: v === kind }, l)))));
+    if (kind === "app") {
+      out.push(field("Applications", el("input", { class: "input", value: mode.slice(4), spellcheck: "false", placeholder: "ex. discord.exe, spotify.exe",
+        onchange: (e) => {
+          const list = e.target.value.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean).map((x) => /\.exe$/.test(x) ? x : x + ".exe");
+          setMode("app:" + list.join(","));
+        } }), el("p", { class: "hint" }, "Plusieurs applications séparées par des virgules.")));
+    } else if (kind === "actions") {
+      const owner = own ? page : r;
+      const prop = own ? akey : side + "_actions";
+      if (!owner[prop]) owner[prop] = { up: { type: "none" }, down: { type: "none" } };
+      const w = owner[prop];
+      for (const [dir, l] of [["up", "Un cran vers le haut"], ["down", "Un cran vers le bas"]]) {
+        const holder = { get action() { return w[dir]; }, set action(v) { w[dir] = v; } };
+        out.push(el("div", { class: "step wheel-action" }, el("div", { class: "step-body" }, ...actionEditor(holder, -1, () => changed(), { extra: l }))));
+      }
+      out.push(el("p", { class: "hint" }, "Chaque cran lance l'action une fois : parfait pour faire défiler une timeline, changer d'outil, régler un paramètre ou un compteur. « Maintenir » devient un simple appui."));
+    }
     out.push(switchRow("Inverser le sens", r["invert_" + side], (v) => { r["invert_" + side] = v; changed(); }));
   }
   out.push(el("div", { class: "sep" }));
@@ -2213,7 +2326,7 @@ function movePage(from, to) {
   const newIndex = (old) => order.indexOf(old);
   const fix = (a) => {
     if (!a) return a;
-    if (a.type === "macro") { (a.steps || []).forEach(fix); return a; }
+    if (a.type === "macro" || a.type === "if") { childActions(a).forEach(fix); return a; }
     if ((a.type === "page" || a.type === "folder") && /^\d+$/.test(a.to || "")) {
       const old = Number(a.to) - 1;
       if (old >= 0 && old < order.length) a.to = String(newIndex(old) + 1);
@@ -2221,7 +2334,8 @@ function movePage(from, to) {
     return a;
   };
   S.cfg.pages = order.map((i) => S.cfg.pages[i]);
-  for (const p of S.cfg.pages) for (const d of p.keys) { fix(d.action); if (d.toggle) fix(d.toggle.action); }
+  for (const p of S.cfg.pages) for (const d of p.keys) { fix(d.action); if (d.toggle) fix(d.toggle.action); fix(d.long); fix(d.double); }
+  for (const w of wheelActionSets()) { fix(w.up); fix(w.down); }
   // Les aperçus suivent leur page.
   const prev = S.previews; S.previews = {};
   for (const [key, v] of Object.entries(prev)) {
@@ -2363,7 +2477,19 @@ function settingsInspector() {
   out.push(field("Sortie des sons", devSel(g.sound_device, (v) => { g.sound_device = v; changed(); }, "Sortie par défaut de Windows")));
   out.push(field("Jouer aussi sur", devSel(g.sound_device2, (v) => { g.sound_device2 = v; changed(); }, "Aucune autre sortie"),
     el("p", { class: "hint" }, "Pour que tes amis entendent les sons dans Discord ou sur ton stream : choisis ici un câble audio virtuel (par exemple VB-CABLE) et mets-le comme micro dans Discord ou OBS.")));
-  out.push(el("h2", {}, "Touches"));
+  out.push(el("h2", { style: "margin-top:18px" }, "Faders"));
+  out.push(switchRow("Reprise douce des faders", g.fader_pickup, (v) => { g.fader_pickup = v; changed(); }));
+  out.push(el("p", { class: "hint", style: "margin-top:-4px" }, "Quand un fader contrôle autre chose en changeant de page ou de profil, il n'agit qu'une fois passé par le volume actuel : pas de saut de volume. Sa LED pulse en attendant."));
+  out.push(el("h2", { style: "margin-top:18px" }, "Variables"));
+  const vars = Object.entries((S.status && S.status.vars) || {});
+  out.push(vars.length
+    ? el("div", { class: "vars-list" }, ...vars.map(([n, v]) => el("div", { class: "row var-row" }, el("code", {}, "{" + n + "}"), el("span", { class: "spacer" }), el("b", {}, v))))
+    : el("p", { class: "hint", style: "margin:0 0 8px" }, "Aucune variable pour l'instant. Crée-en avec l'action « Variable » (bibliothèque : Macros intelligentes)."));
+  if (vars.length) out.push(el("button", { class: "btn small", style: "margin-top:6px", onclick: async () => {
+    if (!(await confirm_("Remettre toutes les variables à zéro ?"))) return;
+    await invoke("clear_vars"); toast("Variables remises à zéro");
+  } }, "Remettre à zéro"));
+  out.push(el("h2", { style: "margin-top:18px" }, "Touches"));
   out.push(rangeField("Durée d'un appui long", g.long_press_ms, 200, 1500, " ms", (v) => { g.long_press_ms = v; changed(); }));
   out.push(rangeField("Délai d'un double appui", g.double_press_ms, 150, 600, " ms", (v) => { g.double_press_ms = v; changed(); },
     "Temps maximal entre les deux appuis. Plus il est court, plus l'appui simple des touches à double appui est rapide."));
@@ -2808,6 +2934,7 @@ async function mockInvoke(cmd, args) {
     case "list_sound_devices": return ["Haut-parleurs (Realtek(R) Audio)", "CABLE Input (VB-Audio Virtual Cable)"];
     case "import_sound": case "import_sound_data": return "sounds/" + String(args.name || args.path || "son.mp3").split(/[\\/]/).pop();
     case "test_sound": return null;
+    case "clear_vars": onStatus(Object.assign({}, S.status, { vars: {} })); return null;
     case "start_doom": if (location.search.includes("doom")) { setTimeout(() => onStatus(Object.assign({}, S.status, { doom: true })), 300); return "freedoom1.wad"; } throw "no_wad";
     case "download_freedoom": return null;
     case "stop_doom": onStatus(Object.assign({}, S.status, { doom: false })); return null;
@@ -2827,7 +2954,7 @@ async function mockInvoke(cmd, args) {
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false),
           leds: location.search.includes("leds") ? { base: "#FFC800", faders: ["#00E676", "#00E676", "#FFC800", "#FFC800", "#000000"] } : { base: null, faders: [] },
           sim: location.search.includes("leds") ? { name: "Assetto Corsa", live: true, rpm: 7120, max_rpm: 8000, flag: 2 } : null,
-          base_rot: location.search.includes("rot=90") ? 90 : 0 } };
+          base_rot: location.search.includes("rot=90") ? 90 : 0, vars: { compteur: "7", interrupteur: "1" }, pickup: [false, true, false, false, false] } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;
     case "list_audio_apps": return ["chrome.exe", "discord.exe", "spotify.exe"];

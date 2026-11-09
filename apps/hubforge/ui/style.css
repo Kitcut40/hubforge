@@ -516,3 +516,11 @@ label.mini select { min-width: 64px; }
 .warn-text { color: #f0b54a; }
 .probe-row { align-items: center; gap: 8px; margin-bottom: 10px; }
 #probe-n { min-width: 80px; text-align: center; font-weight: 600; }
+
+/* Conditions, molettes en mode actions, variables */
+.step-branch { margin: 12px 0 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent-2); }
+.step .step-body .step-branch:first-of-type { margin-top: 14px; }
+.step.wheel-action { margin-bottom: 8px; }
+.vars-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+.var-row { padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: #12141a; font-size: 12px; }
+.var-row code { color: var(--accent-2); }

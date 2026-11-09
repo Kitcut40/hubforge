@@ -505,10 +505,12 @@ pub async fn render_keys(state: State<'_, AppState>, keys: Vec<Option<KeyDef>>) 
     } else {
         None
     };
+    let vars = crate::vars::Vars::load(&dir);
     Ok(keys
         .into_iter()
         .map(|k| {
             k.map(|def| {
+                let def = crate::vars::key_with_values(&def, vars.all());
                 let (jpeg, animated) = match (&def.widget, &snap) {
                     (Some(_), Some(snap)) => (render::encode_jpeg(&crate::widgets::render(&def, snap), 90), false),
                     _ => render::preview(&def, &dir),
@@ -926,4 +928,9 @@ pub fn import_sound_data(state: State<AppState>, name: String, data: String) -> 
 #[tauri::command]
 pub fn test_sound(state: State<AppState>, file: String, volume: u8) {
     let _ = state.engine.lock().unwrap().send(EngineMsg::TestSound { file, volume });
+}
+
+#[tauri::command]
+pub fn clear_vars(state: State<AppState>) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::ClearVars);
 }

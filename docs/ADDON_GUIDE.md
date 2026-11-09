@@ -109,6 +109,8 @@ Types d'action disponibles :
 | `back` | — | ferme un dossier |
 | `lock` | — | verrouille le PC |
 | `macro` | `steps` | liste d'actions, avec des pauses `{ type = "wait", ms = 300 }` |
+| `var` | `name`, `op`, `value` | variable : `op = "set"` (donne `value`), `"add"` (ajoute, négatif pour retirer) ou `"toggle"` (0 ↔ 1). `{nom}` dans le texte d'une touche affiche sa valeur |
+| `if` | `left`, `cmp`, `right`, `then`, `else` | condition : `cmp` = `==` `!=` `>` `<` `>=` `<=` `contains`. `left` et `right` acceptent `{variable}`, `{app}` (appli au premier plan), `{page}`, `{profile}`, `{hour}`, `{minute}`, `{weekday}` (1 = lundi) |
 | `none` | — | ne fait rien |
 
 Exemple de macro (ouvrir la recherche de commandes, taper un nom, valider) :
@@ -128,7 +130,21 @@ steps = [
 ]
 ```
 
-Interdits dans un addon (pour la sécurité de l'utilisateur) : `profile`, `game`, `open_config`, `sound`.
+Exemple de condition (un raccourci différent selon l'application au premier plan) :
+
+```toml
+[[action]]
+id    = "export"
+name  = "Exporter"
+type  = "if"
+left  = "{app}"
+cmp   = "contains"
+right = "fusion360"
+then  = [ { type = "hotkey", keys = "ctrl+shift+e" } ]
+else  = [ { type = "hotkey", keys = "ctrl+e" } ]
+```
+
+Interdits dans un addon, y compris à l'intérieur d'une macro ou d'une condition (pour la sécurité de l'utilisateur) : `profile`, `game`, `open_config`, `sound`.
 
 ### 3.5 `[[page]]` — pages prêtes à l'emploi (facultatif)
 
