@@ -85,6 +85,59 @@ pub fn key_test_image(index: u8) -> RgbImage {
     img
 }
 
+/// Mire de résolution de `n` × `n` pixels :
+/// - liseré rouge d'1 pixel sur tout le bord (s'il manque à droite ou en bas,
+///   l'image est coupée) ;
+/// - un carré de couleur dans chaque coin (blanc en haut à gauche, rouge en
+///   haut à droite, vert en bas à gauche, bleu en bas à droite) ;
+/// - la taille au centre ;
+/// - des lignes d'1 pixel noires et blanches : nettes si l'écran affiche
+///   vraiment cette résolution, grises ou baveuses sinon.
+pub fn resolution_test_image(n: u32) -> RgbImage {
+    let mut img = RgbImage::from_pixel(n, n, Rgb([40, 44, 56]));
+    let red = Rgb([255, 40, 40]);
+    for i in 0..n {
+        img.put_pixel(i, 0, red);
+        img.put_pixel(i, n - 1, red);
+        img.put_pixel(0, i, red);
+        img.put_pixel(n - 1, i, red);
+    }
+    let c = (n / 7).max(6);
+    let corners = [
+        (2, 2, Rgb([255, 255, 255])),
+        (n - 2 - c, 2, Rgb([255, 40, 40])),
+        (2, n - 2 - c, Rgb([40, 220, 80])),
+        (n - 2 - c, n - 2 - c, Rgb([40, 120, 255])),
+    ];
+    for (x0, y0, col) in corners {
+        for y in y0..y0 + c {
+            for x in x0..x0 + c {
+                img.put_pixel(x, y, col);
+            }
+        }
+    }
+    // Taille au centre (en haut).
+    let digits: Vec<usize> = n.to_string().bytes().map(|b| (b - b'0') as usize).collect();
+    let scale = (n / 30).max(2);
+    let w = digits.len() as u32 * 6 * scale - scale;
+    let mut x = (n - w) / 2;
+    let y = n / 5;
+    for d in digits {
+        draw_digit(&mut img, d, x, y, scale);
+        x += 6 * scale;
+    }
+    // Lignes d'1 pixel : verticales à gauche, horizontales à droite.
+    let (top, bottom) = (n * 55 / 100, n * 80 / 100);
+    let (left, mid, right) = (n * 12 / 100, n / 2, n * 88 / 100);
+    for yy in top..bottom {
+        for xx in left..right {
+            let on = if xx < mid { xx % 2 == 0 } else { yy % 2 == 0 };
+            img.put_pixel(xx, yy, if on { Rgb([255, 255, 255]) } else { Rgb([0, 0, 0]) });
+        }
+    }
+    img
+}
+
 pub fn to_jpeg(img: &RgbImage, quality: u8) -> Vec<u8> {
     let mut out = Vec::new();
     let mut enc = JpegEncoder::new_with_quality(&mut out, quality);
@@ -97,6 +150,29 @@ pub fn to_jpeg(img: &RgbImage, quality: u8) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolution_charts() {
+        for n in [72, 96, 120, 144] {
+            let img = resolution_test_image(n);
+            assert_eq!(img.dimensions(), (n, n));
+            assert_eq!(&to_jpeg(&img, 95)[..2], &[0xFF, 0xD8]);
+        }
+    }
+
+    /// Planche : cargo test -p hubforge-probe resolution_sheet -- --ignored
+    #[test]
+    #[ignore]
+    fn resolution_sheet() {
+        let mut sheet = RgbImage::from_pixel(72 + 96 + 120 + 144 + 50, 154, Rgb([14, 15, 19]));
+        let mut x = 10;
+        for n in [72, 96, 120, 144] {
+            image::imageops::overlay(&mut sheet, &resolution_test_image(n), x, 5);
+            x += n as i64 + 10;
+        }
+        let big = image::imageops::resize(&sheet, sheet.width() * 3, sheet.height() * 3, image::imageops::FilterType::Nearest);
+        big.save("/tmp/resolution-sheet.png").unwrap();
+    }
 
     #[test]
     fn jpeg_is_valid() {

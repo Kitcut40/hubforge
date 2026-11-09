@@ -430,6 +430,58 @@ fn step_keys15(list: &[Iface]) {
     }
 }
 
+/// Test de résolution : la même mire en 72, 96, 120 et 144 pixels sur les
+/// 4 premières touches. Commande d'image normale (02 36), rien d'autre.
+fn step_resolution(list: &[Iface]) {
+    let idx = main_ifaces(list, Kind::Keys15);
+    title("TEST — Résolution réelle des écrans des touches");
+    if idx.is_empty() {
+        say!("Module 15 touches non détecté : test impossible.");
+        return;
+    }
+    const SIZES: [u32; 4] = [72, 96, 120, 144];
+    for &k in &idx {
+        let it = &list[k];
+        say!("Interface utilisée : {}", it.tag());
+        cmd3(it, 0x3A, &[1]);
+        cmd3(it, 0x34, &[100]);
+        std::thread::sleep(Duration::from_millis(300));
+        // On efface d'abord toute la ligne du haut avec une image 72 neutre.
+        for key in 0..15u8 {
+            let blank = images::to_jpeg(&image::RgbImage::from_pixel(72, 72, image::Rgb([10, 10, 12])), 80);
+            send_image(it, 0x36, key, &blank);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        say!("\nEnvoi de la mire sur les 4 premières touches de la ligne du haut :");
+        say!("  touche 1 = 72 px, touche 2 = 96 px, touche 3 = 120 px, touche 4 = 144 px");
+        for (key, &n) in SIZES.iter().enumerate() {
+            let jpeg = images::to_jpeg(&images::resolution_test_image(n), 95);
+            note!("mire {n} px sur la touche {key} : {} octets JPEG", jpeg.len());
+            if !send_image(it, 0x36, key as u8, &jpeg) {
+                say!("  ✗ envoi de la mire {n} px refusé");
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        say!("");
+        say!("Sur chaque mire : un liseré rouge tout autour, un carré dans chaque coin");
+        say!("(blanc en haut à gauche, rouge en haut à droite, vert en bas à gauche,");
+        say!("bleu en bas à droite), la taille au milieu, et des fines lignes noires et blanches.");
+        for (key, &n) in SIZES.iter().enumerate() {
+            ask(&format!(
+                "Touche {} ({n} px) : image entière avec les 4 coins, image coupée (quels coins manquent ?),\n    \
+                 image déformée, ou rien du tout ?",
+                key + 1
+            ));
+        }
+        ask("Sur quelle touche les fines lignes noires et blanches sont-elles les plus nettes ?\n    \
+             (ex. « 2 », « toutes pareilles », « toutes grises »)");
+        ask("Le module répond-il toujours normalement ? (les touches s'allument, rien de figé)");
+        if ask_yes_no("Prendre une photo des 4 touches et me l'envoyer aiderait beaucoup. C'est fait ou tu le feras ?") {
+            note!("photo prévue");
+        }
+    }
+}
+
 fn step_keys15_v2(list: &[Iface]) {
     let idx = main_ifaces(list, Kind::Keys15);
     title("TEST — Commandes courtes du module 15 touches");
@@ -665,7 +717,7 @@ fn main() {
     };
 
     let list = step_detect(&mut api);
-    step_led_v3(&list);
+    step_resolution(&list);
 
     title("TERMINÉ — merci !");
     say!("Envoie-moi ce fichier dans la conversation :");
