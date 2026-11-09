@@ -38,9 +38,6 @@ pub enum EngineMsg {
     PreviewAnimation(Option<lights::Animation>),
     /// Orientation de la base ou positions manuelles modifiées.
     ReloadLayout,
-    /// Exploration des LED de la base : allume seulement la LED (ou zone)
-    /// numéro `n` en blanc. None = fin de l'exploration.
-    ProbeBaseLed(Option<u8>),
     /// Easter egg : lancer Doom avec ce fichier WAD.
     StartDoom(std::path::PathBuf),
     StopDoom,
@@ -421,22 +418,6 @@ impl Engine {
                 }
                 self.notify();
             }
-            EngineMsg::ProbeBaseLed(n) => match n {
-                Some(n) => {
-                    let bases: Vec<String> = self.modules.iter().filter(|(_, k)| **k == Kind::BaseLed).map(|(s, _)| s.clone()).collect();
-                    for s in bases {
-                        for j in 0..32u8 {
-                            let c = if j == n { 255 } else { 0 };
-                            self.mgr.send(&s, Command::Output(protocol::led_color(0, j, c, c, c, false)));
-                            self.mgr.send(&s, Command::Sleep(3));
-                        }
-                        self.mgr.send(&s, Command::Output(protocol::led_mode(0, 0, 1, false)));
-                        self.sent_base.remove(&s);
-                    }
-                    log::info!("exploration des LED de la base : n° {n}");
-                }
-                None => self.restore_leds(),
-            },
             EngineMsg::StartDoom(wad) => self.start_doom(&wad),
             EngineMsg::StopDoom => self.end_doom(),
             EngineMsg::DoomKey { pressed, code } => {

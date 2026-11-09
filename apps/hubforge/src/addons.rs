@@ -688,11 +688,11 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// Les addons d'exemple du dépôt (examples/addons/*) sont valides, et
+    /// Les addons du dépôt (addons/*) sont valides, et
     /// toutes leurs touches se dessinent.
     #[test]
     fn example_addons_are_valid() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/addons");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../addons");
         let Ok(rd) = std::fs::read_dir(&root) else { return };
         for e in rd.flatten() {
             let d = e.path();
@@ -707,14 +707,14 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
     }
 
     /// Planche d'un addon d'exemple :
-    /// HUBFORGE_ADDON=prusaslicer cargo test -p hubforge example_sheet -- --ignored
+    /// HUBFORGE_ADDON=beamng cargo test -p hubforge example_sheet -- --ignored
     #[test]
     #[ignore]
     fn example_sheet() {
         use hubforge_device::KEY_IMAGE_SIZE as S;
         let cfg = tmp("sheet");
         let name = std::env::var("HUBFORGE_ADDON").unwrap_or_else(|_| "discord".into());
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/addons").join(&name);
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../addons").join(&name);
         let dst = dir(&cfg).join(&name);
         fn copy_dir(from: &Path, to: &Path) {
             std::fs::create_dir_all(to).unwrap();

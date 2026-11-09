@@ -218,7 +218,6 @@ fn main() {
             ui::get_layout,
             ui::set_base_rot,
             ui::set_placement,
-            ui::probe_base_led,
             ui::start_doom,
             ui::download_freedoom,
             ui::stop_doom,

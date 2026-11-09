@@ -2064,9 +2064,6 @@ async function showDiagnostic() {
     </div>
     <h4>Modules détectés (${mods.length})</h4>
     <pre class="diag-pre">${(mods.join("\n") || "Aucun module : vérifie le câble USB de la base.").replace(/</g, "&lt;")}</pre>
-    <h4>Zones de lumière de la base <span class="addon-badge">expérimental</span></h4>
-    <p class="hint" style="margin-top:0">Allume une seule LED de la base à la fois, pour savoir si HubForge peut animer le contour zone par zone. Note quels numéros allument quelque chose.</p>
-    <div class="row probe-row"><button class="btn small" id="probe-prev">◀</button><span id="probe-n">—</span><button class="btn small" id="probe-next">▶</button><span class="spacer"></span><button class="btn small" id="probe-stop">Terminer</button></div>
     <h4>Journal</h4>
     <pre class="diag-pre diag-log">${d.log.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>
     <p class="hint">Rien n'est envoyé : « Copier le rapport » met ces informations dans le presse-papiers pour que tu puisses les joindre à une demande d'aide.</p>`;
@@ -2085,16 +2082,10 @@ async function showDiagnostic() {
       el("button", { class: "btn", onclick: async () => {
         try { await navigator.clipboard.writeText(report); toast("Rapport copié dans le presse-papiers."); } catch (_) { toast("Copie impossible.", true); }
       } }, "Copier le rapport"),
-      el("button", { class: "btn primary", onclick: () => { stopProbe(); closeDialog(); } }, "Fermer"),
+      el("button", { class: "btn primary", onclick: closeDialog }, "Fermer"),
     ],
   });
-  let n = -1;
-  const show = () => { $("#probe-n").textContent = n < 0 ? "—" : `LED n° ${n}`; invoke("probe_base_led", { index: n < 0 ? null : n }); };
-  $("#probe-next").onclick = () => { n = Math.min(31, n + 1); S.probing = true; show(); };
-  $("#probe-prev").onclick = () => { n = Math.max(0, n - 1); S.probing = true; show(); };
-  $("#probe-stop").onclick = () => { n = -1; stopProbe(); $("#probe-n").textContent = "—"; };
 }
-function stopProbe() { if (S.probing) { S.probing = false; invoke("probe_base_led", { index: null }); } }
 
 // --- Supprimer une touche en la glissant hors du MasterHUB ---
 /** Page (index) ouverte par une action « dossier ». */
@@ -2396,7 +2387,7 @@ function openDialog({ title, sub, html, actions, icon }) {
   $("#dialog-progress").classList.add("hidden");
   $("#dialog").classList.remove("hidden");
 }
-function closeDialog() { if (!S.updating) { stopProbe(); $("#dialog").classList.add("hidden"); } }
+function closeDialog() { if (!S.updating) $("#dialog").classList.add("hidden"); }
 
 function showUpdateDialog() {
   const a = S.update && S.update.available;
@@ -2756,7 +2747,6 @@ async function mockInvoke(cmd, args) {
     case "set_base_rot": window.__mockLayout.base_rot = args.rot; return null;
     case "set_placement": return null;
     case "preview_animation": return null;
-    case "probe_base_led": return null;
     case "start_doom": if (location.search.includes("doom")) { setTimeout(() => onStatus(Object.assign({}, S.status, { doom: true })), 300); return "freedoom1.wad"; } throw "no_wad";
     case "download_freedoom": return null;
     case "stop_doom": onStatus(Object.assign({}, S.status, { doom: false })); return null;

@@ -105,6 +105,7 @@ pub fn parse_key(name: &str) -> Option<Key> {
         "left" | "gauche" => Key::LeftArrow,
         "right" | "droite" => Key::RightArrow,
         "printscreen" | "prtsc" | "impr" => Key::PrintScr,
+        "insert" | "ins" | "inser" => insert_key(),
         "plus" => Key::Unicode('+'),
         _ => {
             if let Some(num) = n.strip_prefix('f').and_then(|d| d.parse::<u32>().ok()) {
@@ -144,14 +145,39 @@ fn function_key(n: u32) -> Option<Key> {
     })
 }
 
+#[cfg(windows)]
+fn insert_key() -> Key {
+    Key::Other(0x2D) // VK_INSERT
+}
+
+#[cfg(not(windows))]
+fn insert_key() -> Key {
+    Key::Insert
+}
+
 /// Lettres et chiffres : sous Windows on utilise le code de touche virtuel,
-/// identique en AZERTY et QWERTY (Ctrl+S reste Ctrl+S).
+/// identique en AZERTY et QWERTY (Ctrl+S reste Ctrl+S). Ponctuation (« , »,
+/// « . », « / »…) : la touche qui produit ce caractère sur le clavier
+/// actuel, pour que les jeux la reconnaissent (ils ignorent souvent les
+/// caractères envoyés directement).
 #[cfg(windows)]
 fn char_key(c: char) -> Key {
     match c {
         'a'..='z' => Key::Other(0x41 + (c as u32 - 'a' as u32)),
         '0'..='9' => Key::Other(0x30 + (c as u32 - '0' as u32)),
-        _ => Key::Unicode(c),
+        _ => {
+            let mut buf = [0u16; 2];
+            let units = c.encode_utf16(&mut buf);
+            if units.len() == 1 {
+                let r = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::VkKeyScanW(units[0]) };
+                let vk = (r as u16) & 0xFF;
+                // Seulement si le caractère s'obtient sans Maj/Ctrl/Alt.
+                if r != -1 && (r as u16) >> 8 == 0 && vk != 0 {
+                    return Key::Other(vk as u32);
+                }
+            }
+            Key::Unicode(c)
+        }
     }
 }
 

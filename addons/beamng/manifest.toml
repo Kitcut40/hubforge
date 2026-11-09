@@ -1,0 +1,699 @@
+# =====================================================================
+#  Addon HubForge — BeamNG.drive
+#  Licence MIT. Icônes : Lucide (licence ISC, icons/LICENSE-lucide.txt).
+#  Aucun logo de BeamNG : l'icône de l'addon est prise sur le jeu installé.
+#
+#  Raccourcis clavier PAR DÉFAUT de BeamNG.drive (Options → Contrôles,
+#  liste officielle : documentation.beamng.com, « Default Keyboard
+#  Bindings »). Si tu as changé un raccourci dans le jeu, modifie la
+#  touche correspondante dans HubForge.
+# =====================================================================
+
+[addon]
+id          = "beamng"
+name        = "BeamNG.drive"
+version     = "1.0.0"
+author      = "Benjamin & Claude"
+license     = "MIT"
+description = "Contact, rapports, feux, clignotants, réparation, caméras, ralenti, mode photo et plus."
+icon        = "auto"
+format      = 1
+
+[detect]
+windows = ["BeamNG.drive.x64.exe", "BeamNG.drive.exe"]
+
+[[category]]
+id   = "drive"
+name = "Conduite"
+
+[[category]]
+id   = "lights"
+name = "Feux"
+
+[[category]]
+id   = "repair"
+name = "Réparer et véhicules"
+
+[[category]]
+id   = "camera"
+name = "Caméras"
+
+[[category]]
+id   = "game"
+name = "Jeu"
+
+[[action]]
+id          = "ignition"
+name        = "Contact / démarrer"
+label       = "Contact"
+category    = "drive"
+icon        = "icons/key-round.svg"
+color       = "#2E7D32"
+text_color  = "#FFFFFF"
+description = "Contact, puis démarrage du moteur (V)"
+type        = "hotkey"
+keys        = "v"
+
+[[action]]
+id          = "shift_up"
+name        = "Rapport supérieur"
+label       = "Rapport +"
+category    = "drive"
+icon        = "icons/chevrons-up.svg"
+color       = "#37474F"
+text_color  = "#FFFFFF"
+description = "Monter un rapport (X)"
+type        = "hotkey"
+keys        = "x"
+
+[[action]]
+id          = "shift_down"
+name        = "Rapport inférieur"
+label       = "Rapport −"
+category    = "drive"
+icon        = "icons/chevrons-down.svg"
+color       = "#37474F"
+text_color  = "#FFFFFF"
+description = "Descendre un rapport (Z)"
+type        = "hotkey"
+keys        = "z"
+
+[[action]]
+id          = "gearbox_mode"
+name        = "Mode de boîte"
+label       = "Mode boîte"
+category    = "drive"
+icon        = "icons/cog.svg"
+color       = "#455A64"
+text_color  = "#FFFFFF"
+description = "Automatique, manuelle… (Q)"
+type        = "hotkey"
+keys        = "q"
+
+[[action]]
+id          = "parking_brake"
+name        = "Frein à main (bascule)"
+label       = "Frein à main"
+category    = "drive"
+icon        = "icons/circle-parking.svg"
+color       = "#C62828"
+text_color  = "#FFFFFF"
+description = "Serre ou desserre le frein à main (P)"
+type        = "hotkey"
+keys        = "p"
+
+[[action]]
+id          = "horn"
+name        = "Klaxon"
+label       = "Klaxon"
+category    = "drive"
+icon        = "icons/megaphone.svg"
+color       = "#F9A825"
+text_color  = "#FFFFFF"
+description = "Coup de klaxon (H)"
+type        = "hotkey"
+keys        = "h"
+
+[[action]]
+id          = "nitrous"
+name        = "Nitro"
+label       = "Nitro"
+category    = "drive"
+icon        = "icons/flame.svg"
+color       = "#E65100"
+text_color  = "#FFFFFF"
+description = "Active ou coupe l'injection de protoxyde d'azote (B)"
+type        = "hotkey"
+keys        = "b"
+
+[[action]]
+id          = "esc_mode"
+name        = "Mode ESC / antipatinage"
+label       = "ESC / TC"
+category    = "drive"
+icon        = "icons/gauge.svg"
+color       = "#00838F"
+text_color  = "#FFFFFF"
+description = "Change le mode d'ESC et d'antipatinage (Ctrl+Q)"
+type        = "hotkey"
+keys        = "ctrl+q"
+
+[[action]]
+id          = "diff_mode"
+name        = "Mode du différentiel"
+label       = "Différentiel"
+category    = "drive"
+icon        = "icons/settings-2.svg"
+color       = "#00695C"
+text_color  = "#FFFFFF"
+description = "Change le mode du différentiel (Alt+D)"
+type        = "hotkey"
+keys        = "alt+d"
+
+[[action]]
+id          = "awd"
+name        = "4 roues motrices"
+label       = "4×4"
+category    = "drive"
+icon        = "icons/truck.svg"
+color       = "#4E342E"
+text_color  = "#FFFFFF"
+description = "Active ou coupe les 4 roues motrices (Alt+S)"
+type        = "hotkey"
+keys        = "alt+s"
+
+[[action]]
+id          = "range"
+name        = "Gamme courte / longue"
+label       = "Gamme"
+category    = "drive"
+icon        = "icons/mountain.svg"
+color       = "#5D4037"
+text_color  = "#FFFFFF"
+description = "Change de gamme de boîte de transfert (Alt+A)"
+type        = "hotkey"
+keys        = "alt+a"
+
+[[action]]
+id          = "headlights"
+name        = "Phares"
+label       = "Phares"
+category    = "lights"
+icon        = "icons/lightbulb.svg"
+color       = "#FBC02D"
+text_color  = "#FFFFFF"
+description = "Allume ou change les phares (N)"
+type        = "hotkey"
+keys        = "n"
+
+[[action]]
+id          = "foglights"
+name        = "Antibrouillards"
+label       = "Antibrouil."
+category    = "lights"
+icon        = "icons/sun-dim.svg"
+color       = "#FFB300"
+text_color  = "#FFFFFF"
+description = "Antibrouillards et éclairage de bas de caisse (Alt+N)"
+type        = "hotkey"
+keys        = "alt+n"
+
+[[action]]
+id          = "signal_left"
+name        = "Clignotant gauche"
+label       = "Clignot. G"
+category    = "lights"
+icon        = "icons/arrow-big-left.svg"
+color       = "#FF8F00"
+text_color  = "#FFFFFF"
+description = "Clignotant gauche (,)"
+type        = "hotkey"
+keys        = ","
+
+[[action]]
+id          = "signal_right"
+name        = "Clignotant droit"
+label       = "Clignot. D"
+category    = "lights"
+icon        = "icons/arrow-big-right.svg"
+color       = "#FF8F00"
+text_color  = "#FFFFFF"
+description = "Clignotant droit (.)"
+type        = "hotkey"
+keys        = "."
+
+[[action]]
+id          = "hazards"
+name        = "Feux de détresse"
+label       = "Warnings"
+category    = "lights"
+icon        = "icons/triangle-alert.svg"
+color       = "#D84315"
+text_color  = "#FFFFFF"
+description = "Feux de détresse (/)"
+type        = "hotkey"
+keys        = "/"
+
+[[action]]
+id          = "lightbar"
+name        = "Gyrophares"
+label       = "Gyrophares"
+category    = "lights"
+icon        = "icons/siren.svg"
+color       = "#1565C0"
+text_color  = "#FFFFFF"
+description = "Gyrophares des véhicules équipés (Maj+N)"
+type        = "hotkey"
+keys        = "shift+n"
+
+[[action]]
+id          = "lightbar_mode"
+name        = "Mode des gyrophares"
+label       = "Mode gyro"
+category    = "lights"
+icon        = "icons/siren.svg"
+color       = "#0D47A1"
+text_color  = "#FFFFFF"
+description = "Change le mode des gyrophares (Alt+Maj+N)"
+type        = "hotkey"
+keys        = "alt+shift+n"
+
+[[action]]
+id          = "recover"
+name        = "Réparer / revenir en arrière"
+label       = "Réparer"
+category    = "repair"
+icon        = "icons/wrench.svg"
+color       = "#2E7D32"
+text_color  = "#FFFFFF"
+description = "Répare le véhicule et le remet sur la route ; maintenir pour revenir en arrière (Inser)"
+type        = "hotkey"
+keys        = "insert"
+
+[[action]]
+id          = "reset"
+name        = "Recommencer"
+label       = "Recommencer"
+category    = "repair"
+icon        = "icons/rotate-ccw.svg"
+color       = "#558B2F"
+text_color  = "#FFFFFF"
+description = "Recommence la mission ou remet le véhicule au départ (R)"
+type        = "hotkey"
+keys        = "r"
+
+[[action]]
+id          = "reset_all"
+name        = "Réinitialiser tous les véhicules"
+label       = "Tout réinit."
+category    = "repair"
+icon        = "icons/refresh-ccw.svg"
+color       = "#33691E"
+text_color  = "#FFFFFF"
+description = "Réinitialise la physique de tous les véhicules (Maj+R)"
+type        = "hotkey"
+keys        = "shift+r"
+
+[[action]]
+id          = "save_home"
+name        = "Enregistrer cette position"
+label       = "Enreg. pos."
+category    = "repair"
+icon        = "icons/map-pin-plus.svg"
+color       = "#00796B"
+text_color  = "#FFFFFF"
+description = "Mémorise la position actuelle (Ctrl+Origine)"
+type        = "hotkey"
+keys        = "ctrl+home"
+
+[[action]]
+id          = "load_home"
+name        = "Revenir à la position enregistrée"
+label       = "Position"
+category    = "repair"
+icon        = "icons/map-pin-house.svg"
+color       = "#00897B"
+text_color  = "#FFFFFF"
+description = "Répare et ramène le véhicule à la position mémorisée (Origine)"
+type        = "hotkey"
+keys        = "home"
+
+[[action]]
+id          = "walk"
+name        = "Monter / descendre du véhicule"
+label       = "À pied"
+category    = "repair"
+icon        = "icons/footprints.svg"
+color       = "#6D4C41"
+text_color  = "#FFFFFF"
+description = "Sortir du véhicule ou y remonter (F)"
+type        = "hotkey"
+keys        = "f"
+
+[[action]]
+id          = "next_vehicle"
+name        = "Véhicule suivant"
+label       = "Véh. suivant"
+category    = "repair"
+icon        = "icons/car.svg"
+color       = "#455A64"
+text_color  = "#FFFFFF"
+description = "Passe au véhicule suivant (Tab)"
+type        = "hotkey"
+keys        = "tab"
+
+[[action]]
+id          = "prev_vehicle"
+name        = "Véhicule précédent"
+label       = "Véh. précéd."
+category    = "repair"
+icon        = "icons/car.svg"
+color       = "#546E7A"
+text_color  = "#FFFFFF"
+description = "Revient au véhicule précédent (Ctrl+Tab)"
+type        = "hotkey"
+keys        = "ctrl+tab"
+
+[[action]]
+id          = "couplers"
+name        = "Attelage"
+label       = "Attelage"
+category    = "repair"
+icon        = "icons/link.svg"
+color       = "#6A1B9A"
+text_color  = "#FFFFFF"
+description = "Accroche ou décroche une remorque (L)"
+type        = "hotkey"
+keys        = "l"
+
+[[action]]
+id          = "couplers_unlock"
+name        = "Tout décrocher"
+label       = "Décrocher"
+category    = "repair"
+icon        = "icons/unlink.svg"
+color       = "#7B1FA2"
+text_color  = "#FFFFFF"
+description = "Décroche tous les attelages (Alt+L)"
+type        = "hotkey"
+keys        = "alt+l"
+
+[[action]]
+id          = "camera_next"
+name        = "Caméra suivante"
+label       = "Caméra"
+category    = "camera"
+icon        = "icons/video.svg"
+color       = "#283593"
+text_color  = "#FFFFFF"
+description = "Passe à la caméra suivante (C)"
+type        = "hotkey"
+keys        = "c"
+
+[[action]]
+id          = "camera_free"
+name        = "Caméra libre"
+label       = "Cam. libre"
+category    = "camera"
+icon        = "icons/cctv.svg"
+color       = "#303F9F"
+text_color  = "#FFFFFF"
+description = "Active ou quitte la caméra libre (Maj+C)"
+type        = "hotkey"
+keys        = "shift+c"
+
+[[action]]
+id          = "camera_1"
+name        = "Caméra 1"
+label       = "Caméra 1"
+category    = "camera"
+icon        = "icons/video.svg"
+color       = "#3949AB"
+text_color  = "#FFFFFF"
+description = "Préréglage de caméra 1"
+type        = "hotkey"
+keys        = "1"
+
+[[action]]
+id          = "camera_2"
+name        = "Caméra 2"
+label       = "Caméra 2"
+category    = "camera"
+icon        = "icons/video.svg"
+color       = "#3949AB"
+text_color  = "#FFFFFF"
+description = "Préréglage de caméra 2"
+type        = "hotkey"
+keys        = "2"
+
+[[action]]
+id          = "camera_3"
+name        = "Caméra 3"
+label       = "Caméra 3"
+category    = "camera"
+icon        = "icons/video.svg"
+color       = "#3949AB"
+text_color  = "#FFFFFF"
+description = "Préréglage de caméra 3"
+type        = "hotkey"
+keys        = "3"
+
+[[action]]
+id          = "camera_4"
+name        = "Caméra 4"
+label       = "Caméra 4"
+category    = "camera"
+icon        = "icons/video.svg"
+color       = "#3949AB"
+text_color  = "#FFFFFF"
+description = "Préréglage de caméra 4"
+type        = "hotkey"
+keys        = "4"
+
+[[action]]
+id          = "camera_5"
+name        = "Caméra 5"
+label       = "Caméra 5"
+category    = "camera"
+icon        = "icons/video.svg"
+color       = "#3949AB"
+text_color  = "#FFFFFF"
+description = "Préréglage de caméra 5"
+type        = "hotkey"
+keys        = "5"
+
+[[action]]
+id          = "drop_player"
+name        = "Téléporter le véhicule à la caméra"
+label       = "Téléporter"
+category    = "camera"
+icon        = "icons/locate-fixed.svg"
+color       = "#5E35B1"
+text_color  = "#FFFFFF"
+description = "Place le véhicule là où est la caméra (F7)"
+type        = "hotkey"
+keys        = "f7"
+
+[[action]]
+id          = "drop_camera"
+name        = "Ramener la caméra au véhicule"
+label       = "Cam. → véh."
+category    = "camera"
+icon        = "icons/locate.svg"
+color       = "#512DA8"
+text_color  = "#FFFFFF"
+description = "Ramène la caméra au véhicule (F8)"
+type        = "hotkey"
+keys        = "f8"
+
+[[action]]
+id          = "pause"
+name        = "Pause"
+label       = "Pause"
+category    = "game"
+icon        = "icons/pause.svg"
+color       = "#424242"
+text_color  = "#FFFFFF"
+description = "Met le jeu en pause (J)"
+type        = "hotkey"
+keys        = "j"
+
+[[action]]
+id          = "slowmo"
+name        = "Ralenti"
+label       = "Ralenti"
+category    = "game"
+icon        = "icons/snail.svg"
+color       = "#00796B"
+text_color  = "#FFFFFF"
+description = "Active ou coupe le ralenti (Alt+Bas)"
+type        = "hotkey"
+keys        = "alt+down"
+
+[[action]]
+id          = "slower"
+name        = "Plus lent"
+label       = "Plus lent"
+category    = "game"
+icon        = "icons/rewind.svg"
+color       = "#00695C"
+text_color  = "#FFFFFF"
+description = "Ralentit encore (Alt+Gauche)"
+type        = "hotkey"
+keys        = "alt+left"
+
+[[action]]
+id          = "faster"
+name        = "Plus rapide"
+label       = "Plus rapide"
+category    = "game"
+icon        = "icons/fast-forward.svg"
+color       = "#00695C"
+text_color  = "#FFFFFF"
+description = "Accélère le ralenti (Alt+Droite)"
+type        = "hotkey"
+keys        = "alt+right"
+
+[[action]]
+id          = "photo_mode"
+name        = "Mode photo"
+label       = "Mode photo"
+category    = "game"
+icon        = "icons/aperture.svg"
+color       = "#AD1457"
+text_color  = "#FFFFFF"
+description = "Ouvre le mode photo (Ctrl+Alt+P)"
+type        = "hotkey"
+keys        = "ctrl+alt+p"
+
+[[action]]
+id          = "screenshot"
+name        = "Capture d'écran"
+label       = "Capture"
+category    = "game"
+icon        = "icons/image.svg"
+color       = "#C2185B"
+text_color  = "#FFFFFF"
+description = "Prend une capture d'écran (Ctrl+P)"
+type        = "hotkey"
+keys        = "ctrl+p"
+
+[[action]]
+id          = "hide_ui"
+name        = "Masquer l'interface"
+label       = "Masquer UI"
+category    = "game"
+icon        = "icons/eye-off.svg"
+color       = "#616161"
+text_color  = "#FFFFFF"
+description = "Masque ou réaffiche l'interface du jeu (Alt+U)"
+type        = "hotkey"
+keys        = "alt+u"
+
+[[action]]
+id          = "map"
+name        = "Carte"
+label       = "Carte"
+category    = "game"
+icon        = "icons/map.svg"
+color       = "#2E7D32"
+text_color  = "#FFFFFF"
+description = "Ouvre la grande carte (M)"
+type        = "hotkey"
+keys        = "m"
+
+[[action]]
+id          = "radial"
+name        = "Menu radial"
+label       = "Menu radial"
+category    = "game"
+icon        = "icons/circle-dot.svg"
+color       = "#455A64"
+text_color  = "#FFFFFF"
+description = "Ouvre le menu radial (E)"
+type        = "hotkey"
+keys        = "e"
+
+[[action]]
+id          = "vehicle_selector"
+name        = "Choisir un véhicule"
+label       = "Véhicules"
+category    = "game"
+icon        = "icons/car-front.svg"
+color       = "#1565C0"
+text_color  = "#FFFFFF"
+description = "Ouvre le sélecteur de véhicules (Ctrl+E)"
+type        = "hotkey"
+keys        = "ctrl+e"
+
+[[action]]
+id          = "parts"
+name        = "Pièces du véhicule"
+label       = "Pièces"
+category    = "game"
+icon        = "icons/package.svg"
+color       = "#0277BD"
+text_color  = "#FFFFFF"
+description = "Ouvre le sélecteur de pièces (Ctrl+W)"
+type        = "hotkey"
+keys        = "ctrl+w"
+
+[[action]]
+id          = "traffic"
+name        = "Circulation"
+label       = "Circulation"
+category    = "game"
+icon        = "icons/traffic-cone.svg"
+color       = "#EF6C00"
+text_color  = "#FFFFFF"
+description = "Active ou coupe la circulation (Maj+Ctrl+T)"
+type        = "hotkey"
+keys        = "shift+ctrl+t"
+
+[[action]]
+id          = "autopilot"
+name        = "Conduite autonome"
+label       = "Autonome"
+category    = "game"
+icon        = "icons/bot.svg"
+color       = "#6A1B9A"
+text_color  = "#FFFFFF"
+description = "Laisse l'IA conduire ton véhicule (Maj+Ctrl+I)"
+type        = "hotkey"
+keys        = "shift+ctrl+i"
+
+[[action]]
+id          = "replay_record"
+name        = "Enregistrer un replay"
+label       = "Replay"
+category    = "game"
+icon        = "icons/disc.svg"
+color       = "#B71C1C"
+text_color  = "#FFFFFF"
+description = "Démarre ou arrête l'enregistrement du replay (F2)"
+type        = "hotkey"
+keys        = "f2"
+
+[[page]]
+id   = "main"
+name = "BeamNG.drive"
+keys = [
+  { key = 1 , action = "ignition" },
+  { key = 2 , action = "headlights" },
+  { key = 3 , action = "signal_left" },
+  { key = 4 , action = "hazards" },
+  { key = 5 , action = "signal_right" },
+  { key = 6 , action = "parking_brake" },
+  { key = 7 , action = "horn" },
+  { key = 8 , action = "shift_down" },
+  { key = 9 , action = "shift_up" },
+  { key = 10, action = "gearbox_mode" },
+  { key = 11, action = "recover" },
+  { key = 12, action = "reset" },
+  { key = 13, action = "camera_next" },
+  { key = 14, action = "map" },
+  { key = 15, open = "more", label = "Plus…" },
+]
+
+[[page]]
+id   = "more"
+name = "BeamNG.drive — Plus"
+folder      = true
+close_after = false
+keys = [
+  { key = 1 , back = true },
+  { key = 2 , action = "nitrous" },
+  { key = 3 , action = "esc_mode" },
+  { key = 4 , action = "awd" },
+  { key = 5 , action = "lightbar" },
+  { key = 6 , action = "pause" },
+  { key = 7 , action = "slowmo" },
+  { key = 8 , action = "photo_mode" },
+  { key = 9 , action = "screenshot" },
+  { key = 10, action = "hide_ui" },
+  { key = 11, action = "camera_free" },
+  { key = 12, action = "drop_player" },
+  { key = 13, action = "vehicle_selector" },
+  { key = 14, action = "traffic" },
+  { key = 15, action = "walk" },
+]
