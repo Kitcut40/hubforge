@@ -4,6 +4,19 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.14.0] — 2026-11-09
+
+### Nouveautés
+- **Touches vivantes météo** :
+  - trois styles : maintenant (ville, icône, température, max/min), compacte, et prochains jours ;
+  - fond qui suit le temps (ciel bleu, nuit, gris, pluie…) ;
+  - ta ville se règle dans Réglages → Météo ; les prévisions viennent d'Open-Meteo, gratuites et sans compte ;
+  - HubForge ne se connecte à internet que si une touche météo existe.
+- **Carte graphique** : utilisation, température et mémoire vidéo (VRAM), en barre, jauge ou graphique. Pour les cartes NVIDIA, lu directement par le pilote, rien à installer.
+- **Volume d'une application sur une touche** : affiche en direct le volume de Discord, Spotify… (« Fermée » si l'appli ne tourne pas, « Muet » si coupée). Un appui coupe ou rétablit son son.
+- Nouvelle action « Couper le son d'une application ».
+- Bibliothèque : 6 nouvelles touches vivantes.
+
 ## [0.13.0] — 2026-11-09
 
 ### Nouveautés

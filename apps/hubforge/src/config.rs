@@ -53,6 +53,8 @@ pub struct General {
     /// un fader qui contrôle autre chose n'agit qu'une fois passé par le
     /// volume actuel (pas de saut brutal).
     pub fader_pickup: bool,
+    /// Ville des touches météo (vide = pas de météo, aucun accès à internet).
+    pub weather_city: String,
 }
 
 impl Default for General {
@@ -71,6 +73,7 @@ impl Default for General {
             sound_device: String::new(),
             sound_device2: String::new(),
             fader_pickup: true,
+            weather_city: String::new(),
         }
     }
 }
@@ -224,7 +227,8 @@ pub struct KeyDef {
     /// à chaque appui (texte, image, couleur et action propres).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub toggle: Option<KeyState>,
-    /// Touche vivante : "clock", "date", "cpu", "ram", "volume", "mic".
+    /// Touche vivante : "clock", "date", "cpu", "ram", "gpu", "gpu_temp",
+    /// "vram", "volume", "app_volume", "mic", "weather".
     /// L'image est redessinée en continu (le texte sert de titre).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widget: Option<String>,
@@ -232,6 +236,10 @@ pub struct KeyDef {
     /// "graph" pour CPU et RAM). Vide = style par défaut.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widget_style: Option<String>,
+    /// Ce que montre la touche vivante, quand il faut le préciser : les
+    /// applications d'un widget « app_volume » ("discord.exe,spotify.exe").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widget_target: Option<String>,
     /// Action d'un appui long (None = pas d'appui long).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub long: Option<Action>,
@@ -269,6 +277,7 @@ impl KeyDef {
                 toggle: None,
                 widget: None,
                 widget_style: None,
+                widget_target: None,
                 long: self.long.clone(),
                 double: self.double.clone(),
             },
@@ -310,6 +319,8 @@ pub enum Action {
     /// Commande multimédia : play_pause, next, previous, stop, mute,
     /// volume_up, volume_down, mic_mute
     Media { command: String },
+    /// Couper / rétablir le son d'applications ("discord.exe,spotify.exe").
+    AppMute { app: String },
     /// Change de page : "next", "previous" ou un numéro (1, 2…)
     Page { to: String },
     /// Verrouille la session
@@ -807,7 +818,8 @@ color = "#F4B400"
 action = { type = "folder", to = "3" }
 
 # Touches vivantes : l'image se met à jour toute seule.
-# widget = "clock", "date", "cpu", "ram", "volume" ou "mic".
+# widget = "clock", "date", "weather", "cpu", "ram", "gpu", "gpu_temp",
+# "vram", "volume", "app_volume" (avec widget_target = "discord.exe") ou "mic".
 [[pages.keys]]
 key = 11
 widget = "clock"

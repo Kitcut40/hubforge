@@ -298,12 +298,16 @@ fn draw_text_block(img: &mut RgbImage, text: &str, color: Rgb<u8>, top: u32, hei
 
 /// Comme `draw_text_block`, avec une taille de police maximale.
 pub(crate) fn draw_text_sized(img: &mut RgbImage, text: &str, color: Rgb<u8>, top: u32, height: u32, max_size: u32) {
+    draw_text_in(img, text, color, S as f32 / 2.0, S as f32 - 8.0, top, height, max_size);
+}
+
+/// Texte centré sur `cx`, dans une colonne de largeur `max_w`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_text_in(img: &mut RgbImage, text: &str, color: Rgb<u8>, cx: f32, max_w: f32, top: u32, height: u32, max_size: u32) {
     let text = text.trim();
     if text.is_empty() {
         return;
     }
-    let margin = 4.0;
-    let max_w = S as f32 - 2.0 * margin;
     let mut chosen = None;
     for size in (9..=max_size.max(9)).rev() {
         let scale = PxScale::from(size as f32);
@@ -331,7 +335,7 @@ pub(crate) fn draw_text_sized(img: &mut RgbImage, text: &str, color: Rgb<u8>, to
     let mut y = top as f32 + (height as f32 - total_h) / 2.0;
     for line in &lines {
         let w: f32 = line.chars().map(|c| f.h_advance(f.glyph_id(c))).sum();
-        let mut x = (S as f32 - w) / 2.0;
+        let mut x = cx - w / 2.0;
         let baseline = y + f.ascent();
         for c in line.chars() {
             let id = f.glyph_id(c);
@@ -482,6 +486,7 @@ mod tests {
             toggle: None,
             widget: None,
             widget_style: None,
+            widget_target: None,
             long: None,
             double: None,
         }

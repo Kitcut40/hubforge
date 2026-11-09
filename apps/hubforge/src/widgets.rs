@@ -1,8 +1,11 @@
 //! Touches vivantes : l'image de la touche est redessinée en continu
-//! (horloge, date, processeur, mémoire, volume, micro), avec plusieurs
-//! styles chacune (horloge à aiguilles, calendrier, jauge, graphique…).
+//! (horloge, date, processeur, mémoire, carte graphique, volume, micro,
+//! météo), avec plusieurs styles chacune (horloge à aiguilles, calendrier,
+//! jauge, graphique, prévisions…).
 
-use crate::audio::AudioState;
+use crate::audio::{AudioState, Meter};
+use crate::render::draw_text_in;
+use crate::weather::{self, Sky, Weather};
 use crate::config::{parse_color, KeyDef};
 use crate::render::{blend, draw_builtin_at, draw_svg, draw_text_sized};
 use hubforge_device::KEY_IMAGE_SIZE as S;
@@ -16,9 +19,19 @@ pub const WIDGETS: &[(&str, &str)] = &[
     ("date", "Date"),
     ("cpu", "Processeur (CPU)"),
     ("ram", "Mémoire (RAM)"),
+    ("gpu", "Carte graphique (utilisation)"),
+    ("gpu_temp", "Carte graphique (température)"),
+    ("vram", "Mémoire vidéo (VRAM)"),
     ("volume", "Volume général"),
+    ("app_volume", "Volume d'une application"),
     ("mic", "État du micro"),
+    ("weather", "Météo"),
 ];
+
+/// Touches vivantes qui ont besoin des mesures de la carte graphique.
+pub fn needs_gpu(kind: &str) -> bool {
+    matches!(kind, "gpu" | "gpu_temp" | "vram")
+}
 
 /// Styles de chaque touche vivante : (widget, style, nom). Le premier est
 /// le style par défaut.
@@ -34,8 +47,22 @@ pub const STYLES: &[(&str, &str, &str)] = &[
     ("ram", "bar", "Barre"),
     ("ram", "gauge", "Jauge"),
     ("ram", "graph", "Graphique"),
+    ("gpu", "bar", "Barre"),
+    ("gpu", "gauge", "Jauge"),
+    ("gpu", "graph", "Graphique"),
+    ("gpu_temp", "bar", "Barre"),
+    ("gpu_temp", "gauge", "Jauge"),
+    ("gpu_temp", "graph", "Graphique"),
+    ("vram", "bar", "Barre"),
+    ("vram", "gauge", "Jauge"),
+    ("vram", "graph", "Graphique"),
     ("volume", "bar", "Barre"),
     ("volume", "gauge", "Jauge"),
+    ("app_volume", "bar", "Barre"),
+    ("app_volume", "gauge", "Jauge"),
+    ("weather", "now", "Maintenant"),
+    ("weather", "compact", "Compacte"),
+    ("weather", "forecast", "Prochains jours"),
     ("mic", "classic", "Icône et texte"),
     ("mic", "icon", "Grande icône"),
 ];
@@ -83,6 +110,28 @@ pub fn local_time() -> LocalTime {
     imp::local_time()
 }
 
+/// Carte graphique (NVIDIA).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Gpu {
+    pub name: String,
+    /// Utilisation en %.
+    pub usage: u8,
+    /// Température en °C.
+    pub temp: u8,
+    /// Mémoire vidéo : (Go utilisés, Go au total).
+    pub mem: (f32, f32),
+}
+
+impl Gpu {
+    pub fn mem_pct(&self) -> u8 {
+        if self.mem.1 > 0.0 {
+            (self.mem.0 / self.mem.1 * 100.0).round().clamp(0.0, 100.0) as u8
+        } else {
+            0
+        }
+    }
+}
+
 /// Mesures du moment.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Snapshot {
@@ -95,6 +144,13 @@ pub struct Snapshot {
     /// Dernières mesures (la plus ancienne d'abord), pour les graphiques.
     pub cpu_hist: Vec<u8>,
     pub ram_hist: Vec<u8>,
+    /// Carte graphique, None si pas de carte NVIDIA (ou pas demandée).
+    pub gpu: Option<Gpu>,
+    pub gpu_hist: Vec<u8>,
+    pub gpu_temp_hist: Vec<u8>,
+    pub vram_hist: Vec<u8>,
+    /// Volume des applications des touches « app_volume » (cible "app:…").
+    pub apps: Vec<(String, Meter)>,
 }
 
 /// Prend les mesures ; garde la mesure précédente du processeur pour
@@ -105,6 +161,11 @@ pub struct Sampler {
     cpu: Option<u8>,
     cpu_hist: VecDeque<u8>,
     ram_hist: VecDeque<u8>,
+    gpu_hist: VecDeque<u8>,
+    gpu_temp_hist: VecDeque<u8>,
+    vram_hist: VecDeque<u8>,
+    /// Mesurer la carte graphique (seulement si une touche l'affiche).
+    pub want_gpu: bool,
 }
 
 impl Sampler {
@@ -130,6 +191,10 @@ impl Sampler {
         };
         push(&mut self.cpu_hist, self.cpu);
         push(&mut self.ram_hist, ram.map(|r| r.0));
+        let gpu = if self.want_gpu { imp::gpu() } else { None };
+        push(&mut self.gpu_hist, gpu.as_ref().map(|g| g.usage));
+        push(&mut self.gpu_temp_hist, gpu.as_ref().map(|g| g.temp.min(100)));
+        push(&mut self.vram_hist, gpu.as_ref().map(|g| g.mem_pct()));
         Snapshot {
             time: imp::local_time(),
             cpu: self.cpu,
@@ -137,6 +202,11 @@ impl Sampler {
             audio,
             cpu_hist: self.cpu_hist.iter().copied().collect(),
             ram_hist: self.ram_hist.iter().copied().collect(),
+            gpu,
+            gpu_hist: self.gpu_hist.iter().copied().collect(),
+            gpu_temp_hist: self.gpu_temp_hist.iter().copied().collect(),
+            vram_hist: self.vram_hist.iter().copied().collect(),
+            apps: Vec::new(),
         }
     }
 }
@@ -144,7 +214,7 @@ impl Sampler {
 /// Mesures partagées pour les aperçus de l'interface.
 pub fn preview_snapshot(audio: AudioState) -> Snapshot {
     static SAMPLER: OnceLock<Mutex<Sampler>> = OnceLock::new();
-    let m = SAMPLER.get_or_init(|| Mutex::new(Sampler::default()));
+    let m = SAMPLER.get_or_init(|| Mutex::new(Sampler { want_gpu: true, ..Default::default() }));
     m.lock().map(|mut s| s.sample(audio)).unwrap_or_default()
 }
 
@@ -164,6 +234,17 @@ pub fn signature(def: &KeyDef, snap: &Snapshot) -> String {
         ("ram", _) => format!("{:?}", snap.ram.map(|(p, u, _)| (p, (u * 10.0) as u32))),
         ("volume", _) => format!("{:?}{}", snap.audio.master.map(|v| (v * 100.0).round() as u32), snap.audio.master_muted),
         ("mic", _) => format!("{:?}", snap.audio.mic_muted),
+        ("gpu", "graph") => format!("{:?}{:?}", snap.gpu.as_ref().map(|g| g.usage), snap.gpu_hist),
+        ("gpu", _) => format!("{:?}", snap.gpu.as_ref().map(|g| g.usage)),
+        ("gpu_temp", "graph") => format!("{:?}{:?}", snap.gpu.as_ref().map(|g| g.temp), snap.gpu_temp_hist),
+        ("gpu_temp", _) => format!("{:?}", snap.gpu.as_ref().map(|g| g.temp)),
+        ("vram", "graph") => format!("{:?}{:?}", snap.gpu.as_ref().map(|g| (g.mem.0 * 10.0) as u32), snap.vram_hist),
+        ("vram", _) => format!("{:?}", snap.gpu.as_ref().map(|g| (g.mem.0 * 10.0) as u32)),
+        ("app_volume", _) => {
+            let m = app_meter(def, snap);
+            format!("{:?}{}{}", m.level.map(|v| (v * 100.0).round() as u32), m.muted, m.present)
+        }
+        ("weather", _) => format!("{:?}{}", weather::get(), t.day),
         _ => String::new(),
     };
     format!("{kind}|{style}|{content}|{}|{:?}|{:?}", def.label, def.color, def.text_color)
@@ -291,6 +372,231 @@ fn graph(img: &mut RgbImage, hist: &[u8], color: Rgb<u8>, grid: Rgb<u8>) {
     draw_svg(img, &svg);
 }
 
+/// Vert, puis orange, puis rouge selon la température (°C).
+fn temp_color(t: u8) -> Rgb<u8> {
+    match t {
+        0..=64 => Rgb([61, 220, 132]),
+        65..=79 => Rgb([255, 179, 0]),
+        _ => Rgb([255, 59, 48]),
+    }
+}
+
+/// Une mesure en pourcentage, prête à dessiner (CPU, RAM, GPU…).
+struct Metric<'a> {
+    title: &'a str,
+    pct: Option<u8>,
+    value: String,
+    color: Rgb<u8>,
+    hist: &'a [u8],
+    sub: Option<String>,
+}
+
+fn metric<'a>(kind: &str, snap: &'a Snapshot, label: &'a str) -> Metric<'a> {
+    let pick = |default: &'a str| if label.is_empty() { default } else { label };
+    let pct_text = |p: Option<u8>| p.map(|p| format!("{p} %")).unwrap_or_else(|| "–".into());
+    let no_gpu = || snap.gpu.is_none().then(|| "Pas de GPU NVIDIA".to_string());
+    match kind {
+        "ram" => Metric {
+            title: pick("RAM"),
+            pct: snap.ram.map(|r| r.0),
+            value: pct_text(snap.ram.map(|r| r.0)),
+            color: load_color(snap.ram.map(|r| r.0).unwrap_or(0)),
+            hist: &snap.ram_hist,
+            sub: snap.ram.map(|(_, u, tot)| format!("{} / {} Go", fr_number(u), tot.round())),
+        },
+        "gpu" => {
+            let p = snap.gpu.as_ref().map(|g| g.usage);
+            Metric { title: pick("GPU"), pct: p, value: pct_text(p), color: load_color(p.unwrap_or(0)), hist: &snap.gpu_hist, sub: no_gpu() }
+        }
+        "gpu_temp" => {
+            let t = snap.gpu.as_ref().map(|g| g.temp);
+            Metric {
+                title: pick("GPU"),
+                pct: t.map(|t| t.min(100)),
+                value: t.map(|t| format!("{t} °C")).unwrap_or_else(|| "–".into()),
+                color: temp_color(t.unwrap_or(0)),
+                hist: &snap.gpu_temp_hist,
+                sub: no_gpu(),
+            }
+        }
+        "vram" => {
+            let p = snap.gpu.as_ref().map(|g| g.mem_pct());
+            Metric {
+                title: pick("VRAM"),
+                pct: p,
+                value: pct_text(p),
+                color: load_color(p.unwrap_or(0)),
+                hist: &snap.vram_hist,
+                sub: snap.gpu.as_ref().map(|g| format!("{} / {} Go", fr_number(g.mem.0), g.mem.1.round())).or_else(no_gpu),
+            }
+        }
+        _ => Metric {
+            title: pick("CPU"),
+            pct: snap.cpu,
+            value: pct_text(snap.cpu),
+            color: load_color(snap.cpu.unwrap_or(0)),
+            hist: &snap.cpu_hist,
+            sub: None,
+        },
+    }
+}
+
+/// Cible audio d'une touche « app_volume » ("app:discord.exe,spotify.exe").
+pub fn app_target(def: &KeyDef) -> Option<String> {
+    let list: Vec<String> = def
+        .widget_target
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    (!list.is_empty()).then(|| format!("app:{}", list.join(",")))
+}
+
+fn app_meter(def: &KeyDef, snap: &Snapshot) -> Meter {
+    app_target(def).and_then(|t| snap.apps.iter().find(|(k, _)| *k == t).map(|(_, m)| *m)).unwrap_or_default()
+}
+
+/// « discord.exe » → « Discord ».
+fn app_title(def: &KeyDef) -> String {
+    let first = def.widget_target.as_deref().unwrap_or("").split(',').next().unwrap_or("").trim().to_string();
+    let base = first.strip_suffix(".exe").unwrap_or(&first);
+    let mut c = base.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().chain(c).collect(),
+        None => "Appli".into(),
+    }
+}
+
+// ----------------------------------------------------------------------
+// Météo
+// ----------------------------------------------------------------------
+
+fn sun(cx: f32, cy: f32, r: f32) -> String {
+    let mut s = format!(r##"<circle cx="{cx}" cy="{cy}" r="{r}" fill="#FFC531"/>"##);
+    for i in 0..8 {
+        let (x1, y1) = polar(cx, cy, r + 1.8, i as f32 * 45.0);
+        let (x2, y2) = polar(cx, cy, r + 3.6, i as f32 * 45.0);
+        s += &format!(r##"<line x1="{x1:.2}" y1="{y1:.2}" x2="{x2:.2}" y2="{y2:.2}" stroke="#FFC531" stroke-width="1.6" stroke-linecap="round"/>"##);
+    }
+    s
+}
+
+const CLOUD: &str = "M7 19a5 5 0 0 1-.6-9.96A6.5 6.5 0 0 1 18.6 9.6 4.75 4.75 0 0 1 18 19z";
+
+/// Icône météo dessinée (dans un carré de 24 unités, placée en `cx`, `cy`).
+fn weather_icon(code: u8, is_day: bool, cx: f32, cy: f32, size: f32) -> String {
+    let k = size / 24.0;
+    let body = match weather::sky(code) {
+        Sky::Clear if is_day => sun(12.0, 12.0, 5.0),
+        Sky::Clear => r##"<path d="M15 3a8.5 8.5 0 1 0 6.5 13.6A7 7 0 0 1 15 3z" fill="#E8EEF7"/>"##.to_string(),
+        Sky::Partly => {
+            let back = if is_day {
+                sun(8.5, 8.0, 3.6)
+            } else {
+                r##"<path d="M9 2.5a5.5 5.5 0 1 0 5 8A4.5 4.5 0 0 1 9 2.5z" fill="#E8EEF7"/>"##.to_string()
+            };
+            format!(r##"{back}<path d="{CLOUD}" transform="translate(2.4 2.6) scale(0.9)" fill="#F4F7FB"/>"##)
+        }
+        Sky::Cloudy => format!(
+            r##"<path d="{CLOUD}" transform="translate(-1.5 -2.5) scale(0.8)" fill="#B9C4D2"/><path d="{CLOUD}" transform="translate(1 1)" fill="#F4F7FB"/>"##
+        ),
+        Sky::Fog => format!(
+            r##"<path d="{CLOUD}" transform="translate(0 -3)" fill="#DDE3EA"/><g stroke="#DDE3EA" stroke-width="1.6" stroke-linecap="round"><line x1="4" y1="19.5" x2="20" y2="19.5"/><line x1="6" y1="22.5" x2="18" y2="22.5"/></g>"##
+        ),
+        Sky::Drizzle | Sky::Rain => {
+            let drops = if weather::sky(code) == Sky::Rain { [7.5, 11.5, 15.5].as_slice() } else { [9.5, 14.0].as_slice() };
+            let mut s = format!(r##"<path d="{CLOUD}" transform="translate(0 -4)" fill="#E3E9F1"/>"##);
+            for x in drops {
+                s += &format!(r##"<line x1="{x}" y1="17.5" x2="{}" y2="21.5" stroke="#5EB8FF" stroke-width="1.8" stroke-linecap="round"/>"##, x - 1.2);
+            }
+            s
+        }
+        Sky::Snow => format!(
+            r##"<path d="{CLOUD}" transform="translate(0 -4)" fill="#E3E9F1"/><g fill="#FFFFFF"><circle cx="8" cy="19" r="1.3"/><circle cx="12" cy="21.5" r="1.3"/><circle cx="16" cy="19" r="1.3"/></g>"##
+        ),
+        Sky::Storm => format!(
+            r##"<path d="{CLOUD}" transform="translate(0 -4)" fill="#AEB8C6"/><path d="M13 13l-3.5 5.5h3l-1.5 5 5-7h-3l1.5-3.5z" fill="#FFC531"/>"##
+        ),
+    };
+    format!(r#"<g transform="translate({:.2} {:.2}) scale({k:.3})">{body}</g>"#, cx - size / 2.0, cy - size / 2.0)
+}
+
+/// Fond automatique selon le temps (dégradé).
+fn weather_bg(code: u8, is_day: bool) -> (&'static str, &'static str) {
+    match (weather::sky(code), is_day) {
+        (_, false) => ("#24365C", "#0F1A33"),
+        (Sky::Clear | Sky::Partly, true) => ("#4FA8F8", "#2468D0"),
+        (Sky::Snow, true) => ("#9DB2D0", "#6D82A3"),
+        (Sky::Rain | Sky::Storm, true) => ("#5A6880", "#323C4E"),
+        _ => ("#8593A8", "#56637A"),
+    }
+}
+
+fn deg(v: f32) -> String {
+    format!("{}°", v.round() as i32)
+}
+
+fn render_weather(def: &KeyDef, style: &str, fg: Rgb<u8>, label: &str) -> RgbImage {
+    let custom = def.color.as_deref().filter(|c| !c.eq_ignore_ascii_case("#1F2229")).and_then(parse_color);
+    let w: Result<Weather, String> = weather::get();
+    let (code, is_day) = w.as_ref().map(|w| (w.code, w.is_day)).unwrap_or((3, true));
+    let mut img = RgbImage::from_pixel(S, S, Rgb([0x1F, 0x22, 0x29]));
+    match custom {
+        Some((r, g, b)) => img = RgbImage::from_pixel(S, S, Rgb([r, g, b])),
+        None => {
+            let (top, bottom) = if w.is_ok() { weather_bg(code, is_day) } else { ("#3A4150", "#262B35") };
+            draw_svg(
+                &mut img,
+                &format!(
+                    r#"<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{top}"/><stop offset="1" stop-color="{bottom}"/></linearGradient></defs><rect width="72" height="72" fill="url(#g)"/></svg>"#
+                ),
+            );
+        }
+    }
+    let soft = Rgb([(fg.0[0] as u16 * 4 / 5) as u8, (fg.0[1] as u16 * 4 / 5) as u8, (fg.0[2] as u16 * 4 / 5) as u8]);
+    let svg = |inner: String| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72">{inner}</svg>"#);
+    let w = match w {
+        Ok(w) => w,
+        Err(msg) => {
+            draw_svg(&mut img, &svg(weather_icon(3, true, 36.0, 22.0, 26.0)));
+            draw_text_sized(&mut img, &msg, fg, 38, 32, 10);
+            return img;
+        }
+    };
+    let city = if label.is_empty() { w.city.as_str() } else { label };
+    let today = w.days.first();
+    match style {
+        "compact" => {
+            draw_svg(&mut img, &svg(weather_icon(w.code, w.is_day, 51.0, 22.0, 30.0)));
+            draw_text_in(&mut img, &deg(w.temp), fg, 21.0, 38.0, 6, 32, 26);
+            let day = DAYS_SHORT[today.map(|d| d.dow).unwrap_or(0) as usize % 7];
+            draw_text_in(&mut img, day, soft, 21.0, 38.0, 40, 14, 11);
+            draw_text_sized(&mut img, weather::sky_name(w.code), soft, 55, 14, 10);
+        }
+        "forecast" => {
+            draw_svg(&mut img, r##"<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72"><line x1="36" y1="8" x2="36" y2="64" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="1"/></svg>"##);
+            for (i, d) in w.days.iter().skip(1).take(2).enumerate() {
+                let cx = 18.0 + i as f32 * 36.0;
+                draw_text_in(&mut img, DAYS_SHORT[d.dow as usize % 7], soft, cx, 32.0, 3, 13, 10);
+                draw_svg(&mut img, &svg(weather_icon(d.code, true, cx, 28.0, 22.0)));
+                draw_text_in(&mut img, &deg(d.max), fg, cx, 32.0, 41, 15, 13);
+                draw_text_in(&mut img, &deg(d.min), soft, cx, 32.0, 55, 13, 10);
+            }
+        }
+        _ => {
+            draw_text_sized(&mut img, city, soft, 2, 14, 10);
+            draw_svg(&mut img, &svg(weather_icon(w.code, w.is_day, 20.0, 33.0, 26.0)));
+            draw_text_in(&mut img, &deg(w.temp), fg, 50.0, 40.0, 19, 28, 24);
+            if let Some(d) = today {
+                draw_text_sized(&mut img, &format!("{} / {}", deg(d.max), deg(d.min)), soft, 54, 15, 10);
+            }
+        }
+    }
+    img
+}
+
 // ----------------------------------------------------------------------
 // Rendu
 // ----------------------------------------------------------------------
@@ -353,19 +659,10 @@ pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
                 img
             }
         }
-        "cpu" | "ram" => {
+        "cpu" | "ram" | "gpu" | "gpu_temp" | "vram" => {
             let bg = color_or(&def.color, dark);
             let mut img = RgbImage::from_pixel(S, S, bg);
-            let title = if !label.is_empty() {
-                label
-            } else if kind == "cpu" {
-                "CPU"
-            } else {
-                "RAM"
-            };
-            let pct = if kind == "cpu" { snap.cpu } else { snap.ram.map(|r| r.0) };
-            let value = pct.map(|p| format!("{p} %")).unwrap_or_else(|| "–".into());
-            let color = load_color(pct.unwrap_or(0));
+            let Metric { title, pct, value, color, hist, sub } = metric(kind, snap, label);
             let track = mix(fg, bg, 0.16);
             match style {
                 "gauge" => {
@@ -374,17 +671,11 @@ pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
                     draw_text_sized(&mut img, title, mix(fg, bg, 0.65), 55, 15, 10);
                 }
                 "graph" => {
-                    let hist = if kind == "cpu" { &snap.cpu_hist } else { &snap.ram_hist };
                     graph(&mut img, hist, color, mix(fg, bg, 0.14));
                     draw_text_sized(&mut img, &format!("{title} {value}"), fg, 3, 18, 12);
                 }
                 _ => {
                     draw_text_sized(&mut img, title, mix(fg, bg, 0.65), 3, 16, 11);
-                    let sub = if kind == "ram" {
-                        snap.ram.map(|(_, u, tot)| format!("{} / {} Go", fr_number(u), tot.round()))
-                    } else {
-                        None
-                    };
                     let has_sub = sub.is_some();
                     draw_text_sized(&mut img, &value, fg, 17, if has_sub { 28 } else { 32 }, 22);
                     let bar_y = if has_sub { 48 } else { 54 };
@@ -431,6 +722,35 @@ pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
             }
             img
         }
+        "app_volume" => {
+            let bg = color_or(&def.color, dark);
+            let mut img = RgbImage::from_pixel(S, S, bg);
+            let m = app_meter(def, snap);
+            let title = if label.is_empty() { app_title(def) } else { label.to_string() };
+            let v = m.level.unwrap_or(0.0);
+            let (icon, text, fill) = if def.widget_target.as_deref().unwrap_or("").trim().is_empty() {
+                ("volume-x", "Choisis l'appli".to_string(), mix(fg, bg, 0.35))
+            } else if !m.present {
+                ("volume-x", "Fermée".to_string(), mix(fg, bg, 0.35))
+            } else if m.muted {
+                ("volume-x", "Muet".to_string(), mix(fg, bg, 0.35))
+            } else {
+                (if v < 0.5 { "volume-1" } else { "volume-2" }, format!("{} %", (v * 100.0).round()), VOLUME_BLUE)
+            };
+            if style == "gauge" {
+                gauge(&mut img, if m.present { v } else { 0.0 }, fill, mix(fg, bg, 0.16));
+                draw_builtin_at(&mut img, icon, mix(fg, bg, 0.8), 16, 18);
+                draw_text_sized(&mut img, &text, fg, 34, 16, 13);
+                draw_text_sized(&mut img, &title, mix(fg, bg, 0.65), 55, 15, 10);
+            } else {
+                draw_text_sized(&mut img, &title, mix(fg, bg, 0.7), 3, 14, 11);
+                draw_builtin_at(&mut img, icon, fg, 18, 17);
+                draw_text_sized(&mut img, &text, fg, 36, 18, 15);
+                bar(&mut img, 58, if m.present { v } else { 0.0 }, fill, mix(fg, bg, 0.18));
+            }
+            img
+        }
+        "weather" => render_weather(def, style, fg, label),
         "mic" => {
             let (bg, icon, text) = match snap.audio.mic_muted {
                 Some(true) => (Rgb([0xC6, 0x28, 0x28]), "mic-off", "Micro coupé".to_string()),
@@ -539,6 +859,93 @@ mod imp {
         let used = (m.ullTotalPhys - m.ullAvailPhys) as f32 / gb;
         Some((m.dwMemoryLoad as u8, used, total))
     }
+
+    // --- Carte graphique NVIDIA, via la bibliothèque NVML du pilote ---
+
+    use std::ffi::c_void;
+    use std::sync::OnceLock;
+    use windows::core::{s, w, PCSTR};
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+
+    type Dev = *mut c_void;
+    #[repr(C)]
+    #[derive(Default)]
+    struct Util {
+        gpu: u32,
+        memory: u32,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct Mem {
+        total: u64,
+        free: u64,
+        used: u64,
+    }
+
+    struct Nvml {
+        dev: Dev,
+        name: String,
+        temp: unsafe extern "C" fn(Dev, u32, *mut u32) -> i32,
+        util: unsafe extern "C" fn(Dev, *mut Util) -> i32,
+        mem: unsafe extern "C" fn(Dev, *mut Mem) -> i32,
+    }
+    // Les pointeurs viennent d'une bibliothèque chargée une fois pour toutes.
+    unsafe impl Send for Nvml {}
+    unsafe impl Sync for Nvml {}
+
+    fn load() -> Option<Nvml> {
+        unsafe {
+            let lib = LoadLibraryW(w!("nvml.dll"))
+                .or_else(|_| LoadLibraryW(w!("C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvml.dll")))
+                .ok()?;
+            let f = |n: PCSTR| GetProcAddress(lib, n);
+            let init: unsafe extern "C" fn() -> i32 = std::mem::transmute(f(s!("nvmlInit_v2"))?);
+            let handle: unsafe extern "C" fn(u32, *mut Dev) -> i32 = std::mem::transmute(f(s!("nvmlDeviceGetHandleByIndex_v2"))?);
+            let name_fn: unsafe extern "C" fn(Dev, *mut u8, u32) -> i32 = std::mem::transmute(f(s!("nvmlDeviceGetName"))?);
+            if init() != 0 {
+                return None;
+            }
+            let mut dev: Dev = std::ptr::null_mut();
+            if handle(0, &mut dev) != 0 || dev.is_null() {
+                return None;
+            }
+            let mut buf = [0u8; 96];
+            let name = if name_fn(dev, buf.as_mut_ptr(), buf.len() as u32) == 0 {
+                let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+                String::from_utf8_lossy(&buf[..end]).to_string()
+            } else {
+                "NVIDIA".into()
+            };
+            log::info!("carte graphique : {name}");
+            Some(Nvml {
+                dev,
+                name,
+                temp: std::mem::transmute(f(s!("nvmlDeviceGetTemperature"))?),
+                util: std::mem::transmute(f(s!("nvmlDeviceGetUtilizationRates"))?),
+                mem: std::mem::transmute(f(s!("nvmlDeviceGetMemoryInfo"))?),
+            })
+        }
+    }
+
+    pub fn gpu() -> Option<super::Gpu> {
+        static NVML: OnceLock<Option<Nvml>> = OnceLock::new();
+        let n = NVML.get_or_init(load).as_ref()?;
+        let (mut t, mut u, mut m) = (0u32, Util::default(), Mem::default());
+        unsafe {
+            if (n.util)(n.dev, &mut u) != 0 {
+                return None;
+            }
+            let _ = (n.temp)(n.dev, 0, &mut t);
+            let _ = (n.mem)(n.dev, &mut m);
+        }
+        let gb = 1024.0 * 1024.0 * 1024.0;
+        Some(super::Gpu {
+            name: n.name.clone(),
+            usage: u.gpu.min(100) as u8,
+            temp: t.min(255) as u8,
+            mem: (m.used as f32 / gb, m.total as f32 / gb),
+        })
+    }
 }
 
 #[cfg(not(windows))]
@@ -592,6 +999,10 @@ mod imp {
         let gb = 1024.0 * 1024.0;
         Some((((total - avail) / total * 100.0).round() as u8, (total - avail) / gb, total / gb))
     }
+
+    pub fn gpu() -> Option<super::Gpu> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -610,6 +1021,7 @@ mod tests {
             toggle: None,
             widget: Some(widget.into()),
             widget_style: style.map(String::from),
+            widget_target: (widget == "app_volume").then(|| "discord.exe".into()),
             long: None,
             double: None,
         }
@@ -623,7 +1035,29 @@ mod tests {
             audio: AudioState { master: Some(0.45), master_muted: false, mic_muted: Some(true) },
             cpu_hist: vec![12, 18, 25, 40, 33, 22, 28, 60, 72, 45, 30, 23],
             ram_hist: vec![40, 40, 41, 41, 42, 41, 41],
+            gpu: Some(Gpu { name: "RTX 2060 SUPER".into(), usage: 23, temp: 35, mem: (2.4, 8.0) }),
+            gpu_hist: vec![5, 8, 23, 40, 61, 55, 30, 23],
+            gpu_temp_hist: vec![33, 34, 35, 38, 41, 40, 37, 35],
+            vram_hist: vec![28, 29, 30, 30, 31, 30],
+            apps: vec![("app:discord.exe".into(), Meter { present: true, muted: false, peak: 0.2, level: Some(0.81) })],
         }
+    }
+
+    fn fake_weather() {
+        weather::inject(
+            "Toulouse",
+            Weather {
+                city: "Toulouse".into(),
+                temp: 5.4,
+                code: 2,
+                is_day: true,
+                days: vec![
+                    weather::Day { dow: 1, code: 2, max: 8.2, min: 2.0 },
+                    weather::Day { dow: 2, code: 61, max: 8.0, min: 0.4 },
+                    weather::Day { dow: 3, code: 3, max: 9.1, min: 3.0 },
+                ],
+            },
+        );
     }
 
     #[test]
@@ -669,6 +1103,7 @@ mod tests {
     #[test]
     #[ignore]
     fn widget_sheet() {
+        fake_weather();
         let n = STYLES.len() as u32;
         let mut sheet = RgbImage::from_pixel(n * (S + 8) + 8, S + 16, Rgb([14, 15, 19]));
         for (i, (w, st, _)) in STYLES.iter().enumerate() {

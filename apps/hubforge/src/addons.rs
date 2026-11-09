@@ -496,6 +496,7 @@ impl AddonAction {
             toggle: None,
             widget: None,
             widget_style: None,
+            widget_target: None,
             long: None,
             double: None,
         }
@@ -536,6 +537,7 @@ impl Addon {
                                 toggle: None,
                                 widget: None,
                                 widget_style: None,
+                                widget_target: None,
                                 long: None,
                                 double: None,
                             }
@@ -551,6 +553,7 @@ impl Addon {
                                 toggle: None,
                                 widget: None,
                                 widget_style: None,
+                                widget_target: None,
                                 long: None,
                                 double: None,
                             }

@@ -32,6 +32,7 @@ mod render;
 mod share;
 mod sound;
 mod vars;
+mod weather;
 mod topology;
 mod ui;
 mod update;

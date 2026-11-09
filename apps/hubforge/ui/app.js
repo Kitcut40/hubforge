@@ -82,6 +82,12 @@ const LIBRARY = [
     { name: "Mémoire (RAM)", label: "", icon: "hard-drive", color: "#1F2229", widget: "ram", action: { type: "hotkey", keys: "ctrl+shift+esc" } },
     { name: "Volume général", label: "", icon: "volume-2", color: "#1F2229", widget: "volume", action: { type: "media", command: "mute" } },
     { name: "État du micro", label: "", icon: "mic", color: "#2E7D32", widget: "mic", action: { type: "media", command: "mic_mute" } },
+    { name: "Carte graphique (GPU)", label: "", icon: "monitor", color: "#1F2229", widget: "gpu", action: { type: "hotkey", keys: "ctrl+shift+esc" } },
+    { name: "Température du GPU", label: "", icon: "monitor", color: "#1F2229", widget: "gpu_temp", action: { type: "hotkey", keys: "ctrl+shift+esc" } },
+    { name: "Mémoire vidéo (VRAM)", label: "", icon: "monitor", color: "#1F2229", widget: "vram", action: { type: "hotkey", keys: "ctrl+shift+esc" } },
+    { name: "Volume d'une application", label: "", icon: "volume-2", color: "#1F2229", widget: "app_volume", widget_target: "discord.exe", action: { type: "app_mute", app: "discord.exe" } },
+    { name: "Météo", label: "", icon: "sun", color: "#1F2229", widget: "weather", action: { type: "none" } },
+    { name: "Météo des prochains jours", label: "", icon: "sun", color: "#1F2229", widget: "weather", widget_style: "forecast", action: { type: "none" } },
   ]},
   { cat: "HubForge", items: [
     { name: "Page suivante", label: "Page suivante", icon: "arrow-right", color: "#212121", action: { type: "page", to: "next" } },
@@ -97,7 +103,7 @@ const LIBRARY = [
 const ACTION_TYPES = [
   ["none", "Aucune action"], ["hotkey", "Raccourci clavier"], ["hold", "Maintenir des touches"], ["text", "Taper un texte"],
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
-  ["media", "Multimédia"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
+  ["media", "Multimédia"], ["app_mute", "Couper le son d'une application"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
   ["macro", "Macro (plusieurs actions à la suite)"], ["var", "Variable (compteur, interrupteur…)"], ["if", "Condition (si… alors… sinon)"],
   ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
   ["profile", "Changer de profil"],
@@ -106,8 +112,9 @@ const ACTION_TYPES = [
 const SWATCHES = ["#FF3B30", "#FF7A1A", "#FFB300", "#FFD60A", "#3DDC84", "#1DB954", "#00C8FF", "#1E88E5",
                   "#5865F2", "#8E24AA", "#E91E63", "#FFFFFF", "#607D8B", "#37474F", "#1F2229", "#000000"];
 
-const WIDGETS = [["", "Aucune (image fixe)"], ["clock", "Horloge"], ["date", "Date"], ["cpu", "Processeur (CPU)"],
-  ["ram", "Mémoire (RAM)"], ["volume", "Volume général"], ["mic", "État du micro"]];
+const WIDGETS = [["", "Aucune (image fixe)"], ["clock", "Horloge"], ["date", "Date"], ["weather", "Météo"], ["cpu", "Processeur (CPU)"],
+  ["ram", "Mémoire (RAM)"], ["gpu", "Carte graphique (utilisation)"], ["gpu_temp", "Carte graphique (température)"], ["vram", "Mémoire vidéo (VRAM)"],
+  ["volume", "Volume général"], ["app_volume", "Volume d'une application"], ["mic", "État du micro"]];
 
 const WIDGET_STYLES = {
   clock: [["digital", "Numérique"], ["analog", "À aiguilles"], ["big", "Grands chiffres"]],
@@ -115,12 +122,18 @@ const WIDGET_STYLES = {
   cpu: [["bar", "Barre"], ["gauge", "Jauge"], ["graph", "Graphique"]],
   ram: [["bar", "Barre"], ["gauge", "Jauge"], ["graph", "Graphique"]],
   volume: [["bar", "Barre"], ["gauge", "Jauge"]],
+  gpu: [["bar", "Barre"], ["gauge", "Jauge"], ["graph", "Graphique"]],
+  gpu_temp: [["bar", "Barre"], ["gauge", "Jauge"], ["graph", "Graphique"]],
+  vram: [["bar", "Barre"], ["gauge", "Jauge"], ["graph", "Graphique"]],
+  app_volume: [["bar", "Barre"], ["gauge", "Jauge"]],
+  weather: [["now", "Maintenant"], ["compact", "Compacte"], ["forecast", "Prochains jours"]],
   mic: [["classic", "Icône et texte"], ["icon", "Grande icône"]],
 };
 
 const FADER_TARGETS = [["master", "Volume général"], ["mic", "Micro"], ["app", "Application(s)"], ["none", "Rien"]];
 const ROLLER_MODES = [["volume", "Volume général"], ["mic", "Volume du micro"], ["app", "Volume d'applications"], ["scroll", "Défilement vertical"],
   ["hscroll", "Défilement horizontal"], ["zoom", "Zoom (Ctrl + molette)"], ["actions", "Actions (une par cran)"], ["none", "Rien"]];
+const exeList = (v) => v.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean).map((x) => /\.exe$/.test(x) ? x : x + ".exe").join(",");
 const rollerKind = (m) => (m || "").startsWith("app:") ? "app" : (m || "none");
 const CMPS = [["==", "est égal à", "="], ["!=", "est différent de", "≠"], [">", "est plus grand que", ">"], ["<", "est plus petit que", "<"],
   [">=", "est plus grand ou égal à", "≥"], ["<=", "est plus petit ou égal à", "≤"], ["contains", "contient", "contient"]];
@@ -262,7 +275,7 @@ async function init() {
 
 function normalize(cfg) {
   cfg.general = Object.assign({ brightness: 80, led_brightness: 100, base_color: "#00C8FF", press_feedback: true, gif_max_fps: 28, base_effect: 1, auto_pages: true,
-    long_press_ms: 500, double_press_ms: 300, sound_volume: 80, sound_device: "", sound_device2: "", fader_pickup: true }, cfg.general || {});
+    long_press_ms: 500, double_press_ms: 300, sound_volume: 80, sound_device: "", sound_device2: "", fader_pickup: true, weather_city: "" }, cfg.general || {});
   cfg.pages = cfg.pages && cfg.pages.length ? cfg.pages : [{ name: "Accueil", keys: [] }];
   cfg.faders = cfg.faders || [];
   while (cfg.faders.length < 5) cfg.faders.push({ target: "none", color: "#FFFFFF" });
@@ -771,6 +784,8 @@ async function onDropOnKey(k, dt) {
     if (item.toggle) def.toggle = clone(item.toggle);
     if (item.long) def.long = clone(item.long);
     if (item.widget) { def.widget = item.widget; delete def.icon; }
+    if (item.widget_style) def.widget_style = item.widget_style;
+    if (item.widget_target) def.widget_target = item.widget_target;
     setKeyDef(k, def);
     S.editState = 0;
     select({ type: "key", key: k });
@@ -980,6 +995,22 @@ function keyInspector(k) {
         onclick: () => { if (v === styles[0][0]) delete def.widget_style; else def.widget_style = v; keyChanged(k, { immediate: true }); renderInspector(); },
       }, l)));
       out.push(field("Style", row));
+      if (def.widget === "app_volume") {
+        out.push(field("Application(s)", el("input", { class: "input", value: def.widget_target || "", spellcheck: "false", placeholder: "ex. discord.exe",
+          onchange: (e) => {
+            const v = exeList(e.target.value);
+            if (v) def.widget_target = v; else delete def.widget_target;
+            // L'appui coupe le son de la même appli.
+            if (def.action && def.action.type === "app_mute") def.action.app = v;
+            keyChanged(k, { immediate: true }); renderInspector();
+          } }), el("p", { class: "hint" }, "Le nom du programme, comme dans « Volume d'applications » des faders.")));
+      }
+      if (def.widget === "weather" && !(S.cfg.general.weather_city || "").trim()) {
+        out.push(el("p", { class: "hint warn-text" }, "Choisis d'abord ta ville dans les réglages (section Météo)."));
+      }
+      if (["gpu", "gpu_temp", "vram"].includes(def.widget)) {
+        out.push(el("p", { class: "hint" }, "Cartes NVIDIA (lu par le pilote, rien à installer)."));
+      }
     }
   }
   out.push(field(live ? "Titre (facultatif)" : "Texte affiché", el("input", { id: "label-input", class: "input", value: st.label || "",
@@ -1099,7 +1130,7 @@ const ACTION_DEFAULTS = {
   none: { type: "none" }, hotkey: { type: "hotkey", keys: "" }, hold: { type: "hold", keys: "" }, text: { type: "text", text: "" },
   sound: { type: "sound", file: "", volume: 100, mode: "toggle" }, stop_sounds: { type: "stop_sounds" },
   "launch:program": { type: "launch", target: "" }, "launch:url": { type: "launch", target: "https://" },
-  "launch:path": { type: "launch", target: "", _kind: "path" }, media: { type: "media", command: "play_pause" },
+  "launch:path": { type: "launch", target: "", _kind: "path" }, media: { type: "media", command: "play_pause" }, app_mute: { type: "app_mute", app: "" },
   page: { type: "page", to: "next" }, lock: { type: "lock" }, open_config: { type: "open_config" },
   macro: { type: "macro", steps: [{ type: "hotkey", keys: "" }] }, wait: { type: "wait", ms: 500 },
   folder: { type: "folder", to: "" }, back: { type: "back" },
@@ -1118,6 +1149,7 @@ function stepSummary(a) {
     case "text": return a.text ? `Taper « ${a.text.length > 24 ? a.text.slice(0, 24) + "…" : a.text} »` : "Taper un texte";
     case "launch": return a.target ? `Ouvrir ${a.target.split(/[\\/]/).pop()}` : "Ouvrir…";
     case "media": return (MEDIA[a.command] || [a.command])[0];
+    case "app_mute": return `Couper ${(a.app || "une appli").split(",")[0].replace(/\.exe$/, "")}`;
     case "page": return a.to === "next" ? "Page suivante" : a.to === "previous" ? "Page précédente" : `Page ${a.to}`;
     case "lock": return "Verrouiller le PC";
     case "open_config": return "Ouvrir la configuration";
@@ -1242,6 +1274,10 @@ function actionEditor(st, k, onChange, opts = {}) {
   } else if (t === "media") {
     out.push(field("Commande", el("select", { class: "input", onchange: (e) => upd((x) => { x.command = e.target.value; }) },
       ...Object.entries(MEDIA).map(([v, [l]]) => el("option", { value: v, selected: v === a.command }, l)))));
+  } else if (t === "app_mute") {
+    out.push(field("Applications", el("input", { class: "input", value: a.app || "", spellcheck: "false", placeholder: "ex. discord.exe, spotify.exe",
+      onchange: (e) => upd((x) => { x.app = exeList(e.target.value); }) }),
+      el("p", { class: "hint" }, "Un appui coupe le son, le suivant le rétablit. Plusieurs applications séparées par des virgules.")));
   } else if (t === "page") {
     const opts2 = [["next", "Page suivante"], ["previous", "Page précédente"], ...S.cfg.pages.map((p, i) => [String(i + 1), `Page ${i + 1} — ${p.name}`])];
     out.push(field("Aller à", el("select", { class: "input", onchange: (e) => upd((x) => { x.to = e.target.value; }) },
@@ -2464,7 +2500,11 @@ function settingsInspector() {
   out.push(el("p", { class: "hint", style: "margin-top:0" }, "Astuce : tu peux aussi cliquer directement sur la base dans le dessin."));
   out.push(el("div", { class: "sep" }));
   out.push(switchRow("Assombrir la touche pendant l'appui", g.press_feedback, (v) => { g.press_feedback = v; changed(); }));
-  out.push(el("h2", {}, "Soundboard"));
+  out.push(el("h2", {}, "Météo"));
+  out.push(field("Ville des touches météo", el("input", { class: "input", value: g.weather_city || "", placeholder: "ex. Toulouse", spellcheck: "false",
+    onchange: (e) => { g.weather_city = e.target.value.trim(); changed(); } }),
+    el("p", { class: "hint" }, "Prévisions Open-Meteo, gratuites et sans compte. HubForge ne se connecte à internet que si une touche météo existe.")));
+  out.push(el("h2", { style: "margin-top:18px" }, "Soundboard"));
   out.push(rangeField("Volume des sons", g.sound_volume, 0, 100, " %", (v) => { g.sound_volume = v; changed(); }));
   const devSel = (value, onPick, emptyLabel) => {
     const sel = el("select", { class: "input", onchange: (e) => onPick(e.target.value) }, el("option", { value: "" }, emptyLabel));

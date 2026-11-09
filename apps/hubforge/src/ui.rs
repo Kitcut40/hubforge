@@ -501,7 +501,18 @@ pub async fn render_keys(state: State<'_, AppState>, keys: Vec<Option<KeyDef>>) 
     let has_widget = keys.iter().flatten().any(|d| d.widget.is_some());
     let snap = if has_widget {
         state.audio.send(crate::audio::AudioCmd::Poll);
-        Some(crate::widgets::preview_snapshot(state.audio.state()))
+        let mut snap = crate::widgets::preview_snapshot(state.audio.state());
+        let targets: Vec<String> = keys
+            .iter()
+            .flatten()
+            .filter(|d| d.widget.as_deref() == Some("app_volume"))
+            .filter_map(crate::widgets::app_target)
+            .collect();
+        if !targets.is_empty() {
+            state.audio.send(crate::audio::AudioCmd::Measure(targets.clone()));
+            snap.apps = targets.into_iter().filter_map(|t| state.audio.meter_opt(&t).map(|m| (t, m))).collect();
+        }
+        Some(snap)
     } else {
         None
     };

@@ -29,6 +29,8 @@ pub enum AudioCmd {
     /// Mesure le niveau sonore et l'état (coupé, présent) de ces cibles de
     /// fader ("master", "mic", "app:a.exe,b.exe"). Résultat dans `meters()`.
     Measure(Vec<String>),
+    /// Couper / rétablir le son d'applications.
+    ToggleAppMute(Vec<String>),
 }
 
 /// État d'une cible de fader, pour les LED « état » et « VU-mètre ».
@@ -156,6 +158,7 @@ mod imp {
             sessions: HashMap::new(),
             refreshed: Instant::now() - Duration::from_secs(60),
         };
+        let mut stamps: HashMap<String, Instant> = HashMap::new();
         while let Ok(cmd) = rx.recv() {
             if st.refreshed.elapsed() > Duration::from_secs(3) || matches!(cmd, AudioCmd::ListApps(_)) {
                 refresh(&mut st);
@@ -188,12 +191,28 @@ mod imp {
                 }
                 AudioCmd::Poll => Ok(()),
                 AudioCmd::Measure(targets) => {
-                    let mut out = HashMap::new();
-                    for t in targets {
-                        out.insert(t.clone(), measure(&st, t));
-                    }
+                    // Plusieurs demandeurs (LED des faders, touches vivantes) : on
+                    // garde chaque cible tant qu'elle est redemandée.
+                    let now = Instant::now();
                     if let Ok(mut m) = meters.lock() {
-                        *m = out;
+                        for t in targets {
+                            m.insert(t.clone(), measure(&st, t));
+                            stamps.insert(t.clone(), now);
+                        }
+                        stamps.retain(|_, at| now.duration_since(*at) < Duration::from_secs(3));
+                        m.retain(|k, _| stamps.contains_key(k));
+                    }
+                    Ok(())
+                }
+                AudioCmd::ToggleAppMute(names) => {
+                    let sessions: Vec<&Session> = names.iter().flat_map(|n| st.sessions.get(&n.to_lowercase()).into_iter().flatten()).collect();
+                    // Si une seule session a le son, on coupe tout ; sinon on rétablit tout.
+                    let any_on = sessions.iter().any(|s| unsafe { s.vol.GetMute() }.map(|b| !b.as_bool()).unwrap_or(false));
+                    for s in &sessions {
+                        let _ = unsafe { s.vol.SetMute(any_on, std::ptr::null()) };
+                    }
+                    if sessions.is_empty() {
+                        st.refreshed = Instant::now() - Duration::from_secs(60);
                     }
                     Ok(())
                 }
@@ -217,7 +236,7 @@ mod imp {
                 log::debug!("audio : {e}");
                 st.refreshed = Instant::now() - Duration::from_secs(60);
             }
-            if !matches!(cmd, AudioCmd::ListApps(_) | AudioCmd::SetApps(..) | AudioCmd::StepApps(..) | AudioCmd::Measure(_)) {
+            if !matches!(cmd, AudioCmd::ListApps(_) | AudioCmd::SetApps(..) | AudioCmd::StepApps(..) | AudioCmd::Measure(_) | AudioCmd::ToggleAppMute(_)) {
                 let snap = snapshot(&st);
                 if let Ok(mut s) = shared.lock() {
                     *s = snap;

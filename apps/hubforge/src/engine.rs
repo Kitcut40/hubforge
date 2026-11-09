@@ -306,6 +306,7 @@ impl Engine {
             fader_targets: Default::default(),
         };
         e.sync_fader_targets();
+        crate::weather::set_city(&e.cfg.general.weather_city);
         e.load_layout();
         e.apply_sound_devices();
         e.render_all();
@@ -524,6 +525,7 @@ impl Engine {
     fn apply_config(&mut self, cfg: Config) {
         let old = std::mem::replace(&mut self.cfg, cfg);
         self.config_error = None;
+        crate::weather::set_city(&self.cfg.general.weather_city);
         self.render_all();
         self.page = self.page.min(self.visuals.len().saturating_sub(1));
         // Les touches qui ne sont plus à 2 états reviennent à l'état normal.
@@ -800,7 +802,15 @@ impl Engine {
         if !defs.iter().any(|d| d.widget.is_some()) {
             return Vec::new();
         }
-        let snap = self.sampler.sample(self.audio.state());
+        self.sampler.want_gpu = defs.iter().any(|d| d.widget.as_deref().map(widgets::needs_gpu).unwrap_or(false));
+        let mut snap = self.sampler.sample(self.audio.state());
+        let targets: Vec<String> =
+            defs.iter().filter(|d| d.widget.as_deref() == Some("app_volume")).filter_map(widgets::app_target).collect();
+        if !targets.is_empty() {
+            // Résultat au tour suivant (toutes les 500 ms).
+            self.audio.send(AudioCmd::Measure(targets.clone()));
+            snap.apps = targets.into_iter().filter_map(|t| self.audio.meter_opt(&t).map(|m| (t, m))).collect();
+        }
         let mut changed = Vec::new();
         for def in defs.iter().filter(|d| d.widget.is_some() && (1..=KEY_COUNT as u8).contains(&d.key)) {
             let key = def.key - 1;
@@ -1038,6 +1048,14 @@ impl Engine {
             Action::Launch { target, args } => actions::launch(target, args),
             Action::Media { command } if command == "mic_mute" => self.audio.send(AudioCmd::ToggleMicMute),
             Action::Media { command } => self.input.media(command),
+            Action::AppMute { app } => {
+                let names: Vec<String> = app.split(',').map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
+                if !names.is_empty() {
+                    self.audio.send(AudioCmd::ToggleAppMute(names));
+                    // La touche « volume d'une application » se met à jour tout de suite.
+                    self.widgets_due = self.widgets_due.min(Instant::now() + Duration::from_millis(120));
+                }
+            }
             Action::Lock => actions::lock_session(),
             Action::Macro { steps } => {
                 if self.macro_queue.len() + steps.len() > 4 * config::MACRO_MAX_STEPS {
