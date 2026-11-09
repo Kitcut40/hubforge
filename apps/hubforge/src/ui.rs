@@ -553,6 +553,7 @@ pub async fn pick_file(app: AppHandle, kind: String) -> Result<Option<String>, S
         "addon" => d.add_filter("Addon HubForge", &["forge"]),
         "profile" => d.add_filter("Profil HubForge", &["hfprofile"]),
         "wad" => d.add_filter("Fichier de jeu Doom (WAD)", &["wad", "WAD"]),
+        "sound" => d.add_filter("Son", crate::sound::EXTENSIONS),
         "program" => d.add_filter("Programmes", &["exe", "lnk", "bat", "cmd"]).add_filter("Tous les fichiers", &["*"]),
         _ => d,
     };
@@ -862,4 +863,67 @@ pub fn stop_doom(state: State<AppState>) {
 #[tauri::command]
 pub fn doom_key(state: State<AppState>, pressed: bool, code: u8) {
     let _ = state.engine.lock().unwrap().send(EngineMsg::DoomKey { pressed, code });
+}
+
+// ---------------------------------------------------------------------------
+// Soundboard
+// ---------------------------------------------------------------------------
+
+/// Sorties audio disponibles (pour la soundboard).
+#[tauri::command]
+pub fn list_sound_devices() -> Vec<String> {
+    use rodio::cpal::traits::HostTrait;
+    use rodio::DeviceTrait;
+    rodio::cpal::default_host()
+        .output_devices()
+        .map(|ds| ds.filter_map(|d| d.name().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Copie un son dans le dossier de HubForge (`sounds/`) et renvoie son chemin
+/// relatif : le profil reste valable même si le fichier d'origine est déplacé.
+fn store_sound(cfg_dir: &std::path::Path, name: &str, bytes: &[u8]) -> Result<String, String> {
+    let name = std::path::Path::new(name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let ext = std::path::Path::new(&name).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if !crate::sound::EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!("format de son non pris en charge ({})", crate::sound::EXTENSIONS.join(", ")));
+    }
+    if bytes.len() > 50 * 1024 * 1024 {
+        return Err("son trop gros (50 Mo maximum)".into());
+    }
+    let dir = cfg_dir.join("sounds");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stem: String = std::path::Path::new(&name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().chars().map(|c| if c.is_alphanumeric() || "-_ ".contains(c) { c } else { '_' }).collect())
+        .unwrap_or_else(|| "son".into());
+    let mut file = format!("{stem}.{ext}");
+    let mut n = 2;
+    while dir.join(&file).exists() {
+        if std::fs::read(dir.join(&file)).map(|b| b == bytes).unwrap_or(false) {
+            return Ok(format!("sounds/{file}"));
+        }
+        file = format!("{stem} ({n}).{ext}");
+        n += 1;
+    }
+    std::fs::write(dir.join(&file), bytes).map_err(|e| e.to_string())?;
+    Ok(format!("sounds/{file}"))
+}
+
+#[tauri::command]
+pub fn import_sound(state: State<AppState>, path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("lecture impossible : {e}"))?;
+    store_sound(&state.cfg_dir, &path, &bytes)
+}
+
+/// Son déposé sur une touche (contenu en base64).
+#[tauri::command]
+pub fn import_sound_data(state: State<AppState>, name: String, data: String) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|e| e.to_string())?;
+    store_sound(&state.cfg_dir, &name, &bytes)
+}
+
+#[tauri::command]
+pub fn test_sound(state: State<AppState>, file: String, volume: u8) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::TestSound { file, volume });
 }

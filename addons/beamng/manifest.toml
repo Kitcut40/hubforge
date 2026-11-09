@@ -12,7 +12,7 @@
 [addon]
 id          = "beamng"
 name        = "BeamNG.drive"
-version     = "1.0.0"
+version     = "1.1.0"
 author      = "Benjamin & Claude"
 license     = "MIT"
 description = "Contact, rapports, feux, clignotants, réparation, caméras, ralenti, mode photo et plus."
@@ -103,6 +103,18 @@ type        = "hotkey"
 keys        = "p"
 
 [[action]]
+id          = "handbrake_hold"
+name        = "Frein à main (maintenir)"
+label       = "Frein à main"
+category    = "drive"
+icon        = "icons/circle-parking.svg"
+color       = "#B71C1C"
+text_color  = "#FFFFFF"
+description = "Frein à main tant que la touche est enfoncée, pour les virages serrés et le drift (Espace)"
+type        = "hold"
+keys        = "space"
+
+[[action]]
 id          = "horn"
 name        = "Klaxon"
 label       = "Klaxon"
@@ -110,8 +122,8 @@ category    = "drive"
 icon        = "icons/megaphone.svg"
 color       = "#F9A825"
 text_color  = "#FFFFFF"
-description = "Coup de klaxon (H)"
-type        = "hotkey"
+description = "Klaxonne tant que la touche est enfoncée (H)"
+type        = "hold"
 keys        = "h"
 
 [[action]]
@@ -266,8 +278,8 @@ category    = "repair"
 icon        = "icons/wrench.svg"
 color       = "#2E7D32"
 text_color  = "#FFFFFF"
-description = "Répare le véhicule et le remet sur la route ; maintenir pour revenir en arrière (Inser)"
-type        = "hotkey"
+description = "Appui court : répare et remet sur la route. Maintenir : remonte le temps, relâcher pour reprendre (Inser)"
+type        = "hold"
 keys        = "insert"
 
 [[action]]

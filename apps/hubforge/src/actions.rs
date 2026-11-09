@@ -35,6 +35,29 @@ impl Input {
         }
     }
 
+    /// Enfonce les touches d'une combinaison (sans les relâcher).
+    pub fn press(&mut self, combo: &str) -> bool {
+        let Some(e) = self.enigo.as_mut() else { return false };
+        let Some(keys) = combo.split('+').map(|t| parse_key(t.trim())).collect::<Option<Vec<_>>>().filter(|k| !k.is_empty()) else {
+            log::warn!("raccourci non reconnu : « {combo} »");
+            return false;
+        };
+        for k in &keys {
+            let _ = e.key(*k, Direction::Press);
+        }
+        true
+    }
+
+    /// Relâche les touches d'une combinaison enfoncée avec `press`.
+    pub fn release(&mut self, combo: &str) {
+        let Some(e) = self.enigo.as_mut() else { return };
+        if let Some(keys) = combo.split('+').map(|t| parse_key(t.trim())).collect::<Option<Vec<_>>>() {
+            for k in keys.iter().rev() {
+                let _ = e.key(*k, Direction::Release);
+            }
+        }
+    }
+
     pub fn tap(&mut self, key: Key) {
         if let Some(e) = self.enigo.as_mut() {
             let _ = e.key(key, Direction::Click);

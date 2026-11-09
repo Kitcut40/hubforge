@@ -49,6 +49,39 @@ fn key_icons(cfg: &mut Config) -> Vec<&mut Option<String>> {
     v
 }
 
+/// Fichiers son des touches (soundboard), y compris dans les macros, le
+/// second état, l'appui long et le double appui.
+fn key_sounds(cfg: &mut Config) -> Vec<&mut String> {
+    fn collect<'a>(a: &'a mut crate::config::Action, v: &mut Vec<&'a mut String>) {
+        match a {
+            crate::config::Action::Sound { file, .. } => v.push(file),
+            crate::config::Action::Macro { steps } => {
+                for s in steps.iter_mut() {
+                    collect(s, v);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut v = Vec::new();
+    for p in cfg.pages.iter_mut() {
+        for k in p.keys.iter_mut() {
+            let KeyDef { action, toggle, long, double, .. } = k;
+            collect(action, &mut v);
+            if let Some(t) = toggle {
+                collect(&mut t.action, &mut v);
+            }
+            if let Some(a) = long {
+                collect(a, &mut v);
+            }
+            if let Some(a) = double {
+                collect(a, &mut v);
+            }
+        }
+    }
+    v
+}
+
 /// Addons utilisés (icônes « addon:<id>/… »).
 fn used_addons(cfg: &Config) -> Vec<String> {
     let mut set = BTreeSet::new();
@@ -108,6 +141,32 @@ pub fn export(cfg_dir: &Path, profile_name: &str, dest: &Path) -> Result<usize, 
         files.push((name.clone(), real));
         renamed.insert(path, name.clone());
         *icon = Some(name);
+    }
+
+    // Sons : → sounds/<nom> dans l'archive.
+    for file in key_sounds(&mut cfg) {
+        let path = file.clone();
+        if path.trim().is_empty() {
+            continue;
+        }
+        if let Some(new) = renamed.get(&path) {
+            *file = new.clone();
+            continue;
+        }
+        let real = if Path::new(&path).is_absolute() { PathBuf::from(&path) } else { cfg_dir.join(&path) };
+        if !real.is_file() {
+            continue;
+        }
+        let base = safe_file_name(&real.file_name().unwrap_or_default().to_string_lossy());
+        let mut name = format!("sounds/{base}");
+        let mut n = 2;
+        while files.iter().any(|(f, _)| f == &name) {
+            name = format!("sounds/{n}-{base}");
+            n += 1;
+        }
+        files.push((name.clone(), real));
+        renamed.insert(path, name.clone());
+        *file = name;
     }
 
     let manifest = Manifest { format: 1, name: profile_name.to_string(), hubforge: crate::update::CURRENT.to_string(), addons };
@@ -191,6 +250,27 @@ pub fn import(cfg_dir: &Path, bytes: &[u8]) -> Result<ImportReport, String> {
             }
         }
         images += 1;
+    }
+
+    // Sons : extraits dans sounds/import-<profil>/.
+    let sounds_dir = cfg_dir.join("sounds").join(format!("import-{slug}"));
+    for entry in names.iter().filter(|n| n.starts_with("sounds/") && !n.ends_with('/')) {
+        let base = safe_file_name(entry.trim_start_matches("sounds/").rsplit('/').next().unwrap_or(""));
+        let mut f = zip.by_name(entry).map_err(|e| e.to_string())?;
+        total += f.size();
+        if total > MAX_BYTES {
+            return Err("profil trop gros (100 Mo maximum)".into());
+        }
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&sounds_dir).map_err(|e| e.to_string())?;
+        std::fs::write(sounds_dir.join(&base), buf).map_err(|e| e.to_string())?;
+        let new_ref = format!("sounds/import-{slug}/{base}");
+        for file in key_sounds(&mut cfg) {
+            if file.as_str() == entry.as_str() {
+                *file = new_ref.clone();
+            }
+        }
     }
 
     crate::profiles::create(cfg_dir, &name, None)?;

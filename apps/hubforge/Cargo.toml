@@ -1,6 +1,6 @@
 [package]
 name = "hubforge"
-version = "0.11.1"
+version = "0.12.0"
 description = "HubForge — logiciel libre pour le Cooler Master MasterHUB"
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,7 @@ hubforge-device = { path = "../../crates/hubforge-device" }
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
+rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3", "symphonia-wav", "symphonia-flac", "symphonia-isomp4", "symphonia-aac", "vorbis"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 ab_glyph = "0.2"
 resvg = { version = "0.45", default-features = false }

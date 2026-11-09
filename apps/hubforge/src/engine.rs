@@ -10,6 +10,7 @@ use crate::foreground;
 use crate::widgets;
 use crate::game::{self, Game};
 use crate::doom;
+use crate::sound::{SoundCmd, Sounds};
 use crate::lights::{self, Rgb};
 use crate::profiles::{self, SharedActive};
 use crate::topology::{self, Placement};
@@ -38,6 +39,8 @@ pub enum EngineMsg {
     PreviewAnimation(Option<lights::Animation>),
     /// Orientation de la base ou positions manuelles modifiées.
     ReloadLayout,
+    /// Essayer un son (bouton « Écouter » de l'interface).
+    TestSound { file: String, volume: u8 },
     /// Easter egg : lancer Doom avec ce fichier WAD.
     StartDoom(std::path::PathBuf),
     StopDoom,
@@ -177,6 +180,10 @@ pub struct Engine {
     faders: HashMap<String, [u8; FADER_COUNT]>,
     input: Input,
     audio: Audio,
+    /// Soundboard.
+    sounds: Sounds,
+    /// Touches du PC maintenues par une touche du MasterHUB (action « maintenir »).
+    held: HashMap<u8, String>,
     gif_tokens: f32,
     gif_last: Instant,
     config_error: Option<String>,
@@ -248,6 +255,8 @@ impl Engine {
             faders: HashMap::new(),
             input: Input::new(),
             audio,
+            sounds: Sounds::new(),
+            held: HashMap::new(),
             gif_tokens: 0.0,
             gif_last: Instant::now(),
             config_error: None,
@@ -267,6 +276,7 @@ impl Engine {
             doom_error: None,
         };
         e.load_layout();
+        e.apply_sound_devices();
         e.render_all();
         Ok(e)
     }
@@ -373,6 +383,7 @@ impl Engine {
 
     fn shutdown(&mut self) {
         log::info!("arrêt de HubForge…");
+        self.release_held();
         // Le module 15 touches retrouve son animation du logo.
         self.mgr.send_kind(Kind::Keys15, Command::Feature(protocol::keys15_sw_mode(false)));
         self.mgr.shutdown();
@@ -417,6 +428,9 @@ impl Engine {
                     self.show_page();
                 }
                 self.notify();
+            }
+            EngineMsg::TestSound { file, volume } => {
+                self.play_sound("test", &file, volume, "restart");
             }
             EngineMsg::StartDoom(wad) => self.start_doom(&wad),
             EngineMsg::StopDoom => self.end_doom(),
@@ -484,6 +498,9 @@ impl Engine {
             if k == Kind::Keys15 || leds_changed {
                 self.setup_module(&s, k);
             }
+        }
+        if old.general.sound_device != self.cfg.general.sound_device || old.general.sound_device2 != self.cfg.general.sound_device2 {
+            self.apply_sound_devices();
         }
         if old.lights.animations != self.cfg.lights.animations {
             self.lights_t0 = Instant::now();
@@ -602,6 +619,9 @@ impl Engine {
                 self.setup_module(&info.serial, info.kind);
             }
             Event::Disconnected { serial } => {
+                if self.modules.get(&serial) == Some(&Kind::Keys15) {
+                    self.release_held();
+                }
                 self.sent_base.remove(&serial);
                 self.sent_faders.remove(&serial);
                 if let Some(k) = self.modules.remove(&serial) {
@@ -789,6 +809,22 @@ impl Engine {
             let page = self.page;
             self.toggled.insert((page, key), state == 0);
         }
+        // « Maintenir » : les touches restent enfoncées jusqu'au relâchement.
+        if let Action::Hold { keys } = &action {
+            if self.pressed[key as usize] && !self.held.contains_key(&key) {
+                if self.input.press(keys) {
+                    self.held.insert(key, keys.clone());
+                }
+                return;
+            }
+        }
+        // Son d'une touche : identifié par la page et la touche.
+        if let Action::Sound { file, volume, mode } = &action {
+            let id = format!("{}:{}", self.page, key);
+            self.play_sound(&id, file, *volume, mode);
+            self.nudge_widgets();
+            return;
+        }
         let page_before = self.page;
         self.execute(&action);
         self.nudge_widgets();
@@ -809,6 +845,9 @@ impl Engine {
     }
 
     fn key_up(&mut self, key: u8) {
+        if let Some(combo) = self.held.remove(&key) {
+            self.input.release(&combo);
+        }
         if (key as usize) < KEY_COUNT && self.doom.is_some() {
             self.doom_pad(key as usize, false);
             return;
@@ -839,10 +878,37 @@ impl Engine {
         }
     }
 
+    /// Joue un son de la soundboard (volume du son × volume général).
+    fn play_sound(&mut self, id: &str, file: &str, volume: u8, mode: &str) {
+        let path = std::path::Path::new(file);
+        let path = if path.is_absolute() { path.to_path_buf() } else { self.cfg_dir.join(path) };
+        let v = volume as f32 / 100.0 * self.cfg.general.sound_volume.min(100) as f32 / 100.0;
+        self.sounds.send(SoundCmd::Play { id: id.to_string(), path, volume: v, mode: mode.to_string() });
+    }
+
+    fn apply_sound_devices(&self) {
+        let g = &self.cfg.general;
+        self.sounds.send(SoundCmd::Devices { main: g.sound_device.clone(), second: g.sound_device2.clone() });
+    }
+
+    /// Relâche toutes les touches maintenues (changement de page, fin…).
+    fn release_held(&mut self) {
+        for (_, combo) in std::mem::take(&mut self.held) {
+            self.input.release(&combo);
+        }
+    }
+
     fn execute(&mut self, action: &Action) {
         match action {
             Action::None => {}
             Action::Hotkey { keys } => self.input.hotkey(keys),
+            // Dans une macro ou un appui long : simple appui-relâché.
+            Action::Hold { keys } => self.input.hotkey(keys),
+            Action::Sound { file, volume, mode } => {
+                let id = format!("{}:{}", self.page, file);
+                self.play_sound(&id, file, *volume, mode);
+            }
+            Action::StopSounds => self.sounds.send(SoundCmd::StopAll),
             Action::Text { text } => self.input.text(text),
             Action::Launch { target, args } => actions::launch(target, args),
             Action::Media { command } if command == "mic_mute" => self.audio.send(AudioCmd::ToggleMicMute),
@@ -1243,6 +1309,7 @@ impl Engine {
     }
 
     fn change_page(&mut self, p: usize) {
+        self.release_held();
         self.pressed = [false; KEY_COUNT];
         self.gesture = None;
         self.page = p;

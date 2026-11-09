@@ -101,6 +101,7 @@ Types d'action disponibles :
 | `type` | Champs | Exemple |
 |---|---|---|
 | `hotkey` | `keys` | `keys = "ctrl+shift+s"` · touches : `ctrl alt shift win`, lettres, chiffres, `f1`–`f24`, `enter esc tab space delete backspace home end pageup pagedown up down left right printscreen` |
+| `hold` | `keys` | comme `hotkey`, mais les touches restent enfoncées tant que la touche du MasterHUB est tenue (klaxon, appuyer-pour-parler…) |
 | `text` | `text` | `text = "Bonjour !"` (accents acceptés) |
 | `launch` | `target`, `args` (facultatif) | `target = "https://exemple.fr"` ou `"notepad.exe"` ou un dossier |
 | `media` | `command` | `play_pause next previous stop mute volume_up volume_down mic_mute` |
@@ -127,7 +128,7 @@ steps = [
 ]
 ```
 
-Interdits dans un addon (pour la sécurité de l'utilisateur) : `profile`, `game`, `open_config`.
+Interdits dans un addon (pour la sécurité de l'utilisateur) : `profile`, `game`, `open_config`, `sound`.
 
 ### 3.5 `[[page]]` — pages prêtes à l'emploi (facultatif)
 

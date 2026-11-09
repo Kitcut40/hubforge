@@ -4,6 +4,20 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.12.0] — 2026-11-09
+
+### Nouveautés
+- **Action « Maintenir des touches »** : les touches du PC restent enfoncées tant que tu tiens celle du MasterHUB (klaxon, accélérateur, appuyer-pour-parler, retour en arrière dans BeamNG…). Elles sont relâchées toutes seules si la page change ou si le module est débranché.
+- **Soundboard** :
+  - action « Jouer un son » (mp3, wav, ogg, flac, m4a) avec son volume et ce que fait un nouvel appui pendant la lecture (arrêter, recommencer ou rejouer par-dessus) ;
+  - action « Arrêter tous les sons » ;
+  - glisse un fichier son sur une touche pour la créer directement ;
+  - réglages : volume général des sons, sortie audio, et **seconde sortie** (câble audio virtuel) pour que les sons partent aussi dans Discord ou sur le stream ;
+  - les sons sont copiés dans le dossier de HubForge et inclus dans les profils exportés.
+
+### Addons
+- BeamNG.drive 1.1.0 : klaxon et frein à main maintenus, « Réparer » maintenu remonte le temps.
+
 ## [0.11.1] — 2026-11-09
 
 ### Corrections

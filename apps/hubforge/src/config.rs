@@ -43,6 +43,12 @@ pub struct General {
     pub long_press_ms: u32,
     /// Délai maximal entre les deux appuis d'un double appui (millisecondes).
     pub double_press_ms: u32,
+    /// Soundboard : volume général des sons (0–100), sortie principale
+    /// (nom du périphérique, vide = sortie par défaut de Windows) et seconde
+    /// sortie facultative (ex. câble audio virtuel pour envoyer les sons dans Discord).
+    pub sound_volume: u8,
+    pub sound_device: String,
+    pub sound_device2: String,
 }
 
 impl Default for General {
@@ -57,6 +63,9 @@ impl Default for General {
             auto_pages: true,
             long_press_ms: 500,
             double_press_ms: 300,
+            sound_volume: 80,
+            sound_device: String::new(),
+            sound_device2: String::new(),
         }
     }
 }
@@ -239,6 +248,21 @@ pub enum Action {
     None,
     /// Raccourci clavier, ex. "ctrl+shift+esc"
     Hotkey { keys: String },
+    /// Touches maintenues tant que la touche du MasterHUB est enfoncée
+    /// (klaxon, accélérateur, « appuyer pour parler »…).
+    Hold { keys: String },
+    /// Joue un son (soundboard). `file` : chemin absolu ou relatif au dossier
+    /// de configuration ; `mode` : "toggle" (rappuyer arrête), "restart"
+    /// (rappuyer recommence) ou "overlap" (les sons se superposent).
+    Sound {
+        file: String,
+        #[serde(default = "default_volume")]
+        volume: u8,
+        #[serde(default = "default_sound_mode")]
+        mode: String,
+    },
+    /// Arrête tous les sons en cours
+    StopSounds,
     /// Tape un texte
     Text { text: String },
     /// Lance une application, ouvre un fichier, un dossier ou une URL
@@ -276,6 +300,14 @@ pub enum Action {
 /// Nombre maximal d'étapes dans une macro et durée maximale d'une pause.
 pub const MACRO_MAX_STEPS: usize = 100;
 pub const WAIT_MAX_MS: u64 = 60_000;
+
+fn default_volume() -> u8 {
+    100
+}
+
+fn default_sound_mode() -> String {
+    "toggle".into()
+}
 
 fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
     match a {

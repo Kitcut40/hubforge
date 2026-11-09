@@ -245,7 +245,7 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
             return Err(format!("{ctx} : le champ « type » est obligatoire (hotkey, text, launch, media, macro…)"));
         }
         let action: Action = toml::Value::Table(act).try_into().map_err(|e| format!("{ctx} : {e}"))?;
-        if matches!(action, Action::Game | Action::Profile { .. } | Action::OpenConfig) {
+        if matches!(action, Action::Game | Action::Profile { .. } | Action::OpenConfig | Action::Sound { .. }) {
             return Err(format!("{ctx} : ce type d'action n'est pas autorisé dans un addon"));
         }
         let color = get_str(t, "color");

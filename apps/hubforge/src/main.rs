@@ -30,6 +30,7 @@ mod official;
 mod profiles;
 mod render;
 mod share;
+mod sound;
 mod topology;
 mod ui;
 mod update;
@@ -218,6 +219,10 @@ fn main() {
             ui::get_layout,
             ui::set_base_rot,
             ui::set_placement,
+            ui::list_sound_devices,
+            ui::import_sound,
+            ui::import_sound_data,
+            ui::test_sound,
             ui::start_doom,
             ui::download_freedoom,
             ui::stop_doom,

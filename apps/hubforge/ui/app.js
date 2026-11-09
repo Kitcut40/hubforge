@@ -23,6 +23,7 @@ const LIBRARY = [
   { cat: "Clavier", items: [
     { name: "Raccourci clavier", label: "Raccourci", icon: "keyboard", color: "#3949AB", action: { type: "hotkey", keys: "" } },
     { name: "Taper un texte", label: "Texte", icon: "type", color: "#EF6C00", action: { type: "text", text: "" } },
+    { name: "Maintenir des touches", label: "Maintenir", icon: "keyboard", color: "#283593", action: { type: "hold", keys: "" } },
     { name: "Macro (plusieurs actions)", label: "Macro", icon: "layers", color: "#6A1B9A", action: { type: "macro", steps: [{ type: "hotkey", keys: "" }] } },
     { name: "Copier", label: "Copier", icon: "copy", color: "#5D4037", action: { type: "hotkey", keys: "ctrl+c" } },
     { name: "Coller", label: "Coller", icon: "clipboard-paste", color: "#5D4037", action: { type: "hotkey", keys: "ctrl+v" } },
@@ -44,6 +45,10 @@ const LIBRARY = [
     name, label: name.replace("Piste ", ""), icon, color: command === "mic_mute" || command === "mute" ? "#C62828" : "#2E7D32",
     action: { type: "media", command },
   }))},
+  { cat: "Soundboard", items: [
+    { name: "Jouer un son", label: "Son", icon: "music", color: "#AD1457", action: { type: "sound", file: "", volume: 100, mode: "toggle" } },
+    { name: "Arrêter tous les sons", label: "Stop sons", icon: "square", color: "#B71C1C", action: { type: "stop_sounds" } },
+  ]},
   { cat: "Système", items: [
     { name: "Verrouiller le PC", label: "Verrouiller", icon: "lock", color: "#6A1B9A", action: { type: "lock" } },
     { name: "Capture d'écran", label: "Capture", icon: "scan", color: "#00897B", action: { type: "hotkey", keys: "win+shift+s" } },
@@ -82,9 +87,9 @@ const LIBRARY = [
 ];
 
 const ACTION_TYPES = [
-  ["none", "Aucune action"], ["hotkey", "Raccourci clavier"], ["text", "Taper un texte"],
+  ["none", "Aucune action"], ["hotkey", "Raccourci clavier"], ["hold", "Maintenir des touches"], ["text", "Taper un texte"],
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
-  ["media", "Multimédia"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
+  ["media", "Multimédia"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
   ["macro", "Macro (plusieurs actions à la suite)"],
   ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
   ["profile", "Changer de profil"],
@@ -228,7 +233,7 @@ async function init() {
 
 function normalize(cfg) {
   cfg.general = Object.assign({ brightness: 80, led_brightness: 100, base_color: "#00C8FF", press_feedback: true, gif_max_fps: 28, base_effect: 1, auto_pages: true,
-    long_press_ms: 500, double_press_ms: 300 }, cfg.general || {});
+    long_press_ms: 500, double_press_ms: 300, sound_volume: 80, sound_device: "", sound_device2: "" }, cfg.general || {});
   cfg.pages = cfg.pages && cfg.pages.length ? cfg.pages : [{ name: "Accueil", keys: [] }];
   cfg.faders = cfg.faders || [];
   while (cfg.faders.length < 5) cfg.faders.push({ target: "none", color: "#FFFFFF" });
@@ -746,7 +751,22 @@ async function onDropOnKey(k, dt) {
   if (dt.files && dt.files.length) {
     const f = dt.files[0];
     if (/\.forge$/i.test(f.name)) { installForgeFile(f); return; }
-    if (!/\.(png|jpe?g|gif|webp|bmp)$/i.test(f.name)) { toast("Dépose une image (png, jpg, gif, webp).", true); return; }
+    if (/\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(f.name)) {
+      try {
+        const rel = await invoke("import_sound_data", { name: f.name, data: await fileToBase64(f) });
+        const old = keyDef(k);
+        const def = old && old.action && old.action.type === "sound" ? clone(old)
+          : { key: k, label: f.name.replace(/\.[^.]+$/, "").slice(0, 24), color: "#AD1457", icon: (old && old.icon) || "builtin:music", action: {} };
+        def.action = { type: "sound", file: rel, volume: (old && old.action && old.action.volume) || 100, mode: (old && old.action && old.action.mode) || "toggle" };
+        setKeyDef(k, def);
+        S.editState = 0;
+        select({ type: "key", key: k });
+        keyChanged(k, { immediate: true });
+        toast(`Son « ${f.name} » ajouté sur la touche ${k}.`);
+      } catch (e) { toast(String(e), true); }
+      return;
+    }
+    if (!/\.(png|jpe?g|gif|webp|bmp)$/i.test(f.name)) { toast("Dépose une image (png, jpg, gif, webp) ou un son (mp3, wav, ogg…).", true); return; }
     const data = await fileToBase64(f);
     try {
       const rel = await invoke("import_image_data", { name: f.name, data });
@@ -1045,7 +1065,8 @@ function actionTypeId(a) {
 
 /** Valeurs par défaut quand on choisit un type d'action. */
 const ACTION_DEFAULTS = {
-  none: { type: "none" }, hotkey: { type: "hotkey", keys: "" }, text: { type: "text", text: "" },
+  none: { type: "none" }, hotkey: { type: "hotkey", keys: "" }, hold: { type: "hold", keys: "" }, text: { type: "text", text: "" },
+  sound: { type: "sound", file: "", volume: 100, mode: "toggle" }, stop_sounds: { type: "stop_sounds" },
   "launch:program": { type: "launch", target: "" }, "launch:url": { type: "launch", target: "https://" },
   "launch:path": { type: "launch", target: "", _kind: "path" }, media: { type: "media", command: "play_pause" },
   page: { type: "page", to: "next" }, lock: { type: "lock" }, open_config: { type: "open_config" },
@@ -1058,6 +1079,9 @@ const ACTION_DEFAULTS = {
 function stepSummary(a) {
   switch (a.type) {
     case "hotkey": return a.keys ? `Raccourci ${a.keys}` : "Raccourci clavier";
+    case "hold": return a.keys ? `Appuyer sur ${a.keys}` : "Touches";
+    case "sound": return a.file ? `Son ${a.file.split(/[\\/]/).pop()}` : "Jouer un son";
+    case "stop_sounds": return "Arrêter les sons";
     case "text": return a.text ? `Taper « ${a.text.length > 24 ? a.text.slice(0, 24) + "…" : a.text} »` : "Taper un texte";
     case "launch": return a.target ? `Ouvrir ${a.target.split(/[\\/]/).pop()}` : "Ouvrir…";
     case "media": return (MEDIA[a.command] || [a.command])[0];
@@ -1105,7 +1129,7 @@ function actionEditor(st, k, onChange, opts = {}) {
     applyAppIcon(k, st, p, { quiet: true, keepIcon: ownImage }).then((ok) => { if (!ok) renderInspector(); });
   };
 
-  if (t === "hotkey") {
+  if (t === "hotkey" || t === "hold") {
     const cap = el("input", { class: "input capture", value: a.keys || "", placeholder: "Clique ici puis fais la combinaison", spellcheck: "false" });
     cap.onfocus = () => { S.capturing = true; cap.classList.add("listening"); cap.placeholder = "Appuie sur la combinaison…"; };
     cap.onblur = () => { S.capturing = false; cap.classList.remove("listening"); cap.placeholder = "Clique ici puis fais la combinaison"; };
@@ -1124,8 +1148,28 @@ function actionEditor(st, k, onChange, opts = {}) {
       const v = cap.value ? cap.value + "+" + extra.value : extra.value;
       cap.value = v; upd((x) => { x.keys = v; }); extra.value = "";
     };
-    out.push(field("Combinaison", cap, el("div", { style: "height:8px" }), extra,
-      nested ? null : el("p", { class: "hint" }, "Ex. ctrl+shift+s · win+d · alt+f4. Les combinaisons avec la touche Windows s'ajoutent avec la liste.")));
+    out.push(field(t === "hold" ? "Touches à maintenir" : "Combinaison", cap, el("div", { style: "height:8px" }), extra,
+      t === "hold"
+        ? el("p", { class: "hint" }, "Ces touches restent enfoncées tant que tu tiens la touche du MasterHUB : klaxon, accélérateur, appuyer-pour-parler… (dans une macro ou un appui long : simple appui).")
+        : nested ? null : el("p", { class: "hint" }, "Ex. ctrl+shift+s · win+d · alt+f4. Les combinaisons avec la touche Windows s'ajoutent avec la liste.")));
+  } else if (t === "sound") {
+    const name = el("input", { class: "input grow", value: a.file || "", placeholder: "Choisis un fichier son…", readonly: true });
+    out.push(field("Son", el("div", { class: "row" }, name, el("button", { class: "btn", onclick: async () => {
+      const p = await invoke("pick_file", { kind: "sound" });
+      if (!p) return;
+      try {
+        const rel = await invoke("import_sound", { path: p });
+        upd((x) => { x.file = rel; });
+        if (!nested && labelIsGeneric(st)) { st.label = rel.split("/").pop().replace(/\.[^.]+$/, ""); keyChanged(k); }
+        renderInspector();
+      } catch (e) { toast(String(e), true); }
+    } }, "Choisir…")), el("p", { class: "hint" }, "mp3, wav, ogg, flac ou m4a. Astuce : glisse un fichier son directement sur une touche.")));
+    out.push(rangeField("Volume de ce son", a.volume ?? 100, 0, 100, " %", (v) => upd((x) => { x.volume = v; })));
+    out.push(field("Quand je rappuie pendant la lecture", el("select", { class: "input", onchange: (e) => upd((x) => { x.mode = e.target.value; }) },
+      ...[["toggle", "Le son s'arrête"], ["restart", "Le son recommence"], ["overlap", "Il se rejoue par-dessus"]].map(([v, l]) => el("option", { value: v, selected: v === (a.mode || "toggle") }, l)))));
+    out.push(el("button", { class: "btn small", disabled: !a.file, onclick: () => invoke("test_sound", { file: a.file, volume: a.volume ?? 100 }) }, "▶ Écouter sur le PC"));
+  } else if (t === "stop_sounds") {
+    out.push(el("p", { class: "hint" }, "Coupe tous les sons de la soundboard en cours de lecture."));
   } else if (t === "text") {
     out.push(field("Texte à taper", el("textarea", { class: "input", oninput: (e) => upd((x) => { x.text = e.target.value; }) }, a.text || "")));
   } else if (t === "launch:program") {
@@ -2306,6 +2350,20 @@ function settingsInspector() {
   out.push(el("p", { class: "hint", style: "margin-top:0" }, "Astuce : tu peux aussi cliquer directement sur la base dans le dessin."));
   out.push(el("div", { class: "sep" }));
   out.push(switchRow("Assombrir la touche pendant l'appui", g.press_feedback, (v) => { g.press_feedback = v; changed(); }));
+  out.push(el("h2", {}, "Soundboard"));
+  out.push(rangeField("Volume des sons", g.sound_volume, 0, 100, " %", (v) => { g.sound_volume = v; changed(); }));
+  const devSel = (value, onPick, emptyLabel) => {
+    const sel = el("select", { class: "input", onchange: (e) => onPick(e.target.value) }, el("option", { value: "" }, emptyLabel));
+    if (value) sel.append(el("option", { value, selected: true }, value));
+    invoke("list_sound_devices").then((list) => {
+      for (const d of list || []) if (d !== value) sel.append(el("option", { value: d }, d));
+    });
+    return sel;
+  };
+  out.push(field("Sortie des sons", devSel(g.sound_device, (v) => { g.sound_device = v; changed(); }, "Sortie par défaut de Windows")));
+  out.push(field("Jouer aussi sur", devSel(g.sound_device2, (v) => { g.sound_device2 = v; changed(); }, "Aucune autre sortie"),
+    el("p", { class: "hint" }, "Pour que tes amis entendent les sons dans Discord ou sur ton stream : choisis ici un câble audio virtuel (par exemple VB-CABLE) et mets-le comme micro dans Discord ou OBS.")));
+  out.push(el("h2", {}, "Touches"));
   out.push(rangeField("Durée d'un appui long", g.long_press_ms, 200, 1500, " ms", (v) => { g.long_press_ms = v; changed(); }));
   out.push(rangeField("Délai d'un double appui", g.double_press_ms, 150, 600, " ms", (v) => { g.double_press_ms = v; changed(); },
     "Temps maximal entre les deux appuis. Plus il est court, plus l'appui simple des touches à double appui est rapide."));
@@ -2747,6 +2805,9 @@ async function mockInvoke(cmd, args) {
     case "set_base_rot": window.__mockLayout.base_rot = args.rot; return null;
     case "set_placement": return null;
     case "preview_animation": return null;
+    case "list_sound_devices": return ["Haut-parleurs (Realtek(R) Audio)", "CABLE Input (VB-Audio Virtual Cable)"];
+    case "import_sound": case "import_sound_data": return "sounds/" + String(args.name || args.path || "son.mp3").split(/[\\/]/).pop();
+    case "test_sound": return null;
     case "start_doom": if (location.search.includes("doom")) { setTimeout(() => onStatus(Object.assign({}, S.status, { doom: true })), 300); return "freedoom1.wad"; } throw "no_wad";
     case "download_freedoom": return null;
     case "stop_doom": onStatus(Object.assign({}, S.status, { doom: false })); return null;
