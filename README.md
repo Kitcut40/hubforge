@@ -81,4 +81,7 @@ HubForge n'est ni affilié à Cooler Master, ni approuvé par Cooler Master. « 
 
 ## Code tiers
 
+- `assets/icons/lucide` : icônes [Lucide](https://lucide.dev) (licence ISC).
+- `assets/icons/phosphor` : icônes [Phosphor](https://phosphoricons.com) (licence MIT), utilisées par les styles de touches.
+- `assets/fonts` : police [Inter](https://rsms.me/inter/) (SIL Open Font License 1.1).
 - `third_party/doomgeneric` : moteur de Doom ([doomgeneric](https://github.com/ozkl/doomgeneric), GPL-2.0-or-later) utilisé par l'easter egg. Aucun fichier de jeu (WAD) n'est inclus.

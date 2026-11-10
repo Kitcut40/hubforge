@@ -55,6 +55,8 @@ pub struct General {
     pub fader_pickup: bool,
     /// Ville des touches météo (vide = pas de météo, aucun accès à internet).
     pub weather_city: String,
+    /// Thème des touches du profil (voir `theme::THEMES`).
+    pub theme: String,
 }
 
 impl Default for General {
@@ -74,6 +76,7 @@ impl Default for General {
             sound_device2: String::new(),
             fader_pickup: true,
             weather_city: String::new(),
+            theme: crate::theme::DEFAULT.into(),
         }
     }
 }
@@ -194,6 +197,9 @@ pub struct Page {
     pub roller_left: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roller_right: Option<String>,
+    /// Thème de la page (None = celui du profil).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
     /// Actions des molettes propres à cette page (mode « actions »).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roller_left_actions: Option<WheelActions>,
@@ -246,6 +252,10 @@ pub struct KeyDef {
     /// Action d'un double appui (None = pas de double appui).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double: Option<Action>,
+    /// Thème de la touche ("graphite", "neon", "plan", "console", "mono",
+    /// "classic"). None = celui de la page, sinon celui du profil.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -280,6 +290,7 @@ impl KeyDef {
                 widget_target: None,
                 long: self.long.clone(),
                 double: self.double.clone(),
+                theme: self.theme.clone(),
             },
             _ => KeyDef { toggle: None, ..self.clone() },
         }
@@ -454,6 +465,18 @@ pub fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
     }
 }
 
+impl Config {
+    /// La touche avec son thème effectif (touche, sinon page, sinon profil).
+    pub fn themed(&self, page: usize, def: &KeyDef) -> KeyDef {
+        let theme = def
+            .theme
+            .clone()
+            .or_else(|| self.pages.get(page).and_then(|p| p.theme.clone()))
+            .unwrap_or_else(|| self.general.theme.clone());
+        KeyDef { theme: Some(theme), ..def.clone() }
+    }
+}
+
 /// Actions des molettes (réglage commun puis pages), pour la validation.
 fn wheel_actions(cfg: &Config) -> Vec<(String, &Action)> {
     let mut v = Vec::new();
@@ -553,6 +576,17 @@ pub fn validate(cfg: &Config) -> Result<(), String> {
                 if parse_color(c).is_none() {
                     return Err(format!("page {} touche {} : couleur invalide « {c} » (format #RRVVBB)", p + 1, k.key));
                 }
+            }
+        }
+    }
+    if !crate::theme::is_known(&cfg.general.theme) {
+        return Err(format!("thème inconnu « {} »", cfg.general.theme));
+    }
+    for (p, page) in cfg.pages.iter().enumerate() {
+        let themes = page.theme.iter().chain(page.keys.iter().filter_map(|k| k.theme.as_ref()));
+        for t in themes {
+            if !crate::theme::is_known(t) {
+                return Err(format!("page {} : thème inconnu « {t} »", p + 1));
             }
         }
     }

@@ -247,7 +247,7 @@ pub fn signature(def: &KeyDef, snap: &Snapshot) -> String {
         ("weather", _) => format!("{:?}{}", weather::get(), t.day),
         _ => String::new(),
     };
-    format!("{kind}|{style}|{content}|{}|{:?}|{:?}", def.label, def.color, def.text_color)
+    format!("{kind}|{style}|{content}|{}|{:?}|{:?}|{:?}", def.label, def.color, def.text_color, def.theme)
 }
 
 // ----------------------------------------------------------------------
@@ -462,6 +462,20 @@ fn app_meter(def: &KeyDef, snap: &Snapshot) -> Meter {
 fn app_title(def: &KeyDef) -> String {
     let first = def.widget_target.as_deref().unwrap_or("").split(',').next().unwrap_or("").trim().to_string();
     let base = first.strip_suffix(".exe").unwrap_or(&first);
+    let known = match base.to_lowercase().as_str() {
+        "msedge" => Some("Edge"),
+        "chrome" => Some("Chrome"),
+        "firefox" => Some("Firefox"),
+        "obs64" | "obs" => Some("OBS"),
+        "vlc" => Some("VLC"),
+        "steam" | "steamwebhelper" => Some("Steam"),
+        "beamng.drive.x64" | "beamng.drive" => Some("BeamNG"),
+        "flightsimulator" | "flightsimulator2024" => Some("MSFS"),
+        _ => None,
+    };
+    if let Some(k) = known {
+        return k.into();
+    }
     let mut c = base.chars();
     match c.next() {
         Some(f) => f.to_uppercase().chain(c).collect(),
@@ -603,6 +617,11 @@ fn render_weather(def: &KeyDef, style: &str, fg: Rgb<u8>, label: &str) -> RgbIma
 
 /// Dessine la touche vivante.
 pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
+    if let Some(theme) = crate::theme::of(def) {
+        if let Some(img) = themed::render(theme, def, snap) {
+            return img;
+        }
+    }
     let kind = def.widget.as_deref().unwrap_or("");
     let style = style_of(def);
     let fg = color_or(&def.text_color, (255, 255, 255));
@@ -731,7 +750,7 @@ pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
             let (icon, text, fill) = if def.widget_target.as_deref().unwrap_or("").trim().is_empty() {
                 ("volume-x", "Choisis l'appli".to_string(), mix(fg, bg, 0.35))
             } else if !m.present {
-                ("volume-x", "Fermée".to_string(), mix(fg, bg, 0.35))
+                ("volume-x", "Aucun son".to_string(), mix(fg, bg, 0.35))
             } else if m.muted {
                 ("volume-x", "Muet".to_string(), mix(fg, bg, 0.35))
             } else {
@@ -817,6 +836,398 @@ fn draw_analog(img: &mut RgbImage, t: &LocalTime, fg: Rgb<u8>, bg: Rgb<u8>) {
     svg += &hand(t.second as f32 * 6.0, 25.0, 1.2, Rgb([0xFF, 0x7A, 0x1A]));
     svg += &format!(r##"<circle cx="{cx}" cy="{cy}" r="2.6" fill="#FF7A1A"/></svg>"##);
     draw_svg(img, &svg);
+}
+
+/// Touches vivantes dans les thèmes (Graphite, Néon, Plan, Console, Mono).
+mod themed {
+    use super::*;
+    use crate::theme::{self as th, Style, Theme};
+
+    fn rgb(h: &str) -> (u8, u8, u8) {
+        parse_color(h).unwrap_or((61, 169, 252))
+    }
+
+    /// Accent par défaut de chaque touche vivante.
+    fn default_accent(def: &KeyDef, kind: &str, snap: &Snapshot) -> (u8, u8, u8) {
+        rgb(match kind {
+            "clock" => "#FF7A1A",
+            "date" => "#EF4444",
+            "cpu" => "#3DA9FC",
+            "ram" => "#A35BFF",
+            "gpu" => "#2ECC71",
+            "gpu_temp" => "#FFB020",
+            "vram" => "#14B8A6",
+            "weather" => "#3B82F6",
+            "mic" => {
+                if snap.audio.mic_muted == Some(false) {
+                    "#2ECC71"
+                } else {
+                    "#EF4444"
+                }
+            }
+            "app_volume" => match brand(def) {
+                Some("discord") => "#5865F2",
+                Some("spotify") => "#1DB954",
+                Some("steam") => "#66C0F4",
+                Some("twitch") => "#9146FF",
+                Some("youtube") => "#FF3B30",
+                Some("chrome") => "#FBBC04",
+                _ => "#3DA9FC",
+            },
+            _ => "#3DA9FC",
+        })
+    }
+
+    /// Logo de l'application d'une touche « volume d'une application ».
+    fn brand(def: &KeyDef) -> Option<&'static str> {
+        let t = def.widget_target.as_deref().unwrap_or("").to_lowercase();
+        ["discord", "spotify", "steam", "twitch", "youtube", "chrome"].into_iter().find(|b| t.contains(b))
+    }
+
+    fn doc(st: &Style, body: String) -> RgbImage {
+        th::rasterize(&th::svg_doc(st, &body))
+    }
+
+    /// Décalage vertical du contenu (le bouton de Console a un témoin en haut).
+    fn dy(st: &Style) -> f32 {
+        if st.theme == Theme::Console {
+            5.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Zone horizontale utile (Console : dans le bouton ; Néon : dans le cadre).
+    fn span(st: &Style) -> (f32, f32) {
+        match st.theme {
+            Theme::Console => (8.0, 64.0),
+            Theme::Neon => (4.0, 68.0),
+            Theme::Plan => (2.0, 70.0),
+            _ => (0.0, 72.0),
+        }
+    }
+
+    fn val(st: &Style, x: f32, y: f32, s: &str, size: f32) -> String {
+        th::text(x, y, s, size, &st.val, st.value_weight, 0.0, 64.0, 1.0)
+    }
+
+    fn small(st: &Style, x: f32, y: f32, s: &str, size: f32, max_w: f32) -> String {
+        let s = if st.upper { s.to_uppercase() } else { s.to_string() };
+        th::text(x, y, &s, size, &st.soft, 600, st.spacing.min(0.8), max_w, 0.95)
+    }
+
+    fn bar(st: &Style, y: f32, frac: f32, color: &str) -> String {
+        let (x, w) = (12.0, 48.0);
+        let mut s = format!(
+            r##"<rect x="{x}" y="{y}" width="{w}" height="4" rx="2" fill="#FFFFFF" fill-opacity="{}"/>"##,
+            st.track_op
+        );
+        let fw = w * frac.clamp(0.0, 1.0);
+        if fw > 0.5 {
+            s += &format!(r#"<rect x="{x}" y="{y}" width="{fw:.1}" height="4" rx="2" fill="{color}" {}/>"#, th::fx(st));
+        }
+        s
+    }
+
+    fn gauge(st: &Style, cx: f32, cy: f32, r: f32, frac: f32, color: &str) -> String {
+        let pt = |deg: f32| {
+            let a = deg.to_radians();
+            (cx + r * a.cos(), cy + r * a.sin())
+        };
+        let (x1, y1) = pt(135.0);
+        let (x2, y2) = pt(405.0);
+        let frac = frac.clamp(0.0, 1.0);
+        let (xe, ye) = pt(135.0 + 270.0 * frac);
+        let mut s = format!(
+            r##"<path d="M{x1:.2} {y1:.2} A{r} {r} 0 1 1 {x2:.2} {y2:.2}" stroke="#FFFFFF" stroke-opacity="{}" stroke-width="{}" fill="none" stroke-linecap="round"/>"##,
+            st.track_op, st.stroke
+        );
+        if frac > 0.005 {
+            let large = if 270.0 * frac > 180.0 { 1 } else { 0 };
+            s += &format!(
+                r#"<path d="M{x1:.2} {y1:.2} A{r} {r} 0 {large} 1 {xe:.2} {ye:.2}" stroke="{color}" stroke-width="{}" fill="none" stroke-linecap="round" {}/>"#,
+                st.stroke,
+                th::fx(st)
+            );
+        }
+        s
+    }
+
+    fn graph(st: &Style, hist: &[u8], y0: f32, y1: f32, color: &str) -> String {
+        let (x0, x1) = span(st);
+        let n = HISTORY.max(2) as f32 - 1.0;
+        if hist.len() < 2 {
+            return String::new();
+        }
+        let pts: Vec<(f32, f32)> = hist
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (x1 - (hist.len() - 1 - i) as f32 * (x1 - x0) / n, y1 - (*v as f32 / 100.0) * (y1 - y0)))
+            .collect();
+        let line: String = pts.iter().map(|(x, y)| format!("{x:.1},{y:.1} ")).collect();
+        let mut s = String::new();
+        if !matches!(st.theme, Theme::Plan | Theme::Mono) {
+            s += &format!(r#"<polygon points="{:.1},{y1} {line}{:.1},{y1}" fill="{color}" fill-opacity="0.22"/>"#, pts[0].0, pts[pts.len() - 1].0);
+        }
+        let w = if matches!(st.theme, Theme::Plan | Theme::Mono) { 1.2 } else { 1.8 };
+        s += &format!(r#"<polyline points="{line}" fill="none" stroke="{color}" stroke-width="{w}" stroke-linejoin="round" {}/>"#, th::fx(st));
+        s
+    }
+
+    /// Couleur d'une mesure : l'accent, puis orange et rouge quand ça chauffe.
+    fn level_color(st: &Style, pct: u8, hot: (u8, u8)) -> String {
+        if matches!(st.theme, Theme::Plan | Theme::Mono) {
+            return st.line.clone();
+        }
+        if pct >= hot.1 {
+            "#FF3B30".into()
+        } else if pct >= hot.0 {
+            "#FFB020".into()
+        } else {
+            st.line.clone()
+        }
+    }
+
+    fn weather_icon_name(code: u8, is_day: bool) -> &'static str {
+        match (weather::sky(code), is_day) {
+            (Sky::Clear, true) => "sun-full",
+            (Sky::Clear, false) => "moon-full",
+            (Sky::Partly, true) => "cloud-sun",
+            (Sky::Partly, false) => "cloud-moon",
+            (Sky::Fog, _) => "cloud-fog",
+            (Sky::Drizzle | Sky::Rain, _) => "cloud-rain",
+            (Sky::Snow, _) => "cloud-snow",
+            (Sky::Storm, _) => "cloud-lightning",
+            _ => "cloud",
+        }
+    }
+
+    fn weather_color(st: &Style, code: u8) -> String {
+        match st.theme {
+            Theme::Graphite => match weather::sky(code) {
+                Sky::Clear | Sky::Partly => "#FFD15C".into(),
+                _ => "#CFE3FF".into(),
+            },
+            Theme::Neon => th::hex_of(st.accent),
+            _ => st.ic.clone(),
+        }
+    }
+
+    pub fn render(theme: Theme, def: &KeyDef, snap: &Snapshot) -> Option<RgbImage> {
+        let kind = def.widget.as_deref().unwrap_or("");
+        let style = style_of(def);
+        let st = th::style(theme, th::accent_with(def, default_accent(def, kind, snap)));
+        let label = def.label.trim();
+        let t = &snap.time;
+        let d = dy(&st);
+        let fx = th::fx(&st);
+        let ly = st.label_y;
+        let mut b = String::new();
+        match kind {
+            "cpu" | "ram" | "gpu" | "gpu_temp" | "vram" => {
+                let Metric { title, pct, value, hist, sub, .. } = metric(kind, snap, label);
+                let hot = if kind == "gpu_temp" { (65, 80) } else { (60, 85) };
+                let color = level_color(&st, pct.unwrap_or(0), hot);
+                let icon = match kind {
+                    "cpu" => "cpu",
+                    "ram" => "hard-drive",
+                    "gpu_temp" => "thermometer",
+                    _ => "graphics-card",
+                };
+                let caption = if matches!(kind, "ram" | "vram") || snap.gpu.is_none() && kind != "cpu" && kind != "ram" {
+                    sub.clone().unwrap_or_else(|| title.to_string())
+                } else {
+                    title.to_string()
+                };
+                match style {
+                    "gauge" => {
+                        b += &gauge(&st, 36.0, 31.0 + d, 21.0, pct.unwrap_or(0) as f32 / 100.0, &color);
+                        b += &th::text(36.0, 36.0 + d, &value, 13.0, &st.val, st.value_weight, 0.0, 30.0, 1.0);
+                        b += &th::label(&st, title, ly);
+                    }
+                    "graph" => {
+                        b += &graph(&st, hist, 32.0 + d, if st.theme == Theme::Console { 58.0 } else { 66.0 }, &color);
+                        b += &small(&st, 36.0, 11.5 + d, title, 8.5, 60.0);
+                        b += &val(&st, 36.0, 29.0 + d, &value, 17.0);
+                    }
+                    _ => {
+                        b += &th::icon(icon, st.weight, 36.0, 17.0 + d, 20.0, &st.ic, fx);
+                        b += &val(&st, 36.0, 40.0 + d * 0.7, &value, 16.0);
+                        b += &bar(&st, 46.0 + d * 0.6, pct.unwrap_or(0) as f32 / 100.0, &color);
+                        b += &th::label(&st, &caption, ly);
+                    }
+                }
+            }
+            "volume" | "app_volume" => {
+                let (level, muted, present, title) = if kind == "volume" {
+                    let a = &snap.audio;
+                    (a.master, a.master_muted, a.master.is_some(), if label.is_empty() { "Volume".to_string() } else { label.to_string() })
+                } else {
+                    let m = app_meter(def, snap);
+                    (m.level, m.muted, m.present, if label.is_empty() { app_title(def) } else { label.to_string() })
+                };
+                let unset = kind == "app_volume" && def.widget_target.as_deref().unwrap_or("").trim().is_empty();
+                let v = level.unwrap_or(0.0);
+                let text = if unset {
+                    "Choisis l'appli".to_string()
+                } else if !present {
+                    "Aucun son".to_string()
+                } else if muted {
+                    "Muet".to_string()
+                } else {
+                    format!("{} %", (v * 100.0).round())
+                };
+                let off = unset || !present || muted;
+                let color = if off { st.soft.clone() } else { st.line.clone() };
+                let icon = match (kind, brand(def)) {
+                    ("app_volume", Some(b)) => b,
+                    _ if off => "volume-x",
+                    _ if v < 0.5 => "volume-1",
+                    _ => "volume-2",
+                };
+                let ic = if off { st.soft.clone() } else { st.ic.clone() };
+                let shown = if present && !muted { v } else { 0.0 };
+                if style == "gauge" {
+                    b += &gauge(&st, 36.0, 31.0 + d, 21.0, shown, &color);
+                    b += &th::icon(icon, st.weight, 36.0, 24.0 + d, 13.0, &ic, fx);
+                    b += &val(&st, 36.0, 43.0 + d, &text, if text.len() > 6 { 10.0 } else { 13.0 });
+                    b += &th::label(&st, &title, ly);
+                } else {
+                    b += &th::icon(icon, st.weight, 36.0, 17.0 + d, 22.0, &ic, fx);
+                    b += &val(&st, 36.0, 40.0 + d * 0.7, &text, if text.len() > 6 { 11.0 } else { 16.0 });
+                    b += &bar(&st, 46.0 + d * 0.6, shown, &color);
+                    b += &th::label(&st, &title, ly);
+                }
+            }
+            "mic" => {
+                let (icon, text) = match snap.audio.mic_muted {
+                    Some(true) => ("mic-off", "Coupé"),
+                    Some(false) => ("mic", if label.is_empty() { "Micro" } else { label }),
+                    None => ("mic-off", "Pas de micro"),
+                };
+                if style == "icon" {
+                    b += &format!(
+                        r#"<circle cx="36" cy="{}" r="27" fill="none" stroke="{}" stroke-opacity="0.45" stroke-width="2.5" {fx}/>"#,
+                        36.0 + d,
+                        th::hex_of(st.accent)
+                    );
+                    b += &th::icon(icon, st.weight, 36.0, 36.0 + d, 32.0, &st.ic, fx);
+                } else {
+                    b += &th::icon(icon, st.weight, 36.0, 29.0 + d * 0.7, 32.0, &st.ic, fx);
+                    b += &th::label(&st, text, ly);
+                }
+            }
+            "clock" => {
+                let date = format!("{} {} {}", DAYS_SHORT[t.dow as usize % 7], t.day, MONTHS_SHORT[(t.month as usize + 11) % 12]);
+                match style {
+                    "analog" => {
+                        let (cx, cy) = (36.0, 36.0 + d * 0.5);
+                        let r = if st.theme == Theme::Console { 25.0 } else { 29.0 };
+                        b += &format!(r##"<circle cx="{cx}" cy="{cy}" r="{r}" fill="#FFFFFF" fill-opacity="0.05" stroke="{}" stroke-opacity="0.35" stroke-width="1.5"/>"##, st.fg);
+                        for i in 0..12 {
+                            let a = (i as f32 * 30.0 - 90.0).to_radians();
+                            let long = i % 3 == 0;
+                            let (r1, r2) = (if long { r - 7.0 } else { r - 4.5 }, r - 2.5);
+                            b += &format!(
+                                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-opacity="{}" stroke-width="{}" stroke-linecap="round"/>"#,
+                                cx + r1 * a.cos(),
+                                cy + r1 * a.sin(),
+                                cx + r2 * a.cos(),
+                                cy + r2 * a.sin(),
+                                st.fg,
+                                if long { 1.0 } else { 0.5 },
+                                if long { 2.0 } else { 1.2 }
+                            );
+                        }
+                        let minute = t.minute as f32 + t.second as f32 / 60.0;
+                        let hour = (t.hour % 12) as f32 + minute / 60.0;
+                        let hand = |deg: f32, len: f32, w: f32, c: &str| {
+                            let a = (deg - 90.0).to_radians();
+                            format!(
+                                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{c}" stroke-width="{w}" stroke-linecap="round"/>"#,
+                                cx - 4.0 * a.cos(),
+                                cy - 4.0 * a.sin(),
+                                cx + len * a.cos(),
+                                cy + len * a.sin()
+                            )
+                        };
+                        b += &hand(hour * 30.0, r * 0.52, 3.4, &st.val);
+                        b += &hand(minute * 6.0, r * 0.78, 2.4, &st.val);
+                        let sec = th::hex_of(st.accent);
+                        b += &hand(t.second as f32 * 6.0, r * 0.86, 1.2, &sec);
+                        b += &format!(r#"<circle cx="{cx}" cy="{cy}" r="2.4" fill="{sec}"/>"#);
+                    }
+                    "big" => {
+                        b += &th::text(36.0, 33.0 + d, &format!("{:02}", t.hour), 27.0, &st.val, st.value_weight.max(600), 0.0, 64.0, 1.0);
+                        b += &th::text(36.0, 62.0 + d * 0.3, &format!("{:02}", t.minute), 27.0, &th::hex_of(st.accent), st.value_weight.max(600), 0.0, 64.0, 1.0);
+                    }
+                    _ => {
+                        b += &val(&st, 36.0, 39.0 + d, &format!("{:02}:{:02}", t.hour, t.minute), 21.0);
+                        b += &th::label(&st, if label.is_empty() { &date } else { label }, ly);
+                    }
+                }
+            }
+            "date" => {
+                let day = if label.is_empty() { DAYS[t.dow as usize % 7] } else { label };
+                let month = MONTHS[(t.month as usize + 11) % 12];
+                if style == "calendar" {
+                    let a = th::hex_of(st.accent);
+                    let (x, y, w, h) = if st.theme == Theme::Console { (12.0, 15.0, 48.0, 46.0) } else { (9.0, 7.0, 54.0, 56.0) };
+                    b += &format!(r##"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="7" fill="#FFFFFF" fill-opacity="0.07" stroke="{a}" stroke-opacity="0.5"/>"##);
+                    b += &format!(r#"<path d="M{x} {} a7 7 0 0 1 7 -7 h{} a7 7 0 0 1 7 7 v7 h-{w} z" fill="{a}"/>"#, y + 7.0, w - 14.0);
+                    b += &th::text(36.0, y + 10.5, &MONTHS_SHORT[(t.month as usize + 11) % 12].to_uppercase(), 8.5, "#FFFFFF", 700, 0.6, w - 6.0, 1.0);
+                    b += &val(&st, 36.0, y + h - 12.0, &t.day.to_string(), 24.0);
+                    b += &small(&st, 36.0, y + h - 3.0, DAYS_SHORT[t.dow as usize % 7], 8.0, w - 6.0);
+                } else {
+                    b += &small(&st, 36.0, 15.0 + d, day, 10.0, 62.0);
+                    b += &val(&st, 36.0, 45.0 + d * 0.6, &t.day.to_string(), 30.0);
+                    b += &th::label(&st, month, ly);
+                }
+            }
+            "weather" => {
+                let w = match weather::get() {
+                    Ok(w) => w,
+                    Err(msg) => {
+                        b += &th::icon("cloud", st.weight, 36.0, 24.0 + d, 26.0, &st.soft, "");
+                        b += &th::text(36.0, 50.0 + d, &msg, 9.0, &st.fg, 600, 0.0, 64.0, 0.95);
+                        return Some(doc(&st, b));
+                    }
+                };
+                let city = if label.is_empty() { w.city.as_str() } else { label };
+                let wc = weather_color(&st, w.code);
+                match style {
+                    "compact" => {
+                        b += &th::icon(weather_icon_name(w.code, w.is_day), st.weight, 51.0, 23.0 + d, 28.0, &wc, fx);
+                        b += &th::text(22.0, 31.0 + d, &deg(w.temp), 22.0, &st.val, st.value_weight, 0.0, 36.0, 1.0);
+                        let day = DAYS_SHORT[w.days.first().map(|x| x.dow).unwrap_or(t.dow) as usize % 7];
+                        b += &small(&st, 22.0, 44.0 + d, day, 9.5, 34.0);
+                        b += &th::label(&st, weather::sky_name(w.code), ly);
+                    }
+                    "forecast" => {
+                        let (x0, x1) = if st.theme == Theme::Console { (21.0, 51.0) } else { (19.0, 53.0) };
+                        for (i, dd) in w.days.iter().skip(1).take(2).enumerate() {
+                            let cx = if i == 0 { x0 } else { x1 };
+                            b += &small(&st, cx, 13.0 + d, DAYS_SHORT[dd.dow as usize % 7], 8.5, 30.0);
+                            b += &th::icon(weather_icon_name(dd.code, true), st.weight, cx, 28.0 + d, 18.0, &weather_color(&st, dd.code), fx);
+                            b += &th::text(cx, 48.0 + d * 0.5, &deg(dd.max), 12.5, &st.val, st.value_weight, 0.0, 32.0, 1.0);
+                            b += &th::text(cx, 59.0, &deg(dd.min), 9.0, &st.soft, 600, 0.0, 32.0, 0.9);
+                        }
+                        b += &format!(r##"<rect x="35.5" y="{}" width="1" height="46" fill="#FFFFFF" fill-opacity="0.15"/>"##, 9.0 + d);
+                    }
+                    _ => {
+                        b += &small(&st, 36.0, 12.5 + d, city, 9.0, 60.0);
+                        b += &th::icon(weather_icon_name(w.code, w.is_day), st.weight, 21.0, 33.0 + d, 26.0, &wc, fx);
+                        b += &th::text(51.0, 41.0 + d, &deg(w.temp), 19.0, &st.val, st.value_weight, 0.0, 34.0, 1.0);
+                        if let Some(dd) = w.days.first() {
+                            b += &th::label(&st, &format!("{} / {}", deg(dd.max), deg(dd.min)), ly);
+                        }
+                    }
+                }
+            }
+            _ => return None,
+        }
+        Some(doc(&st, b))
+    }
 }
 
 #[cfg(windows)]
@@ -1024,6 +1435,7 @@ mod tests {
             widget_target: (widget == "app_volume").then(|| "discord.exe".into()),
             long: None,
             double: None,
+            theme: None,
         }
     }
 
@@ -1097,6 +1509,54 @@ mod tests {
             assert!(s.time.month >= 1 && s.time.month <= 12);
             assert!(s.ram_hist.len() <= HISTORY);
         }
+    }
+
+    /// Planche des thèmes : cargo test -p hubforge theme_sheet -- --ignored
+    #[test]
+    #[ignore]
+    fn theme_sheet() {
+        fake_weather();
+        let mut actions = vec![
+            ("builtin:copy", "Copier", Some("#FF8A3D")),
+            ("builtin:layers", "Macro", Some("#A35BFF")),
+            ("builtin:mic", "Micro", Some("#8BC34A")),
+            ("builtin:volume-2", "Son", Some("#8BC34A")),
+            ("builtin:lock", "Verrouiller", None),
+            ("", "Texte seul", Some("#5865F2")),
+        ];
+        let widgets: Vec<(&str, &str)> = vec![
+            ("cpu", "bar"), ("gpu_temp", "gauge"), ("gpu", "graph"), ("ram", "bar"), ("app_volume", "bar"), ("volume", "gauge"),
+            ("mic", "classic"), ("clock", "digital"), ("clock", "analog"), ("clock", "big"), ("date", "classic"), ("date", "calendar"),
+            ("weather", "now"), ("weather", "compact"), ("weather", "forecast"),
+        ];
+        let cols = actions.len() + widgets.len();
+        let themes = ["graphite", "neon", "plan", "console", "mono", "classic"];
+        let mut sheet = RgbImage::from_pixel(cols as u32 * (S + 6) + 6, themes.len() as u32 * (S + 6) + 6, Rgb([14, 15, 19]));
+        for (r, th) in themes.iter().enumerate() {
+            let mut c = 0;
+            for (icon, label, color) in actions.iter_mut() {
+                let mut k = key("cpu", None);
+                k.widget = None;
+                k.icon = (!icon.is_empty()).then(|| icon.to_string());
+                k.label = label.to_string();
+                k.color = color.map(String::from);
+                k.theme = Some(th.to_string());
+                let v = crate::render::render_key(&k, std::path::Path::new("/tmp"));
+                let img = image::load_from_memory(&v.frames[0].jpeg).unwrap().to_rgb8();
+                image::imageops::overlay(&mut sheet, &img, (6 + c * (S + 6)) as i64, (6 + r as u32 * (S + 6)) as i64);
+                c += 1;
+            }
+            for (w, st) in &widgets {
+                let mut k = key(w, Some(st));
+                k.color = Some("#1F2229".into());
+                k.theme = Some(th.to_string());
+                let img = render(&k, &snap());
+                image::imageops::overlay(&mut sheet, &img, (6 + c * (S + 6)) as i64, (6 + r as u32 * (S + 6)) as i64);
+                c += 1;
+            }
+        }
+        let big = image::imageops::resize(&sheet, sheet.width() * 2, sheet.height() * 2, image::imageops::FilterType::Nearest);
+        big.save("/tmp/hubforge-themes.png").unwrap();
     }
 
     /// Planche d'aperçu : cargo test -p hubforge widget_sheet -- --ignored

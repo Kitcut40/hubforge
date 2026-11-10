@@ -14,6 +14,7 @@
 
 mod actions;
 mod addons;
+mod anims;
 mod appicon;
 mod audio;
 mod autostart;
@@ -31,6 +32,8 @@ mod profiles;
 mod render;
 mod share;
 mod sound;
+mod theme;
+mod theme_icons;
 mod vars;
 mod weather;
 mod topology;

@@ -85,7 +85,7 @@ pub fn preview(def: &KeyDef, base_dir: &Path) -> (Vec<u8>, bool) {
         .as_deref()
         .map(|i| {
             let l = i.to_lowercase();
-            l.ends_with(".gif") || l.ends_with(".webp")
+            l.ends_with(".gif") || l.ends_with(".webp") || l.starts_with("anim:")
         })
         .unwrap_or(false);
     (v.frames[0].jpeg.as_ref().clone(), animated)
@@ -129,6 +129,25 @@ fn render_key_opts(def: &KeyDef, base_dir: &Path, first_only: bool) -> KeyVisual
     let bg = Rgb([bg.0, bg.1, bg.2]);
     let fg = Rgb([fg.0, fg.1, fg.2]);
 
+    // Thèmes : icônes intégrées, icônes d'addons et texte seul. Les images et
+    // GIF de l'utilisateur restent telles quelles.
+    if let Some(theme) = crate::theme::of(def) {
+        let icon = def.icon.as_deref().unwrap_or("").trim();
+        if icon.is_empty() || icon.starts_with("builtin:") {
+            let img = crate::theme::render_key(theme, def, None);
+            return KeyVisual { frames: vec![make_frame(&img, Duration::ZERO, 92)] };
+        }
+        if icon.starts_with("addon:") {
+            if let Some(svg) = crate::addons::resolve_icon(base_dir, icon)
+                .filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("svg")).unwrap_or(false))
+                .and_then(|p| std::fs::read_to_string(p).ok())
+            {
+                let img = crate::theme::render_key(theme, def, Some(&svg));
+                return KeyVisual { frames: vec![make_frame(&img, Duration::ZERO, 92)] };
+            }
+        }
+    }
+
     if let Some(name) = def.icon.as_deref().and_then(|i| i.strip_prefix("builtin:")) {
         let mut img = RgbImage::from_pixel(S, S, bg);
         draw_builtin(&mut img, name, fg, !def.label.trim().is_empty());
@@ -143,6 +162,19 @@ fn render_key_opts(def: &KeyDef, base_dir: &Path, first_only: bool) -> KeyVisual
         draw_text_block(&mut img, &def.label, fg, 0, S);
         return KeyVisual { frames: vec![make_frame(&img, Duration::ZERO, 90)] };
     };
+
+    // Touche animée intégrée.
+    if let Some(id) = icon.strip_prefix("anim:") {
+        let Some(bytes) = crate::anims::get(id) else { return error_visual("Animation inconnue") };
+        let mut frames = match gif_frames(bytes) {
+            Ok(f) if !f.is_empty() => f,
+            _ => return error_visual("Animation illisible"),
+        };
+        if first_only {
+            frames.truncate(1);
+        }
+        return finish_frames(def, frames, bg, fg);
+    }
 
     let path = if icon.starts_with("addon:") {
         match crate::addons::resolve_icon(base_dir, icon) {
@@ -182,6 +214,11 @@ fn render_key_opts(def: &KeyDef, base_dir: &Path, first_only: bool) -> KeyVisual
             return error_visual("Image introuvable");
         }
     };
+    finish_frames(def, frames, bg, fg)
+}
+
+/// Images d'une animation ou d'une image → visuel (avec le bandeau du titre).
+fn finish_frames(def: &KeyDef, frames: Vec<(RgbaImage, Duration)>, bg: Rgb<u8>, fg: Rgb<u8>) -> KeyVisual {
     let animated = frames.len() > 1;
     let quality = if animated { 72 } else { 90 };
     let out = frames
@@ -196,6 +233,21 @@ fn render_key_opts(def: &KeyDef, base_dir: &Path, first_only: bool) -> KeyVisual
         })
         .collect();
     KeyVisual { frames: out }
+}
+
+/// Images d'un GIF en mémoire.
+fn gif_frames(bytes: &[u8]) -> Result<Vec<(RgbaImage, Duration)>, String> {
+    let dec = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let frames = dec.into_frames().collect_frames().map_err(|e| e.to_string())?;
+    Ok(frames
+        .into_iter()
+        .take(MAX_FRAMES)
+        .map(|f| {
+            let (n, d) = f.delay().numer_denom_ms();
+            let ms = if d == 0 { 100 } else { (n / d).max(20) };
+            (f.into_buffer(), Duration::from_millis(ms as u64))
+        })
+        .collect())
 }
 
 fn load_frames(path: &Path) -> Result<Vec<(RgbaImage, Duration)>, String> {
@@ -489,6 +541,7 @@ mod tests {
             widget_target: None,
             long: None,
             double: None,
+            theme: None,
         }
     }
 
@@ -552,6 +605,22 @@ mod preview {
                 image::imageops::overlay(&mut sheet, &img, (8 + (i % 5) * 80) as i64, (8 + (i / 5) * 80) as i64);
             }
             sheet.save(format!("/tmp/hubforge-page{}.png", p + 1)).unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod anim_tests {
+    use super::*;
+
+    #[test]
+    fn builtin_animations_render() {
+        for (id, _, _) in crate::anims::ANIMS {
+            let k: crate::config::KeyDef = toml::from_str(&format!("key = 1\nicon = \"anim:{id}\"")).unwrap();
+            let v = render_key(&k, Path::new("/tmp"));
+            assert!(v.frames.len() > 1, "{id} n'est pas animée");
+            let (_, animated) = preview(&k, Path::new("/tmp"));
+            assert!(animated);
         }
     }
 }

@@ -499,6 +499,7 @@ impl AddonAction {
             widget_target: None,
             long: None,
             double: None,
+            theme: None,
         }
     }
 }
@@ -519,6 +520,7 @@ impl Addon {
                 roller_left: None,
                 roller_right: None,
                 roller_left_actions: None,
+                theme: None,
                 roller_right_actions: None,
                 keys: p
                     .keys
@@ -540,6 +542,7 @@ impl Addon {
                                 widget_target: None,
                                 long: None,
                                 double: None,
+                                theme: None,
                             }
                         } else {
                             let target = k.open.as_deref().and_then(|o| self.pages.iter().find(|p| p.id == o));
@@ -556,6 +559,7 @@ impl Addon {
                                 widget_target: None,
                                 long: None,
                                 double: None,
+                                theme: None,
                             }
                         };
                         if let Some(l) = &k.label {

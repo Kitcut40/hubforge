@@ -1,6 +1,6 @@
 [package]
 name = "hubforge"
-version = "0.14.0"
+version = "0.15.0"
 description = "HubForge — logiciel libre pour le Cooler Master MasterHUB"
 edition.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ toml = "0.9"
 rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3", "symphonia-wav", "symphonia-flac", "symphonia-isomp4", "symphonia-aac", "vorbis"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 ab_glyph = "0.2"
-resvg = { version = "0.45", default-features = false }
+resvg = { version = "0.45", default-features = false, features = ["text"] }
 enigo = "0.6"
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"

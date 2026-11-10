@@ -19,6 +19,13 @@ const MEDIA = {
   volume_down: ["Volume −", "volume-1"], mic_mute: ["Couper le micro", "mic-off"],
 };
 
+/** Touches animées intégrées : [id, nom, icône de la liste]. */
+const ANIMS = [["live", "En direct", "circle-dot"], ["rec", "Enregistrement", "circle-dot"], ["onair", "On Air", "radio"], ["equalizer", "Égaliseur", "activity"],
+  ["wave", "Onde sonore", "activity"], ["loader", "Chargement", "refresh-cw"], ["heartbeat", "Battement de cœur", "heart"], ["radar", "Radar", "target"],
+  ["bell", "Notification", "bell"], ["rainbow", "Arc-en-ciel", "sparkles"], ["sparkles", "Scintillements", "sparkles"], ["fire", "Flamme", "flame"],
+  ["rocket", "Fusée", "rocket"], ["coffee", "Pause café", "coffee"], ["rain", "Pluie", "cloud"], ["matrix", "Pluie de code", "code"]];
+const animName = (id) => (ANIMS.find(([v]) => v === id) || [0, id])[1];
+
 const LIBRARY = [
   { cat: "Clavier", items: [
     { name: "Raccourci clavier", label: "Raccourci", icon: "keyboard", color: "#3949AB", action: { type: "hotkey", keys: "" } },
@@ -75,6 +82,7 @@ const LIBRARY = [
     { name: "Bascule personnalisée", label: "État 1", icon: "toggle-left", color: "#37474F", action: { type: "none" },
       toggle: { label: "État 2", icon: "builtin:toggle-right", color: "#FF7A1A", action: { type: "none" } } },
   ]},
+  { cat: "Animations", items: ANIMS.map(([id, name, icon]) => ({ name, label: "", icon, color: "#1F2229", anim: id, action: { type: "none" } })) },
   { cat: "Touches vivantes", items: [
     { name: "Horloge", label: "", icon: "clock", color: "#1F2229", widget: "clock", action: { type: "none" } },
     { name: "Date", label: "", icon: "calendar", color: "#1F2229", widget: "date", action: { type: "none" } },
@@ -129,6 +137,38 @@ const WIDGET_STYLES = {
   weather: [["now", "Maintenant"], ["compact", "Compacte"], ["forecast", "Prochains jours"]],
   mic: [["classic", "Icône et texte"], ["icon", "Grande icône"]],
 };
+
+const THEMES = [["graphite", "Graphite"], ["neon", "Néon"], ["plan", "Plan"], ["console", "Console"], ["mono", "Mono"], ["classic", "Classique"]];
+const themeName = (id) => (THEMES.find(([v]) => v === id) || [0, id])[1];
+
+/** Style effectif d'une touche : le sien, sinon celui de la page, sinon celui du profil. */
+function effTheme(def, pageIdx) {
+  const p = S.cfg.pages[pageIdx] || {};
+  return (def && def.theme) || p.theme || S.cfg.general.theme || "graphite";
+}
+/** Ajoute le style effectif à une touche envoyée pour l'aperçu. */
+function withTheme(d, pageIdx, src) {
+  if (d) d.theme = effTheme(src, pageIdx);
+  return d;
+}
+/** La touche affiche une image ou une animation à elle : le style ne s'applique pas. */
+function ownVisual(st) {
+  return !!(st && st.icon && !st.icon.startsWith("builtin:") && !st.icon.startsWith("addon:"));
+}
+/** Après un changement de style : tous les aperçus sont à refaire. */
+function rethemed() {
+  S.previews = {};
+  changed({ immediate: true });
+  refreshPreviews(S.page);
+}
+/** Pastilles de choix de style. `inherit` : libellé de l'option « comme au-dessus » (ou null). */
+function themeChips(current, inherit, onPick) {
+  const opts = inherit ? [["", inherit], ...THEMES] : THEMES;
+  return el("div", { class: "chips" }, ...opts.map(([v, l]) => el("span", {
+    class: "chip" + (v === (current || "") ? " on style-on" : " add"),
+    onclick: () => onPick(v || null),
+  }, l)));
+}
 
 const FADER_TARGETS = [["master", "Volume général"], ["mic", "Micro"], ["app", "Application(s)"], ["none", "Rien"]];
 const ROLLER_MODES = [["volume", "Volume général"], ["mic", "Volume du micro"], ["app", "Volume d'applications"], ["scroll", "Défilement vertical"],
@@ -275,7 +315,7 @@ async function init() {
 
 function normalize(cfg) {
   cfg.general = Object.assign({ brightness: 80, led_brightness: 100, base_color: "#00C8FF", press_feedback: true, gif_max_fps: 28, base_effect: 1, auto_pages: true,
-    long_press_ms: 500, double_press_ms: 300, sound_volume: 80, sound_device: "", sound_device2: "", fader_pickup: true, weather_city: "" }, cfg.general || {});
+    long_press_ms: 500, double_press_ms: 300, sound_volume: 80, sound_device: "", sound_device2: "", fader_pickup: true, weather_city: "", theme: "graphite" }, cfg.general || {});
   cfg.pages = cfg.pages && cfg.pages.length ? cfg.pages : [{ name: "Accueil", keys: [] }];
   cfg.faders = cfg.faders || [];
   while (cfg.faders.length < 5) cfg.faders.push({ target: "none", color: "#FFFFFF" });
@@ -611,10 +651,10 @@ function keyElement(k) {
   },
     def && prev ? el("img", { src: prev.src, alt: "" }) : null,
     el("span", { class: "num" }, String(k)),
-    def && def.toggle ? el("span", { class: "badge" }, "2 états")
-      : def && def.widget ? el("span", { class: "badge" }, "Live")
-      : def && def.action && def.action.type === "macro" ? el("span", { class: "badge" }, "Macro")
-      : def && prev && prev.animated ? el("span", { class: "badge" }, "GIF") : null,
+    def && def.toggle ? el("span", { class: "badge", title: "Touche à 2 états" }, "2")
+      : def && def.widget ? el("span", { class: "badge live", title: "Touche vivante" }, "")
+      : def && def.action && def.action.type === "macro" ? el("span", { class: "badge", title: "Macro" }, "M")
+      : def && prev && prev.animated ? el("span", { class: "badge", title: "Animation" }, "▶") : null,
   );
   node.onclick = (e) => { e.stopPropagation(); S.editState = 0; select({ type: "key", key: k }); };
   node.ondragstart = (e) => {
@@ -645,8 +685,8 @@ async function refreshPreviews(page, onlyKey) {
   const req = [];
   for (const k of keys) {
     const def = keyDef(k, page);
-    req.push([k, 0, def ? clean(stateDef(def, 0)) : null]);
-    if (def && def.toggle) req.push([k, 1, clean(stateDef(def, 1))]);
+    req.push([k, 0, def ? withTheme(clean(stateDef(def, 0)), page, def) : null]);
+    if (def && def.toggle) req.push([k, 1, withTheme(clean(stateDef(def, 1)), page, def)]);
   }
   try {
     const res = await invoke("render_keys", { keys: req.map((r) => r[2]) });
@@ -667,7 +707,7 @@ async function refreshLivePreviews() {
   liveBusy = true;
   try {
     const page = S.page;
-    const res = await invoke("render_keys", { keys: keys.map((k) => clean(stateDef(keyDef(k, page), 0))) });
+    const res = await invoke("render_keys", { keys: keys.map((k) => withTheme(clean(stateDef(keyDef(k, page), 0)), page, keyDef(k, page))) });
     if (page !== S.page) return;
     keys.forEach((k, i) => {
       if (!res[i]) return;
@@ -784,6 +824,7 @@ async function onDropOnKey(k, dt) {
     if (item.toggle) def.toggle = clone(item.toggle);
     if (item.long) def.long = clone(item.long);
     if (item.widget) { def.widget = item.widget; delete def.icon; }
+    if (item.anim) def.icon = "anim:" + item.anim;
     if (item.widget_style) def.widget_style = item.widget_style;
     if (item.widget_target) def.widget_target = item.widget_target;
     setKeyDef(k, def);
@@ -1013,11 +1054,37 @@ function keyInspector(k) {
       }
     }
   }
+  // Style de la touche (thème)
+  if (S.editState === 0) {
+    const pageTheme = currentPage().theme || S.cfg.general.theme || "graphite";
+    out.push(field("Style de la touche", themeChips(def.theme, `Comme la page (${themeName(pageTheme)})`, (v) => {
+      if (v) def.theme = v; else delete def.theme;
+      keyChanged(k, { immediate: true }); renderInspector();
+    }), ownVisual(st)
+      ? el("p", { class: "hint" }, "Cette touche affiche ta propre image ou une animation : elle reste telle quelle. Retire l'image pour utiliser un style.")
+      : el("div", { class: "row", style: "flex-wrap:wrap;margin-top:8px" },
+        el("button", { class: "btn small", onclick: () => {
+          const t = effTheme(def, S.page);
+          const p = currentPage();
+          p.theme = t;
+          for (const d of p.keys) delete d.theme;
+          rethemed(); renderInspector(); toast(`Style « ${themeName(t)} » appliqué à toute la page`);
+        } }, "Appliquer à toute la page"),
+        el("button", { class: "btn small", onclick: async () => {
+          const t = effTheme(def, S.page);
+          if (!(await confirm_(`Mettre le style « ${themeName(t)} » sur toutes les touches du profil ? Les styles propres aux pages et aux touches seront retirés.`))) return;
+          S.cfg.general.theme = t;
+          for (const p of S.cfg.pages) { delete p.theme; for (const d of p.keys) delete d.theme; }
+          rethemed(); renderInspector(); toast(`Style « ${themeName(t)} » appliqué à tout le profil`);
+        } }, "À tout le profil"))));
+  }
   out.push(field(live ? "Titre (facultatif)" : "Texte affiché", el("input", { id: "label-input", class: "input", value: st.label || "",
     placeholder: live ? "(titre par défaut)" : "(aucun)", oninput: (e) => upd((d) => { d.label = e.target.value; delete d._autoName; }) })));
   if (!live) out.push(iconField(k, st, upd));
-  out.push(colorField("Couleur de fond", st.color, (v) => upd((d) => { if (v) d.color = v; else delete d.color; })));
-  out.push(colorField("Couleur du texte et de l'icône", st.text_color || "#FFFFFF", (v) => upd((d) => { if (v) d.text_color = v; else delete d.text_color; })));
+  // Avec un style (thème), la couleur sert d'accent et la couleur du texte ne sert pas.
+  const themed = effTheme(def, S.page) !== "classic" && !ownVisual(st);
+  out.push(colorField(themed ? "Couleur d'accent" : "Couleur de fond", st.color, (v) => upd((d) => { if (v) d.color = v; else delete d.color; })));
+  if (!themed) out.push(colorField("Couleur du texte et de l'icône", st.text_color || "#FFFFFF", (v) => upd((d) => { if (v) d.text_color = v; else delete d.text_color; })));
 
   out.push(el("div", { class: "sep" }));
   if (def.toggle) out.push(el("p", { class: "hint", style: "margin:-6px 0 12px" }, S.editState === 0
@@ -1076,10 +1143,12 @@ function renderKeyPreviewInInspector() {
 function iconField(k, st, upd) {
   const icon = st.icon || "";
   const isBuiltin = icon.startsWith("builtin:");
+  const isAnim = icon.startsWith("anim:");
   const current = el("div", { class: "ic" });
   if (isBuiltin) current.innerHTML = svgIcon(icon.slice(8));
+  else if (isAnim) current.innerHTML = svgIcon((ANIMS.find(([v]) => v === icon.slice(5)) || [0, 0, "sparkles"])[2]);
   else if (icon) current.append(el("span", { style: "font-size:10px;color:var(--muted);padding:2px;text-align:center" }, "image"));
-  const name = !icon ? "Aucune" : isBuiltin ? icon.slice(8) : icon.split(/[\\/]/).pop();
+  const name = !icon ? "Aucune" : isBuiltin ? icon.slice(8) : isAnim ? "Animation : " + animName(icon.slice(5)) : icon.split(/[\\/]/).pop();
 
   const action = st.action || {};
   const appTarget = action.type === "launch" && launchKind(action.target || "") !== "url" && (action.target || "").trim();
@@ -1107,7 +1176,11 @@ function iconField(k, st, upd) {
     };
     const search = el("input", { class: "input", placeholder: "Rechercher une icône (en anglais : play, mic, folder…)", oninput: (e) => fill(e.target.value.trim().toLowerCase()) });
     fill("");
-    out.append(el("div", { class: "icon-picker" }, search, grid));
+    const anims = el("div", { class: "chips", style: "margin-top:8px" }, ...ANIMS.map(([id, nm]) => el("span", {
+      class: "chip" + (icon === "anim:" + id ? " on style-on" : " add"),
+      onclick: () => { upd((d) => { d.icon = "anim:" + id; }, { immediate: true }); renderInspector(); },
+    }, nm)));
+    out.append(el("div", { class: "icon-picker" }, search, grid, el("div", { class: "step-branch" }, "Animations"), anims));
   } else {
     out.append(el("p", { class: "hint" }, "Astuce : glisse aussi une image ou un GIF depuis l'Explorateur sur la touche."));
   }
@@ -1622,6 +1695,13 @@ function pageInspector() {
   if (!p.apps) p.apps = [];
   const out = [title(p.folder ? "Dossier" : `Page ${S.page + 1}`, "Réglages de la page")];
   out.push(field("Nom", el("input", { class: "input", value: p.name || "", oninput: (e) => { p.name = e.target.value; changed(); renderPagesSoon(); } })));
+  out.push(field("Style des touches", themeChips(p.theme, `Comme le profil (${themeName(S.cfg.general.theme || "graphite")})`, (v) => {
+    if (v) p.theme = v; else delete p.theme;
+    rethemed(); renderInspector();
+  }), p.keys.some((d) => d.theme) ? el("button", { class: "btn small", style: "margin-top:8px", onclick: () => {
+    for (const d of p.keys) delete d.theme;
+    rethemed(); renderInspector(); toast("Toutes les touches de la page suivent maintenant son style");
+  } }, "Appliquer à toutes les touches de la page") : null));
 
   out.push(switchRow("Cette page est un dossier", !!p.folder, (v) => {
     if (v) { p.folder = true; p.close_after = true; } else { delete p.folder; delete p.close_after; }
@@ -2495,6 +2575,13 @@ function settingsInspector() {
   const out = [title("Réglages généraux")];
   out.push(rangeField("Luminosité des écrans", g.brightness, 0, 100, " %", (v) => { g.brightness = v; changed(); }));
   out.push(rangeField("Luminosité des LED", g.led_brightness, 0, 100, " %", (v) => { g.led_brightness = v; changed(); }));
+  out.push(field("Style des touches du profil", themeChips(g.theme || "graphite", null, (v) => { g.theme = v; rethemed(); renderInspector(); }),
+    S.cfg.pages.some((p) => p.theme || p.keys.some((d) => d.theme)) ? el("button", { class: "btn small", style: "margin-top:8px", onclick: async () => {
+      if (!(await confirm_("Retirer les styles propres aux pages et aux touches, pour que tout le profil suive ce style ?"))) return;
+      for (const p of S.cfg.pages) { delete p.theme; for (const d of p.keys) delete d.theme; }
+      rethemed(); renderInspector();
+    } }, "Appliquer à toutes les pages et touches") : null,
+    el("p", { class: "hint" }, "Chaque page et chaque touche peut aussi avoir son propre style. Tes images et GIF restent tels quels.")));
   out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => select({ type: "base" }) }, "Base : LED, orientation, positions…"));
   out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => select({ type: "lights" }) }, "Animations…"));
   out.push(el("p", { class: "hint", style: "margin-top:0" }, "Astuce : tu peux aussi cliquer directement sur la base dans le dessin."));

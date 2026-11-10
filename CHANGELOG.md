@@ -4,6 +4,25 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.15.0] — 2026-11-10
+
+### Nouveautés
+- **Styles de touches** : cinq styles dessinés pour le MasterHUB.
+  - **Graphite** : sobre, fond anthracite, icône pleine dans sa couleur. C'est le style par défaut.
+  - **Néon** : halo et contour lumineux.
+  - **Plan** : papier de plan bleu, traits fins.
+  - **Console** : bouton rétroéclairé façon cockpit.
+  - **Mono** : traits blancs sur noir.
+  - **Classique** : l'ancien rendu, toujours disponible.
+- **Un style pour tout le profil, une page ou une seule touche**, avec les boutons « Appliquer à toute la page » et « À tout le profil ». La couleur de la touche devient la couleur d'accent du style. Tes images et GIF restent tels quels.
+- **Touches vivantes redessinées** dans chaque style : CPU, RAM, GPU, volume, micro, horloge, date, météo.
+- **Nouvelles icônes pleines** (Phosphor), avec les logos de Discord, Spotify, Steam, Twitch, YouTube et Chrome pour les touches de volume d'application.
+- **16 touches animées intégrées** (nouvelle catégorie « Animations ») : En direct, REC, On Air, égaliseur, onde sonore, chargement, battement de cœur, radar, notification, arc-en-ciel, scintillements, flamme, fusée, pause café, pluie, pluie de code.
+
+### Corrections
+- Une application ouverte mais silencieuse affiche « Aucun son » au lieu de « Fermée ». Noms d'applis plus lisibles (Edge, Chrome, OBS…).
+- Les pastilles « 2 états », « Live », « Macro » et « GIF » ne cachent plus le haut des touches dans le logiciel.
+
 ## [0.14.0] — 2026-11-09
 
 ### Nouveautés

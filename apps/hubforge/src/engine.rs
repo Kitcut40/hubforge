@@ -578,8 +578,8 @@ impl Engine {
         self.game_cache.clear();
         let vars = self.vars.all().clone();
         let mut var_keys = Vec::new();
-        self.visuals = self
-            .cfg
+        let cfg = &self.cfg;
+        self.visuals = cfg
             .pages
             .iter()
             .enumerate()
@@ -590,7 +590,7 @@ impl Engine {
                             if key_mentions_vars(def) {
                                 var_keys.push((p, k - 1));
                             }
-                            render_key_visuals(def, &vars, &dir, rot)
+                            render_key_visuals(&cfg.themed(p, def), &vars, &dir, rot)
                         }
                         None => KeyVisuals { states: vec![render::blank()] },
                     })
@@ -609,7 +609,9 @@ impl Engine {
         let vars = self.vars.all().clone();
         let dir = self.cfg_dir.clone();
         for (p, k) in self.var_keys.clone() {
-            let Some(def) = self.cfg.pages.get(p).and_then(|pg| pg.keys.iter().find(|d| d.key == k + 1)).cloned() else { continue };
+            let Some(def) = self.cfg.pages.get(p).and_then(|pg| pg.keys.iter().find(|d| d.key == k + 1)).map(|d| self.cfg.themed(p, d)) else {
+                continue;
+            };
             let v = render_key_visuals(&def, &vars, &dir, self.keys_rot);
             if let Some(slot) = self.visuals.get_mut(p).and_then(|pg| pg.get_mut(k as usize)) {
                 *slot = v;
@@ -798,7 +800,9 @@ impl Engine {
     /// retourne les touches redessinées.
     fn render_widgets(&mut self) -> Vec<u8> {
         let page = self.page;
-        let Some(defs) = self.cfg.pages.get(page).map(|p| p.keys.clone()) else { return Vec::new() };
+        let Some(defs) = self.cfg.pages.get(page).map(|p| p.keys.iter().map(|d| self.cfg.themed(page, d)).collect::<Vec<_>>()) else {
+            return Vec::new();
+        };
         if !defs.iter().any(|d| d.widget.is_some()) {
             return Vec::new();
         }

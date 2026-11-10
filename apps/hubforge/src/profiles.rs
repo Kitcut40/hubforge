@@ -173,6 +173,7 @@ pub fn blank_config() -> Config {
             roller_left: None,
             roller_right: None,
             roller_left_actions: None,
+            theme: None,
             roller_right_actions: None,
         }],
         lights: Default::default(),
