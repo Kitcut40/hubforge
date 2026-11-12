@@ -31,6 +31,8 @@ mod official;
 mod profiles;
 mod render;
 mod share;
+mod media;
+mod pcstate;
 mod sound;
 mod theme;
 mod theme_icons;
@@ -229,6 +231,8 @@ fn main() {
             ui::import_sound_data,
             ui::test_sound,
             ui::clear_vars,
+            ui::list_audio_outputs,
+            ui::open_vars_folder,
             ui::start_doom,
             ui::download_freedoom,
             ui::stop_doom,

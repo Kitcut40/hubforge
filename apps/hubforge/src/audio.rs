@@ -31,6 +31,11 @@ pub enum AudioCmd {
     Measure(Vec<String>),
     /// Couper / rétablir le son d'applications.
     ToggleAppMute(Vec<String>),
+    /// Liste des sorties audio actives (noms affichés par Windows).
+    ListOutputs(Sender<Vec<String>>),
+    /// Change la sortie audio par défaut. Une sortie : celle-ci. Plusieurs :
+    /// la suivante de la liste. Aucune : la suivante parmi toutes.
+    SetOutput(Vec<String>),
 }
 
 /// État d'une cible de fader, pour les LED « état » et « VU-mètre ».
@@ -46,13 +51,15 @@ pub struct Meter {
 }
 
 /// Dernier état connu du son (mis à jour par `AudioCmd::Poll`).
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AudioState {
     /// Volume général (0.0 à 1.0), None si pas de sortie audio.
     pub master: Option<f32>,
     pub master_muted: bool,
     /// Micro coupé ? None si pas de micro.
     pub mic_muted: Option<bool>,
+    /// Nom de la sortie audio par défaut (ex. « Casque (Arctis 7) »).
+    pub output: Option<String>,
 }
 
 #[derive(Clone)]
@@ -88,11 +95,18 @@ impl Audio {
 
     /// Dernier état connu (demander une mise à jour avec `AudioCmd::Poll`).
     pub fn state(&self) -> AudioState {
-        self.state.lock().map(|s| *s).unwrap_or_default()
+        self.state.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
     pub fn send(&self, cmd: AudioCmd) {
         let _ = self.tx.send(cmd);
+    }
+
+    /// Sorties audio actives.
+    pub fn list_outputs(&self) -> Vec<String> {
+        let (tx, rx) = mpsc::channel();
+        self.send(AudioCmd::ListOutputs(tx));
+        rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or_default()
     }
 
     /// Applications qui jouent (ou ont joué) du son, ex. « discord.exe ».
@@ -104,6 +118,7 @@ impl Audio {
 }
 
 #[cfg(windows)]
+#[allow(non_snake_case)]
 mod imp {
     use super::{AudioCmd, AudioState, Meter};
     use std::collections::HashMap;
@@ -115,9 +130,9 @@ mod imp {
     use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioMeterInformation};
     use windows::Win32::Media::Audio::{
         eCapture, eConsole, eRender, AudioSessionStateExpired, IAudioSessionControl, IAudioSessionControl2,
-        IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator,
+        IAudioSessionManager2, IMMDevice, IMMDeviceEnumerator, ISimpleAudioVolume, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
     };
-    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ};
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     };
@@ -136,6 +151,102 @@ mod imp {
         mic_meter: Option<IAudioMeterInformation>,
         sessions: HashMap<String, Vec<Session>>,
         refreshed: Instant,
+        /// Nom de la sortie par défaut.
+        output: Option<String>,
+    }
+
+    // --- Changer la sortie par défaut ---------------------------------
+    // Windows n'a pas d'API publique pour ça : comme les utilitaires connus
+    // (SoundSwitch, EarTrumpet…), on passe par l'interface IPolicyConfig.
+
+    #[windows::core::interface("f8679f50-850a-41cf-9c72-430f290290c8")]
+    unsafe trait IPolicyConfig: windows::core::IUnknown {
+        fn GetMixFormat(&self, id: windows::core::PCWSTR, fmt: *mut *mut core::ffi::c_void) -> windows::core::HRESULT;
+        fn GetDeviceFormat(&self, id: windows::core::PCWSTR, def: i32, fmt: *mut *mut core::ffi::c_void) -> windows::core::HRESULT;
+        fn ResetDeviceFormat(&self, id: windows::core::PCWSTR) -> windows::core::HRESULT;
+        fn SetDeviceFormat(&self, id: windows::core::PCWSTR, a: *mut core::ffi::c_void, b: *mut core::ffi::c_void) -> windows::core::HRESULT;
+        fn GetProcessingPeriod(&self, id: windows::core::PCWSTR, def: i32, a: *mut i64, b: *mut i64) -> windows::core::HRESULT;
+        fn SetProcessingPeriod(&self, id: windows::core::PCWSTR, a: *mut i64) -> windows::core::HRESULT;
+        fn GetShareMode(&self, id: windows::core::PCWSTR, a: *mut core::ffi::c_void) -> windows::core::HRESULT;
+        fn SetShareMode(&self, id: windows::core::PCWSTR, a: *mut core::ffi::c_void) -> windows::core::HRESULT;
+        fn GetPropertyValue(&self, id: windows::core::PCWSTR, k: *const core::ffi::c_void, v: *mut core::ffi::c_void) -> windows::core::HRESULT;
+        fn SetPropertyValue(&self, id: windows::core::PCWSTR, k: *const core::ffi::c_void, v: *mut core::ffi::c_void) -> windows::core::HRESULT;
+        fn SetDefaultEndpoint(&self, id: windows::core::PCWSTR, role: i32) -> windows::core::HRESULT;
+        fn SetEndpointVisibility(&self, id: windows::core::PCWSTR, visible: i32) -> windows::core::HRESULT;
+    }
+
+    const CLSID_POLICY_CONFIG: windows::core::GUID = windows::core::GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
+
+    fn device_id(dev: &IMMDevice) -> Option<String> {
+        unsafe {
+            let p = dev.GetId().ok()?;
+            let s = p.to_string().ok();
+            CoTaskMemFree(Some(p.0 as *const core::ffi::c_void));
+            s
+        }
+    }
+
+    fn device_name(dev: &IMMDevice) -> Option<String> {
+        use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+        use windows::Win32::System::Com::StructuredStorage::PropVariantToStringAlloc;
+        unsafe {
+            let store = dev.OpenPropertyStore(STGM_READ).ok()?;
+            let v = store.GetValue(&PKEY_Device_FriendlyName).ok()?;
+            let p = PropVariantToStringAlloc(&v).ok()?;
+            let s = p.to_string().ok();
+            CoTaskMemFree(Some(p.0 as *const core::ffi::c_void));
+            s
+        }
+    }
+
+    /// Sorties actives : (identifiant, nom).
+    fn outputs(st: &State) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        unsafe {
+            let Ok(coll) = st.enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE) else { return out };
+            for i in 0..coll.GetCount().unwrap_or(0) {
+                let Ok(dev) = coll.Item(i) else { continue };
+                if let (Some(id), Some(name)) = (device_id(&dev), device_name(&dev)) {
+                    out.push((id, name));
+                }
+            }
+        }
+        out
+    }
+
+    fn set_output(st: &mut State, wanted: &[String]) -> windows::core::Result<()> {
+        let all = outputs(st);
+        let current = unsafe { st.enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }.ok().and_then(|d| device_id(&d));
+        let candidates: Vec<&(String, String)> = if wanted.is_empty() {
+            all.iter().collect()
+        } else {
+            // Dans l'ordre de la liste de l'utilisateur.
+            wanted
+                .iter()
+                .filter_map(|w| {
+                    let w = w.trim().to_lowercase();
+                    all.iter().find(|(_, n)| n.to_lowercase() == w).or_else(|| all.iter().find(|(_, n)| n.to_lowercase().contains(&w)))
+                })
+                .collect()
+        };
+        let Some(first) = candidates.first() else {
+            log::warn!("sortie audio introuvable : {wanted:?}");
+            return Ok(());
+        };
+        let target = match candidates.iter().position(|(id, _)| Some(id) == current.as_ref()) {
+            Some(i) if candidates.len() > 1 => candidates[(i + 1) % candidates.len()],
+            _ => first,
+        };
+        log::info!("sortie audio : {}", target.1);
+        let wide: Vec<u16> = target.0.encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let pc: IPolicyConfig = CoCreateInstance(&CLSID_POLICY_CONFIG, None, CLSCTX_ALL)?;
+            for role in 0..3 {
+                pc.SetDefaultEndpoint(windows::core::PCWSTR(wide.as_ptr()), role).ok()?;
+            }
+        }
+        refresh(st);
+        Ok(())
     }
 
     pub fn run(rx: Receiver<AudioCmd>, shared: Arc<Mutex<AudioState>>, meters: Arc<Mutex<HashMap<String, Meter>>>) {
@@ -157,6 +268,7 @@ mod imp {
             mic_meter: None,
             sessions: HashMap::new(),
             refreshed: Instant::now() - Duration::from_secs(60),
+            output: None,
         };
         let mut stamps: HashMap<String, Instant> = HashMap::new();
         while let Ok(cmd) = rx.recv() {
@@ -190,6 +302,11 @@ mod imp {
                     Ok(())
                 }
                 AudioCmd::Poll => Ok(()),
+                AudioCmd::ListOutputs(reply) => {
+                    let _ = reply.send(outputs(&st).into_iter().map(|(_, n)| n).collect());
+                    Ok(())
+                }
+                AudioCmd::SetOutput(list) => set_output(&mut st, list),
                 AudioCmd::Measure(targets) => {
                     // Plusieurs demandeurs (LED des faders, touches vivantes) : on
                     // garde chaque cible tant qu'elle est redemandée.
@@ -236,7 +353,7 @@ mod imp {
                 log::debug!("audio : {e}");
                 st.refreshed = Instant::now() - Duration::from_secs(60);
             }
-            if !matches!(cmd, AudioCmd::ListApps(_) | AudioCmd::SetApps(..) | AudioCmd::StepApps(..) | AudioCmd::Measure(_) | AudioCmd::ToggleAppMute(_)) {
+            if !matches!(cmd, AudioCmd::ListApps(_) | AudioCmd::SetApps(..) | AudioCmd::StepApps(..) | AudioCmd::Measure(_) | AudioCmd::ToggleAppMute(_) | AudioCmd::ListOutputs(_)) {
                 let snap = snapshot(&st);
                 if let Ok(mut s) = shared.lock() {
                     *s = snap;
@@ -250,7 +367,7 @@ mod imp {
             let master = st.master.as_ref().and_then(|ep| ep.GetMasterVolumeLevelScalar().ok());
             let master_muted = st.master.as_ref().and_then(|ep| ep.GetMute().ok()).map(|b| b.as_bool()).unwrap_or(false);
             let mic_muted = st.mic.as_ref().and_then(|ep| ep.GetMute().ok()).map(|b| b.as_bool());
-            AudioState { master, master_muted, mic_muted }
+            AudioState { master, master_muted, mic_muted, output: st.output.clone() }
         }
     }
 
@@ -326,6 +443,7 @@ mod imp {
 
     fn refresh(st: &mut State) {
         st.refreshed = Instant::now();
+        st.output = unsafe { st.enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }.ok().and_then(|d| device_name(&d));
         unsafe {
             st.master = st
                 .enumerator
@@ -394,8 +512,11 @@ mod imp {
     pub fn run(rx: Receiver<AudioCmd>, _shared: Arc<Mutex<AudioState>>, _meters: Arc<Mutex<HashMap<String, Meter>>>) {
         log::warn!("contrôle du volume pas encore disponible sur cette plateforme");
         while let Ok(cmd) = rx.recv() {
-            if let AudioCmd::ListApps(reply) = cmd {
-                let _ = reply.send(Vec::new());
+            match cmd {
+                AudioCmd::ListApps(reply) | AudioCmd::ListOutputs(reply) => {
+                    let _ = reply.send(Vec::new());
+                }
+                _ => {}
             }
         }
     }

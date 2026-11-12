@@ -4,6 +4,22 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.16.0] — 2026-11-13
+
+### Nouveautés
+- **Changer de sortie audio d'un appui** (casque ↔ enceintes) :
+  - choisis une sortie, ou plusieurs pour passer de l'une à l'autre ;
+  - la touche affiche la sortie active, avec une icône casque ou haut-parleur.
+- **Musique en cours** : titre, artiste et pochette de ce que joue Windows (Spotify, YouTube dans le navigateur, VLC…), en style « pochette » ou « titre ». Un appui met en lecture ou en pause.
+- **Minuteurs** :
+  - chronomètre, et compte à rebours avec un anneau qui se vide ;
+  - un appui démarre ou met en pause, un appui long remet à zéro ;
+  - à la fin du compte à rebours, la touche clignote en rouge.
+- **Variables pour OBS** : chaque variable peut être écrite dans un fichier texte, pour afficher un compteur sur ton stream.
+- **Fenêtres** (nouvelle catégorie) : fenêtre à gauche, à droite, agrandir, vers l'autre écran, bureaux virtuels, vue des tâches.
+- **Veille du MasterHUB** : écrans et LED s'éteignent après un temps sans activité, ou quand le PC est verrouillé. Le premier appui rallume sans lancer d'action.
+- **Nouvelles touches vivantes** : débits réseau (texte ou graphique) et espace disque.
+
 ## [0.15.0] — 2026-11-10
 
 ### Nouveautés

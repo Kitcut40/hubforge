@@ -464,6 +464,40 @@ fn options() -> &'static resvg::usvg::Options<'static> {
     })
 }
 
+/// Découpe un texte en `max` lignes au plus (la dernière est raccourcie).
+pub fn wrap_lines(s: &str, size: f32, weight: u16, max_w: f32, max: usize) -> Vec<String> {
+    let mut lines = wrap(s, size, weight, max_w);
+    if lines.len() > max {
+        let rest = lines.split_off(max - 1).join(" ");
+        let mut last = String::new();
+        for c in rest.chars() {
+            if text_width(&format!("{last}{c}…"), size, weight, 0.0) > max_w {
+                break;
+            }
+            last.push(c);
+        }
+        lines.push(format!("{}…", last.trim_end()));
+    }
+    lines
+}
+
+/// Dessine un SVG transparent par-dessus une image existante.
+pub fn rasterize_onto(img: &mut RgbImage, svg: &str) {
+    let Ok(tree) = resvg::usvg::Tree::from_str(svg, options()) else { return };
+    let Some(mut pm) = resvg::tiny_skia::Pixmap::new(S, S) else { return };
+    resvg::render(&tree, resvg::tiny_skia::Transform::identity(), &mut pm.as_mut());
+    for (i, px) in pm.pixels().iter().enumerate() {
+        let a = px.alpha() as u32;
+        if a == 0 {
+            continue;
+        }
+        let c = px.demultiply();
+        let p = img.get_pixel_mut(i as u32 % S, i as u32 / S);
+        let mix = |src: u8, dst: u8| ((src as u32 * a + dst as u32 * (255 - a)) / 255) as u8;
+        p.0 = [mix(c.red(), p.0[0]), mix(c.green(), p.0[1]), mix(c.blue(), p.0[2])];
+    }
+}
+
 /// Rend un SVG de 72×72 en image.
 pub fn rasterize(svg: &str) -> RgbImage {
     let mut img = RgbImage::from_pixel(S, S, Rgb([0, 0, 0]));

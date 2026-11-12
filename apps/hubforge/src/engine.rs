@@ -51,6 +51,19 @@ pub enum EngineMsg {
     ClearVars,
 }
 
+/// Minuteur d'une touche (chronomètre ou compte à rebours).
+#[derive(Debug, Clone, Copy, Default)]
+struct TimerState {
+    acc: Duration,
+    since: Option<Instant>,
+}
+
+impl TimerState {
+    fn elapsed(&self, now: Instant) -> Duration {
+        self.acc + self.since.map(|s| now.saturating_duration_since(s)).unwrap_or_default()
+    }
+}
+
 /// Reprise douce d'un fader : il n'agit qu'une fois passé par le volume actuel.
 #[derive(Clone, Copy)]
 struct Pickup {
@@ -129,6 +142,8 @@ pub struct Status {
     pub vars: BTreeMap<String, String>,
     /// Faders en attente de reprise douce.
     pub pickup: Vec<bool>,
+    /// MasterHUB en veille.
+    pub asleep: bool,
 }
 
 fn hex(c: Rgb) -> String {
@@ -226,6 +241,16 @@ pub struct Engine {
     /// Une macro est en train d'être déroulée (les conditions insèrent alors
     /// leurs étapes juste après l'étape en cours).
     in_macro: bool,
+    /// Touche dont l'action est en cours (pour l'action « minuteur »).
+    acting: Option<(usize, u8)>,
+    /// Minuteurs des touches (page, touche).
+    timers: HashMap<(usize, u8), TimerState>,
+    /// Veille : écrans et LED éteints après inactivité ou verrouillage.
+    asleep: bool,
+    last_device_input: Instant,
+    sleep_check: Instant,
+    /// Touche dont l'appui a seulement réveillé le MasterHUB.
+    wake_swallow: Option<u8>,
     /// Reprise douce : faders en attente, et cible de chaque fader au dernier changement.
     pickup: [Option<Pickup>; FADER_COUNT],
     fader_targets: [String; FADER_COUNT],
@@ -302,6 +327,12 @@ impl Engine {
             vars: Vars::load(&cfg_dir_for_vars),
             var_keys: Vec::new(),
             in_macro: false,
+            acting: None,
+            timers: HashMap::new(),
+            asleep: false,
+            last_device_input: Instant::now(),
+            sleep_check: Instant::now(),
+            wake_swallow: None,
             pickup: [None; FADER_COUNT],
             fader_targets: Default::default(),
         };
@@ -339,6 +370,7 @@ impl Engine {
             doom_error: self.doom_error.clone(),
             vars: self.vars.all().clone(),
             pickup: self.pickup.iter().map(|p| p.is_some()).collect(),
+            asleep: self.asleep,
         }
     }
 
@@ -379,6 +411,10 @@ impl Engine {
             }
             self.run_macro();
             self.vars.save_if_due();
+            if self.sleep_check.elapsed() >= Duration::from_secs(1) {
+                self.sleep_check = Instant::now();
+                self.check_sleep();
+            }
             if self.doom.is_some() {
                 self.tick_doom();
             } else if self.game.is_some() {
@@ -475,6 +511,7 @@ impl Engine {
             EngineMsg::ClearVars => {
                 self.vars.clear();
                 self.vars.save_now();
+                let _ = std::fs::remove_dir_all(self.cfg_dir.join("variables"));
                 self.refresh_var_keys();
                 self.notify();
             }
@@ -546,6 +583,12 @@ impl Engine {
         }
         if old.general.sound_device != self.cfg.general.sound_device || old.general.sound_device2 != self.cfg.general.sound_device2 {
             self.apply_sound_devices();
+        }
+        if self.cfg.general.vars_files && !old.general.vars_files {
+            self.vars.export(&self.cfg_dir.join("variables"), None);
+        }
+        if old.general.sleep_after != self.cfg.general.sleep_after || old.general.sleep_locked != self.cfg.general.sleep_locked {
+            self.last_device_input = Instant::now();
         }
         if old.lights.animations != self.cfg.lights.animations {
             self.lights_t0 = Instant::now();
@@ -656,8 +699,51 @@ impl Engine {
 
     /// Couleur(s), puis mode, puis luminosité, avec de courtes pauses :
     /// le module n'applique une couleur qu'après la commande de mode.
-    fn setup_leds(&self, serial: &str, target: u8, colors: &[(u8, (u8, u8, u8))], mode: u8) {
+    /// Luminosité des LED (0 en veille).
+    fn led_level(&self) -> u8 {
+        if self.asleep {
+            0
+        } else {
+            self.cfg.general.led_brightness
+        }
+    }
+
+    /// Veille : après X minutes sans rien toucher (PC et MasterHUB), ou
+    /// quand la session est verrouillée.
+    fn check_sleep(&mut self) {
         let g = &self.cfg.general;
+        let idle = crate::pcstate::idle_seconds().min(self.last_device_input.elapsed().as_secs());
+        let by_idle = g.sleep_after > 0 && idle >= g.sleep_after as u64 * 60;
+        let by_lock = g.sleep_locked && crate::pcstate::is_locked();
+        let want = (by_idle || by_lock) && self.doom.is_none();
+        if want != self.asleep {
+            self.set_asleep(want);
+        }
+    }
+
+    fn set_asleep(&mut self, asleep: bool) {
+        log::info!("{}", if asleep { "MasterHUB en veille" } else { "MasterHUB réveillé" });
+        self.asleep = asleep;
+        self.release_held();
+        let serials: Vec<(String, Kind)> = self.modules.iter().map(|(s, k)| (s.clone(), *k)).collect();
+        for (s, k) in serials {
+            self.setup_module(&s, k);
+        }
+        self.notify();
+    }
+
+    /// Un module a été touché : sort de veille. Vrai si l'appui ne doit
+    /// servir qu'à réveiller.
+    fn device_touched(&mut self) -> bool {
+        self.last_device_input = Instant::now();
+        if self.asleep && !(self.cfg.general.sleep_locked && crate::pcstate::is_locked()) {
+            self.set_asleep(false);
+            return true;
+        }
+        false
+    }
+
+    fn setup_leds(&self, serial: &str, target: u8, colors: &[(u8, (u8, u8, u8))], mode: u8) {
         for (index, (r, gg, b)) in colors {
             self.mgr.send(serial, Command::Output(protocol::led_color(target, *index, *r, *gg, *b, false)));
             self.mgr.send(serial, Command::Sleep(30));
@@ -665,7 +751,7 @@ impl Engine {
         let all = if target == 0 { 0 } else { 0xFF };
         self.mgr.send(serial, Command::Output(protocol::led_mode(target, all, mode, false)));
         self.mgr.send(serial, Command::Sleep(30));
-        self.mgr.send(serial, Command::Output(protocol::led_brightness(target, all, g.led_brightness)));
+        self.mgr.send(serial, Command::Output(protocol::led_brightness(target, all, self.led_level())));
     }
 
     fn setup_module(&mut self, serial: &str, kind: Kind) {
@@ -673,7 +759,7 @@ impl Engine {
         match kind {
             Kind::Keys15 => {
                 self.mgr.send(serial, Command::Feature(protocol::keys15_sw_mode(true)));
-                self.mgr.send(serial, Command::Feature(protocol::keys15_brightness(g.brightness)));
+                self.mgr.send(serial, Command::Feature(protocol::keys15_brightness(if self.asleep { 0 } else { g.brightness })));
                 self.show_page();
             }
             Kind::Faders5 => {
@@ -726,10 +812,30 @@ impl Engine {
                 self.modules_changed = true;
                 self.faders.remove(&serial);
             }
-            Event::KeyDown { key, .. } => self.key_down(key),
-            Event::KeyUp { key, .. } => self.key_up(key),
-            Event::Faders { serial, values } => self.faders_changed(serial, values),
-            Event::Roller { wheel, step, .. } => self.roller(wheel, step),
+            Event::KeyDown { key, .. } => {
+                // Un appui qui réveille le MasterHUB ne lance pas d'action.
+                if self.device_touched() {
+                    self.wake_swallow = Some(key);
+                    return;
+                }
+                self.key_down(key)
+            }
+            Event::KeyUp { key, .. } => {
+                if self.wake_swallow == Some(key) {
+                    self.wake_swallow = None;
+                    return;
+                }
+                self.key_up(key)
+            }
+            Event::Faders { serial, values } => {
+                self.device_touched();
+                self.faders_changed(serial, values)
+            }
+            Event::Roller { wheel, step, .. } => {
+                self.device_touched();
+                self.acting = None;
+                self.roller(wheel, step)
+            }
         }
     }
 
@@ -807,7 +913,13 @@ impl Engine {
             return Vec::new();
         }
         self.sampler.want_gpu = defs.iter().any(|d| d.widget.as_deref().map(widgets::needs_gpu).unwrap_or(false));
+        self.sampler.want_net = defs.iter().any(|d| d.widget.as_deref() == Some("net"));
         let mut snap = self.sampler.sample(self.audio.state());
+        let now = Instant::now();
+        for d in defs.iter().filter(|d| d.widget.as_deref() == Some("timer")) {
+            let t = self.timers.get(&(page, d.key.saturating_sub(1))).copied().unwrap_or_default();
+            snap.timers.insert(d.key.saturating_sub(1), (t.elapsed(now).as_millis() as u64, t.since.is_some()));
+        }
         let targets: Vec<String> =
             defs.iter().filter(|d| d.widget.as_deref() == Some("app_volume")).filter_map(widgets::app_target).collect();
         if !targets.is_empty() {
@@ -893,6 +1005,7 @@ impl Engine {
                 g.done = true;
                 g.up_at = None;
                 if let Some(a) = def.double.clone() {
+                    self.acting = Some((self.page, key));
                     self.run_extra_action(&a);
                 }
                 return;
@@ -909,6 +1022,7 @@ impl Engine {
 
     /// Action « appui simple » d'une touche (avec ses deux états éventuels).
     fn press_key_action(&mut self, key: u8, def: KeyDef) {
+        self.acting = Some((self.page, key));
         let state = if def.toggle.is_some() && self.is_toggled(key) { 1 } else { 0 };
         let action = def.state(state).action;
         if def.toggle.is_some() {
@@ -1022,9 +1136,38 @@ impl Engine {
             Action::Var { name, op, value } => {
                 let v = self.expand(value, true);
                 if self.vars.apply(name, op, &v) {
+                    if self.cfg.general.vars_files {
+                        self.vars.export(&self.cfg_dir.join("variables"), Some(name));
+                    }
                     self.refresh_var_keys();
                     self.notify();
                 }
+            }
+            Action::AudioOutput { devices } => {
+                let list: Vec<String> = devices.split('|').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                self.audio.send(AudioCmd::SetOutput(list));
+                self.audio.send(AudioCmd::Poll);
+                self.widgets_due = self.widgets_due.min(Instant::now() + Duration::from_millis(300));
+            }
+            Action::Timer { op } => {
+                let Some((page, key)) = self.acting else { return };
+                let now = Instant::now();
+                let total = self.cfg.pages.get(page).and_then(|p| p.keys.iter().find(|d| d.key == key + 1)).and_then(widgets::timer_total);
+                let t = self.timers.entry((page, key)).or_default();
+                match op.as_str() {
+                    "reset" => *t = TimerState::default(),
+                    _ => {
+                        let finished = total.map(|tot| t.elapsed(now) >= tot).unwrap_or(false);
+                        if finished {
+                            *t = TimerState { acc: Duration::ZERO, since: Some(now) };
+                        } else if let Some(s) = t.since.take() {
+                            t.acc += now.saturating_duration_since(s);
+                        } else {
+                            t.since = Some(now);
+                        }
+                    }
+                }
+                self.widgets_due = Instant::now();
             }
             Action::If { left, cmp, right, then_steps, else_steps } => {
                 let (l, r) = (self.expand(left, true), self.expand(right, true));
@@ -1441,6 +1584,7 @@ impl Engine {
                         if let Some(g) = self.gesture.as_mut() {
                             g.done = true;
                         }
+                        self.acting = Some((self.page, key));
                         self.run_extra_action(&a);
                     }
                 }
@@ -1771,7 +1915,7 @@ impl Engine {
                         self.mgr.send(s, Command::Output(protocol::led_mode(0, 0, 1, false)));
                         if !self.base_soft {
                             self.mgr.send(s, Command::Sleep(6));
-                            self.mgr.send(s, Command::Output(protocol::led_brightness(0, 0, self.cfg.general.led_brightness)));
+                            self.mgr.send(s, Command::Output(protocol::led_brightness(0, 0, self.led_level())));
                         }
                         self.sent_base.insert(s.clone(), c);
                         changed = true;

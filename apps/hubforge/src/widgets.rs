@@ -26,7 +26,48 @@ pub const WIDGETS: &[(&str, &str)] = &[
     ("app_volume", "Volume d'une application"),
     ("mic", "État du micro"),
     ("weather", "Météo"),
+    ("audio_output", "Sortie audio"),
+    ("media", "Musique en cours"),
+    ("timer", "Minuteur"),
+    ("net", "Réseau"),
+    ("disk", "Disque"),
 ];
+
+/// Touches vivantes qui n'existent qu'avec les styles (en Classique, elles
+/// sont dessinées en Graphite).
+fn themed_only(kind: &str) -> bool {
+    matches!(kind, "audio_output" | "media" | "timer" | "net" | "disk")
+}
+
+/// Durée d'un compte à rebours (« 5:00 », « 90 », « 1:30:00 », « 5 min »),
+/// None pour un chronomètre.
+pub fn timer_total(def: &KeyDef) -> Option<std::time::Duration> {
+    if def.widget.as_deref() != Some("timer") || style_of(def) != "countdown" {
+        return None;
+    }
+    let t = def.widget_target.as_deref().unwrap_or("").trim().to_lowercase();
+    let secs = if t.is_empty() {
+        300
+    } else if let Some(m) = t.strip_suffix("min").or_else(|| t.strip_suffix('m')) {
+        (m.trim().replace(',', ".").parse::<f64>().ok()? * 60.0) as u64
+    } else if let Some(sec) = t.strip_suffix('s') {
+        sec.trim().parse().ok()?
+    } else {
+        let parts: Vec<u64> = t.split(':').map(|p| p.trim().parse().ok()).collect::<Option<Vec<_>>>()?;
+        parts.iter().fold(0, |acc, v| acc * 60 + v)
+    };
+    Some(std::time::Duration::from_secs(secs.clamp(1, 24 * 3600)))
+}
+
+/// « 4:05 », « 1:02:09 ».
+fn clock_text(ms: u64) -> String {
+    let s = ms / 1000;
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
+}
 
 /// Touches vivantes qui ont besoin des mesures de la carte graphique.
 pub fn needs_gpu(kind: &str) -> bool {
@@ -63,6 +104,15 @@ pub const STYLES: &[(&str, &str, &str)] = &[
     ("weather", "now", "Maintenant"),
     ("weather", "compact", "Compacte"),
     ("weather", "forecast", "Prochains jours"),
+    ("audio_output", "name", "Nom"),
+    ("media", "cover", "Pochette"),
+    ("media", "text", "Titre"),
+    ("timer", "stopwatch", "Chronomètre"),
+    ("timer", "countdown", "Compte à rebours"),
+    ("net", "text", "Débits"),
+    ("net", "graph", "Graphique"),
+    ("disk", "bar", "Barre"),
+    ("disk", "gauge", "Jauge"),
     ("mic", "classic", "Icône et texte"),
     ("mic", "icon", "Grande icône"),
 ];
@@ -151,6 +201,11 @@ pub struct Snapshot {
     pub vram_hist: Vec<u8>,
     /// Volume des applications des touches « app_volume » (cible "app:…").
     pub apps: Vec<(String, Meter)>,
+    /// Minuteurs des touches de la page : touche (0 à 14) → (ms écoulées, en marche).
+    pub timers: std::collections::HashMap<u8, (u64, bool)>,
+    /// Débit réseau (octets/s reçus, envoyés), et historique des débits reçus.
+    pub net: Option<(f64, f64)>,
+    pub net_hist: Vec<f64>,
 }
 
 /// Prend les mesures ; garde la mesure précédente du processeur pour
@@ -166,6 +221,11 @@ pub struct Sampler {
     vram_hist: VecDeque<u8>,
     /// Mesurer la carte graphique (seulement si une touche l'affiche).
     pub want_gpu: bool,
+    /// Mesurer le réseau (seulement si une touche l'affiche).
+    pub want_net: bool,
+    net_last: Option<(std::time::Instant, u64, u64)>,
+    net: Option<(f64, f64)>,
+    net_hist: VecDeque<f64>,
 }
 
 impl Sampler {
@@ -192,6 +252,22 @@ impl Sampler {
         push(&mut self.cpu_hist, self.cpu);
         push(&mut self.ram_hist, ram.map(|r| r.0));
         let gpu = if self.want_gpu { imp::gpu() } else { None };
+        if self.want_net {
+            if let Some((rx, tx)) = crate::pcstate::net_bytes() {
+                let now = std::time::Instant::now();
+                if let Some((t, lrx, ltx)) = self.net_last {
+                    let dt = now.duration_since(t).as_secs_f64();
+                    if dt > 0.05 {
+                        self.net = Some((rx.saturating_sub(lrx) as f64 / dt, tx.saturating_sub(ltx) as f64 / dt));
+                        self.net_hist.push_back(self.net.map(|n| n.0).unwrap_or(0.0));
+                        while self.net_hist.len() > HISTORY {
+                            self.net_hist.pop_front();
+                        }
+                    }
+                }
+                self.net_last = Some((now, rx, tx));
+            }
+        }
         push(&mut self.gpu_hist, gpu.as_ref().map(|g| g.usage));
         push(&mut self.gpu_temp_hist, gpu.as_ref().map(|g| g.temp.min(100)));
         push(&mut self.vram_hist, gpu.as_ref().map(|g| g.mem_pct()));
@@ -207,6 +283,9 @@ impl Sampler {
             gpu_temp_hist: self.gpu_temp_hist.iter().copied().collect(),
             vram_hist: self.vram_hist.iter().copied().collect(),
             apps: Vec::new(),
+            timers: Default::default(),
+            net: self.net,
+            net_hist: self.net_hist.iter().copied().collect(),
         }
     }
 }
@@ -214,7 +293,7 @@ impl Sampler {
 /// Mesures partagées pour les aperçus de l'interface.
 pub fn preview_snapshot(audio: AudioState) -> Snapshot {
     static SAMPLER: OnceLock<Mutex<Sampler>> = OnceLock::new();
-    let m = SAMPLER.get_or_init(|| Mutex::new(Sampler { want_gpu: true, ..Default::default() }));
+    let m = SAMPLER.get_or_init(|| Mutex::new(Sampler { want_gpu: true, want_net: true, ..Default::default() }));
     m.lock().map(|mut s| s.sample(audio)).unwrap_or_default()
 }
 
@@ -245,6 +324,17 @@ pub fn signature(def: &KeyDef, snap: &Snapshot) -> String {
             format!("{:?}{}{}", m.level.map(|v| (v * 100.0).round() as u32), m.muted, m.present)
         }
         ("weather", _) => format!("{:?}{}", weather::get(), t.day),
+        ("audio_output", _) => format!("{:?}", snap.audio.output),
+        ("media", _) => format!("{:?}", crate::media::get().map(|m| (m.title, m.artist, m.playing, m.cover.map(|c| c.as_ptr() as usize)))),
+        ("timer", _) => {
+            let (ms, run) = snap.timers.get(&def.key.saturating_sub(1)).copied().unwrap_or((0, false));
+            // Fin du compte à rebours : clignote pendant 10 s.
+            let blink = timer_total(def).map(|tot| ms >= tot.as_millis() as u64 && ms - (tot.as_millis() as u64) < 10_000 && (ms / 500) % 2 == 0);
+            format!("{}{run}{blink:?}", ms / 1000)
+        }
+        ("net", "graph") => format!("{:?}{:?}", snap.net.map(|n| (n.0 as u64 / 10_000, n.1 as u64 / 10_000)), snap.net_hist.len()),
+        ("net", _) => format!("{:?}", snap.net.map(|n| (n.0 as u64 / 10_000, n.1 as u64 / 10_000))),
+        ("disk", _) => format!("{:?}", crate::pcstate::disk(def.widget_target.as_deref().unwrap_or("C")).map(|d| (d.0 * 10.0) as u64)),
         _ => String::new(),
     };
     format!("{kind}|{style}|{content}|{}|{:?}|{:?}|{:?}", def.label, def.color, def.text_color, def.theme)
@@ -617,7 +707,9 @@ fn render_weather(def: &KeyDef, style: &str, fg: Rgb<u8>, label: &str) -> RgbIma
 
 /// Dessine la touche vivante.
 pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
-    if let Some(theme) = crate::theme::of(def) {
+    let kind_now = def.widget.as_deref().unwrap_or("");
+    let theme = crate::theme::of(def).or_else(|| themed_only(kind_now).then_some(crate::theme::Theme::Graphite));
+    if let Some(theme) = theme {
         if let Some(img) = themed::render(theme, def, snap) {
             return img;
         }
@@ -841,7 +933,7 @@ fn draw_analog(img: &mut RgbImage, t: &LocalTime, fg: Rgb<u8>, bg: Rgb<u8>) {
 /// Touches vivantes dans les thèmes (Graphite, Néon, Plan, Console, Mono).
 mod themed {
     use super::*;
-    use crate::theme::{self as th, Style, Theme};
+    use crate::theme::{self as th, Style, Theme, Weight};
 
     fn rgb(h: &str) -> (u8, u8, u8) {
         parse_color(h).unwrap_or((61, 169, 252))
@@ -1047,7 +1139,7 @@ mod themed {
                     }
                     "graph" => {
                         b += &graph(&st, hist, 32.0 + d, if st.theme == Theme::Console { 58.0 } else { 66.0 }, &color);
-                        b += &small(&st, 36.0, 11.5 + d, title, 8.5, 60.0);
+                        b += &small(&st, 36.0, 11.5 + d * 1.4, title, 8.5, 60.0);
                         b += &val(&st, 36.0, 29.0 + d, &value, 17.0);
                     }
                     _ => {
@@ -1222,6 +1314,129 @@ mod themed {
                             b += &th::label(&st, &format!("{} / {}", deg(dd.max), deg(dd.min)), ly);
                         }
                     }
+                }
+            }
+            "audio_output" => {
+                let name = snap.audio.output.clone().unwrap_or_else(|| "Aucune sortie".into());
+                let (main, sub) = match name.split_once(" (") {
+                    Some((a, b)) => (a.to_string(), b.trim_end_matches(')').to_string()),
+                    None => (name.clone(), String::new()),
+                };
+                let l = name.to_lowercase();
+                let head = ["casque", "headphone", "headset", "écouteur", "ecouteur", "airpods", "buds", "arctis", "hyperx", "earphone"]
+                    .iter()
+                    .any(|w| l.contains(w));
+                b += &th::icon(if head { "headphones" } else { "volume-2" }, st.weight, 36.0, 22.0 + d, 26.0, &st.ic, fx);
+                b += &th::text(36.0, 47.0 + d * 0.6, &main, 11.5, &st.val, st.value_weight.max(600), 0.0, 62.0, 1.0);
+                let caption = if !label.is_empty() { label.to_string() } else { sub };
+                b += &th::label(&st, &caption, ly);
+            }
+            "media" => {
+                let m = crate::media::get();
+                let Some(m) = m else {
+                    b += &th::icon("music", st.weight, 36.0, 28.0 + d, 28.0, &st.soft, "");
+                    b += &th::label(&st, "Rien en lecture", ly);
+                    return Some(doc(&st, b));
+                };
+                if style == "cover" {
+                    if let Some(cover) = &m.cover {
+                        // Pochette en plein, titre sur un bandeau sombre en bas.
+                        let mut img = (**cover).clone();
+                        let mut o = String::from(r##"<defs><linearGradient id="sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.85"/></linearGradient></defs><rect x="0" y="38" width="72" height="34" fill="url(#sh)"/>"##);
+                        let t = th::wrap_lines(&m.title, 9.5, 700, 64.0, 1).into_iter().next().unwrap_or_default();
+                        o += &th::text(36.0, 66.0, &t, 9.5, "#FFFFFF", 700, 0.0, 66.0, 1.0);
+                        if !m.playing {
+                            o += r##"<circle cx="36" cy="30" r="13" fill="#000" fill-opacity="0.55"/>"##;
+                            o += &th::icon("pause", Weight::Fill, 36.0, 30.0, 14.0, "#FFFFFF", "");
+                        }
+                        th::rasterize_onto(&mut img, &format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72">{o}</svg>"#));
+                        return Some(img);
+                    }
+                }
+                b += &th::icon(if m.playing { "music" } else { "pause" }, st.weight, 36.0, 16.0 + d, 18.0, &st.ic, fx);
+                let lines = th::wrap_lines(&m.title, 10.5, 700, 62.0, 2);
+                let y0 = if lines.len() > 1 { 36.0 } else { 41.0 };
+                for (i, l) in lines.iter().enumerate() {
+                    b += &th::text(36.0, y0 + d * 0.6 + i as f32 * 12.0, l, 10.5, &st.val, 700, 0.0, 64.0, 1.0);
+                }
+                b += &th::label(&st, &m.artist, ly);
+            }
+            "timer" => {
+                let key = def.key.saturating_sub(1);
+                let (ms, running) = snap.timers.get(&key).copied().unwrap_or((0, false));
+                let title = if label.is_empty() { None } else { Some(label) };
+                match timer_total(def) {
+                    Some(tot) => {
+                        let tot = tot.as_millis() as u64;
+                        let left = tot.saturating_sub(ms);
+                        let over = ms.saturating_sub(tot);
+                        let done = ms >= tot;
+                        let flash = done && over < 10_000 && (ms / 500) % 2 == 0;
+                        if flash {
+                            b += r##"<rect width="72" height="72" fill="#FF3B30" fill-opacity="0.85"/>"##;
+                        }
+                        let frac = if tot > 0 { left as f32 / tot as f32 } else { 0.0 };
+                        let (cx, cy, r) = (36.0, 33.0 + d * 0.6, 23.0);
+                        b += &format!(r##"<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="#FFFFFF" stroke-opacity="{}" stroke-width="3"/>"##, st.track_op);
+                        if frac > 0.0 {
+                            let len = 2.0 * std::f32::consts::PI * r;
+                            b += &format!(
+                                r#"<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{}" stroke-width="3" stroke-linecap="round" stroke-dasharray="{:.2} {len:.2}" transform="rotate(-90 {cx} {cy})" {fx}/>"#,
+                                st.line,
+                                len * frac
+                            );
+                        }
+                        let txt = if done { "Fini !".to_string() } else { clock_text(left + 999) };
+                        b += &th::text(cx, cy + 5.0, &txt, if txt.len() > 5 { 12.0 } else { 15.0 }, &st.val, st.value_weight, 0.0, 40.0, 1.0);
+                        let cap = title.map(String::from).unwrap_or_else(|| if running { "En cours".into() } else if done { "Terminé".into() } else { clock_text(tot) });
+                        b += &th::label(&st, &cap, ly);
+                    }
+                    None => {
+                        b += &th::icon(if running { "timer" } else { "pause" }, st.weight, 36.0, 17.0 + d, 18.0, if running { &st.ic } else { &st.soft }, fx);
+                        let txt = clock_text(ms);
+                        b += &val(&st, 36.0, 43.0 + d * 0.6, &txt, if txt.len() > 5 { 15.0 } else { 20.0 });
+                        let cap = title.unwrap_or(if ms == 0 { "Chrono" } else if running { "En cours" } else { "En pause" });
+                        b += &th::label(&st, cap, ly);
+                    }
+                }
+            }
+            "net" => {
+                let (down, up) = snap.net.unwrap_or((0.0, 0.0));
+                let known = snap.net.is_some();
+                if style == "graph" {
+                    let mx = snap.net_hist.iter().cloned().fold(1.0f64, f64::max);
+                    let hist: Vec<u8> = snap.net_hist.iter().map(|v| ((v / mx) * 100.0).round().clamp(0.0, 100.0) as u8).collect();
+                    b += &graph(&st, &hist, 32.0 + d, if st.theme == Theme::Console { 58.0 } else { 66.0 }, &st.line);
+                    b += &small(&st, 36.0, 11.5 + d * 1.4, if label.is_empty() { "Réseau" } else { label }, 8.5, 60.0);
+                    b += &val(&st, 36.0, 28.0 + d, &if known { crate::pcstate::rate_text(down) } else { "–".into() }, 13.0);
+                } else {
+                    b += &th::icon("wifi", st.weight, 36.0, 15.0 + d, 16.0, &st.ic, fx);
+                    let dl = if known { format!("↓ {}", crate::pcstate::rate_text(down)) } else { "↓ –".into() };
+                    let ul = if known { format!("↑ {}", crate::pcstate::rate_text(up)) } else { "↑ –".into() };
+                    b += &th::text(36.0, 36.0 + d * 0.6, &dl, 11.5, &st.val, st.value_weight, 0.0, 64.0, 1.0);
+                    b += &th::text(36.0, 50.0 + d * 0.6, &ul, 10.0, &st.soft, 600, 0.0, 64.0, 0.95);
+                    if !label.is_empty() {
+                        b += &th::label(&st, label, ly);
+                    }
+                }
+            }
+            "disk" => {
+                let letter = def.widget_target.as_deref().unwrap_or("C").trim().chars().next().unwrap_or('C').to_ascii_uppercase();
+                let du = crate::pcstate::disk(&letter.to_string());
+                let pct = du.map(|(u, t)| if t > 0.0 { (u / t * 100.0).round() as u8 } else { 0 });
+                let value = pct.map(|p| format!("{p} %")).unwrap_or_else(|| "–".into());
+                let color = level_color(&st, pct.unwrap_or(0), (80, 92));
+                let title = if label.is_empty() { format!("Disque {letter}:") } else { label.to_string() };
+                if style == "gauge" {
+                    b += &gauge(&st, 36.0, 31.0 + d, 21.0, pct.unwrap_or(0) as f32 / 100.0, &color);
+                    b += &th::text(36.0, 36.0 + d, &value, 13.0, &st.val, st.value_weight, 0.0, 30.0, 1.0);
+                    b += &th::label(&st, &title, ly);
+                } else {
+                    b += &th::icon("hard-drive", st.weight, 36.0, 17.0 + d, 20.0, &st.ic, fx);
+                    b += &val(&st, 36.0, 40.0 + d * 0.7, &value, 16.0);
+                    b += &bar(&st, 46.0 + d * 0.6, pct.unwrap_or(0) as f32 / 100.0, &color);
+                    let free = du.map(|(u, t)| format!("{letter}: {} Go libres", (t - u).round())).unwrap_or(title);
+                    b += &th::label(&st, &free, ly);
                 }
             }
             _ => return None,
@@ -1444,7 +1659,7 @@ mod tests {
             time: LocalTime { year: 2026, month: 11, day: 7, dow: 6, hour: 15, minute: 49, second: 12 },
             cpu: Some(23),
             ram: Some((41, 6.5, 16.0)),
-            audio: AudioState { master: Some(0.45), master_muted: false, mic_muted: Some(true) },
+            audio: AudioState { master: Some(0.45), master_muted: false, mic_muted: Some(true), output: Some("Casque (Arctis 7)".into()) },
             cpu_hist: vec![12, 18, 25, 40, 33, 22, 28, 60, 72, 45, 30, 23],
             ram_hist: vec![40, 40, 41, 41, 42, 41, 41],
             gpu: Some(Gpu { name: "RTX 2060 SUPER".into(), usage: 23, temp: 35, mem: (2.4, 8.0) }),
@@ -1452,6 +1667,7 @@ mod tests {
             gpu_temp_hist: vec![33, 34, 35, 38, 41, 40, 37, 35],
             vram_hist: vec![28, 29, 30, 30, 31, 30],
             apps: vec![("app:discord.exe".into(), Meter { present: true, muted: false, peak: 0.2, level: Some(0.81) })],
+            ..Default::default()
         }
     }
 
@@ -1512,6 +1728,63 @@ mod tests {
     }
 
     /// Planche des thèmes : cargo test -p hubforge theme_sheet -- --ignored
+    #[test]
+    fn countdown_durations() {
+        let mut k = key("timer", Some("countdown"));
+        assert_eq!(timer_total(&k), Some(std::time::Duration::from_secs(300)));
+        for (t, secs) in [("1:30", 90), ("90", 90), ("1:00:00", 3600), ("5 min", 300), ("45s", 45), ("2,5m", 150)] {
+            k.widget_target = Some(t.into());
+            assert_eq!(timer_total(&k), Some(std::time::Duration::from_secs(secs)), "{t}");
+        }
+        k.widget_style = Some("stopwatch".into());
+        assert_eq!(timer_total(&k), None);
+        assert_eq!(clock_text(65_000), "1:05");
+        assert_eq!(clock_text(3_725_000), "1:02:05");
+    }
+
+    /// Planche des nouvelles touches : cargo test -p hubforge new_widgets_sheet -- --ignored
+    #[test]
+    #[ignore]
+    fn new_widgets_sheet() {
+        let cover = RgbImage::from_fn(72, 72, |x, y| Rgb([(x * 3) as u8, (y * 2) as u8 + 40, 160]));
+        crate::media::inject(Some(crate::media::Media {
+            title: "Un morceau au titre assez long".into(),
+            artist: "Un artiste".into(),
+            playing: true,
+            cover: Some(std::sync::Arc::new(cover)),
+        }));
+        let mut snap = snap();
+        snap.net = Some((12_400_000.0, 850_000.0));
+        snap.net_hist = vec![1e6, 3e6, 12e6, 8e6, 2e6, 9e6, 12.4e6];
+        snap.timers.insert(0, (65_000, true));
+        snap.timers.insert(0, (65_000, true));
+        let items: Vec<(&str, &str, Option<&str>)> = vec![
+            ("audio_output", "name", None),
+            ("media", "cover", None),
+            ("media", "text", None),
+            ("timer", "stopwatch", None),
+            ("timer", "countdown", Some("5:00")),
+            ("net", "text", None),
+            ("net", "graph", None),
+            ("disk", "bar", Some("C")),
+        ];
+        let themes = ["graphite", "neon", "plan", "console", "mono"];
+        let mut sheet = RgbImage::from_pixel(items.len() as u32 * (S + 6) + 6, themes.len() as u32 * (S + 6) + 6, Rgb([14, 15, 19]));
+        for (r, th) in themes.iter().enumerate() {
+            for (c, (w, st, target)) in items.iter().enumerate() {
+                let mut k = key(w, Some(st));
+                k.key = 1;
+                k.color = Some("#1F2229".into());
+                k.widget_target = target.map(String::from);
+                k.theme = Some(th.to_string());
+                let img = render(&k, &snap);
+                image::imageops::overlay(&mut sheet, &img, (6 + c as u32 * (S + 6)) as i64, (6 + r as u32 * (S + 6)) as i64);
+            }
+        }
+        let big = image::imageops::resize(&sheet, sheet.width() * 2, sheet.height() * 2, image::imageops::FilterType::Nearest);
+        big.save("/tmp/hubforge-new-widgets.png").unwrap();
+    }
+
     #[test]
     #[ignore]
     fn theme_sheet() {

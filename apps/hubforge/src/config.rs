@@ -57,6 +57,13 @@ pub struct General {
     pub weather_city: String,
     /// Thème des touches du profil (voir `theme::THEMES`).
     pub theme: String,
+    /// Veille du MasterHUB après ce nombre de minutes sans rien toucher (0 = jamais).
+    pub sleep_after: u32,
+    /// Veille quand la session Windows est verrouillée.
+    pub sleep_locked: bool,
+    /// Écrire chaque variable dans un fichier texte (dossier `variables/`),
+    /// par exemple pour l'afficher dans OBS.
+    pub vars_files: bool,
 }
 
 impl Default for General {
@@ -77,6 +84,9 @@ impl Default for General {
             fader_pickup: true,
             weather_city: String::new(),
             theme: crate::theme::DEFAULT.into(),
+            sleep_after: 0,
+            sleep_locked: true,
+            vars_files: false,
         }
     }
 }
@@ -243,7 +253,8 @@ pub struct KeyDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widget_style: Option<String>,
     /// Ce que montre la touche vivante, quand il faut le préciser : les
-    /// applications d'un widget « app_volume » ("discord.exe,spotify.exe").
+    /// applications d'un widget « app_volume » ("discord.exe,spotify.exe"),
+    /// la durée d'un compte à rebours ("5:00"), la lettre d'un disque ("C").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widget_target: Option<String>,
     /// Action d'un appui long (None = pas d'appui long).
@@ -332,6 +343,18 @@ pub enum Action {
     Media { command: String },
     /// Couper / rétablir le son d'applications ("discord.exe,spotify.exe").
     AppMute { app: String },
+    /// Change la sortie audio de Windows. Une sortie : celle-ci ; plusieurs
+    /// (séparées par « | ») : la suivante ; vide : la suivante parmi toutes.
+    AudioOutput {
+        #[serde(default)]
+        devices: String,
+    },
+    /// Minuteur de la touche (touche vivante « timer ») : "toggle"
+    /// (démarrer / mettre en pause) ou "reset" (remise à zéro).
+    Timer {
+        #[serde(default = "default_timer_op")]
+        op: String,
+    },
     /// Change de page : "next", "previous" ou un numéro (1, 2…)
     Page { to: String },
     /// Verrouille la session
@@ -404,6 +427,10 @@ pub const VAR_OPS: [&str; 3] = ["set", "add", "toggle"];
 pub const CMPS: [&str; 7] = ["==", "!=", ">", "<", ">=", "<=", "contains"];
 /// Profondeur maximale des conditions imbriquées.
 pub const IF_MAX_DEPTH: usize = 4;
+
+fn default_timer_op() -> String {
+    "toggle".into()
+}
 
 fn default_var_op() -> String {
     "set".into()

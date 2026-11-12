@@ -98,6 +98,18 @@ impl Vars {
         true
     }
 
+    /// Écrit chaque variable dans `dir/<nom>.txt` (pour OBS : « Texte depuis un fichier »).
+    pub fn export(&self, dir: &Path, only: Option<&str>) {
+        if std::fs::create_dir_all(dir).is_err() {
+            return;
+        }
+        for (k, v) in &self.map {
+            if only.map(|o| key(o) == *k).unwrap_or(true) {
+                let _ = std::fs::write(dir.join(format!("{k}.txt")), v);
+            }
+        }
+    }
+
     /// Remet toutes les variables à zéro (efface le fichier).
     pub fn clear(&mut self) {
         self.map.clear();

@@ -52,6 +52,31 @@ const LIBRARY = [
     name, label: name.replace("Piste ", ""), icon, color: command === "mic_mute" || command === "mute" ? "#C62828" : "#2E7D32",
     action: { type: "media", command },
   }))},
+  { cat: "Son et musique", items: [
+    { name: "Changer de sortie audio", label: "", icon: "headphones", color: "#1F2229", widget: "audio_output", action: { type: "audio_output", devices: "" } },
+    { name: "Musique en cours (pochette)", label: "", icon: "music", color: "#1F2229", widget: "media", widget_style: "cover", action: { type: "media", command: "play_pause" } },
+    { name: "Musique en cours (titre)", label: "", icon: "music", color: "#1DB954", widget: "media", widget_style: "text", action: { type: "media", command: "play_pause" } },
+  ]},
+  { cat: "Minuteurs", items: [
+    { name: "Chronomètre (appui long = 0)", label: "", icon: "timer", color: "#3DA9FC", widget: "timer", widget_style: "stopwatch",
+      action: { type: "timer", op: "toggle" }, long: { type: "timer", op: "reset" } },
+    { name: "Compte à rebours 5 min", label: "", icon: "timer", color: "#FF8A3D", widget: "timer", widget_style: "countdown", widget_target: "5:00",
+      action: { type: "timer", op: "toggle" }, long: { type: "timer", op: "reset" } },
+    { name: "Compte à rebours 25 min (pomodoro)", label: "", icon: "timer", color: "#EF4444", widget: "timer", widget_style: "countdown", widget_target: "25:00",
+      action: { type: "timer", op: "toggle" }, long: { type: "timer", op: "reset" } },
+  ]},
+  { cat: "Fenêtres", items: [
+    { name: "Fenêtre à gauche", label: "Gauche", icon: "arrow-left", color: "#3949AB", action: { type: "hotkey", keys: "win+left" } },
+    { name: "Fenêtre à droite", label: "Droite", icon: "arrow-right", color: "#3949AB", action: { type: "hotkey", keys: "win+right" } },
+    { name: "Agrandir la fenêtre", label: "Agrandir", icon: "maximize", color: "#3949AB", action: { type: "hotkey", keys: "win+up" } },
+    { name: "Réduire la fenêtre", label: "Réduire", icon: "minimize", color: "#3949AB", action: { type: "hotkey", keys: "win+down" } },
+    { name: "Vers l'autre écran", label: "Autre écran", icon: "screen-share", color: "#00838F", action: { type: "hotkey", keys: "win+shift+right" } },
+    { name: "Bureau virtuel suivant", label: "Bureau +", icon: "layout-dashboard", color: "#6A1B9A", action: { type: "hotkey", keys: "ctrl+win+right" } },
+    { name: "Bureau virtuel précédent", label: "Bureau −", icon: "layout-dashboard", color: "#6A1B9A", action: { type: "hotkey", keys: "ctrl+win+left" } },
+    { name: "Nouveau bureau virtuel", label: "Nouveau bureau", icon: "plus", color: "#6A1B9A", action: { type: "hotkey", keys: "ctrl+win+d" } },
+    { name: "Fermer le bureau virtuel", label: "Fermer bureau", icon: "x", color: "#6A1B9A", action: { type: "hotkey", keys: "ctrl+win+f4" } },
+    { name: "Vue des tâches", label: "Tâches", icon: "layout-dashboard", color: "#0277BD", action: { type: "hotkey", keys: "win+tab" } },
+  ]},
   { cat: "Soundboard", items: [
     { name: "Jouer un son", label: "Son", icon: "music", color: "#AD1457", action: { type: "sound", file: "", volume: 100, mode: "toggle" } },
     { name: "Arrêter tous les sons", label: "Stop sons", icon: "square", color: "#B71C1C", action: { type: "stop_sounds" } },
@@ -95,6 +120,8 @@ const LIBRARY = [
     { name: "Mémoire vidéo (VRAM)", label: "", icon: "monitor", color: "#1F2229", widget: "vram", action: { type: "hotkey", keys: "ctrl+shift+esc" } },
     { name: "Volume d'une application", label: "", icon: "volume-2", color: "#1F2229", widget: "app_volume", widget_target: "discord.exe", action: { type: "app_mute", app: "discord.exe" } },
     { name: "Météo", label: "", icon: "sun", color: "#1F2229", widget: "weather", action: { type: "none" } },
+    { name: "Réseau (débits)", label: "", icon: "wifi", color: "#1F2229", widget: "net", action: { type: "none" } },
+    { name: "Disque C:", label: "", icon: "hard-drive", color: "#1F2229", widget: "disk", widget_target: "C", action: { type: "none" } },
     { name: "Météo des prochains jours", label: "", icon: "sun", color: "#1F2229", widget: "weather", widget_style: "forecast", action: { type: "none" } },
   ]},
   { cat: "HubForge", items: [
@@ -111,7 +138,7 @@ const LIBRARY = [
 const ACTION_TYPES = [
   ["none", "Aucune action"], ["hotkey", "Raccourci clavier"], ["hold", "Maintenir des touches"], ["text", "Taper un texte"],
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
-  ["media", "Multimédia"], ["app_mute", "Couper le son d'une application"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
+  ["media", "Multimédia"], ["app_mute", "Couper le son d'une application"], ["audio_output", "Changer de sortie audio"], ["timer", "Minuteur de la touche"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
   ["macro", "Macro (plusieurs actions à la suite)"], ["var", "Variable (compteur, interrupteur…)"], ["if", "Condition (si… alors… sinon)"],
   ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
   ["profile", "Changer de profil"],
@@ -122,7 +149,8 @@ const SWATCHES = ["#FF3B30", "#FF7A1A", "#FFB300", "#FFD60A", "#3DDC84", "#1DB95
 
 const WIDGETS = [["", "Aucune (image fixe)"], ["clock", "Horloge"], ["date", "Date"], ["weather", "Météo"], ["cpu", "Processeur (CPU)"],
   ["ram", "Mémoire (RAM)"], ["gpu", "Carte graphique (utilisation)"], ["gpu_temp", "Carte graphique (température)"], ["vram", "Mémoire vidéo (VRAM)"],
-  ["volume", "Volume général"], ["app_volume", "Volume d'une application"], ["mic", "État du micro"]];
+  ["volume", "Volume général"], ["app_volume", "Volume d'une application"], ["mic", "État du micro"],
+  ["audio_output", "Sortie audio"], ["media", "Musique en cours"], ["timer", "Minuteur"], ["net", "Réseau"], ["disk", "Disque"]];
 
 const WIDGET_STYLES = {
   clock: [["digital", "Numérique"], ["analog", "À aiguilles"], ["big", "Grands chiffres"]],
@@ -135,6 +163,10 @@ const WIDGET_STYLES = {
   vram: [["bar", "Barre"], ["gauge", "Jauge"], ["graph", "Graphique"]],
   app_volume: [["bar", "Barre"], ["gauge", "Jauge"]],
   weather: [["now", "Maintenant"], ["compact", "Compacte"], ["forecast", "Prochains jours"]],
+  media: [["cover", "Pochette"], ["text", "Titre"]],
+  timer: [["stopwatch", "Chronomètre"], ["countdown", "Compte à rebours"]],
+  net: [["text", "Débits"], ["graph", "Graphique"]],
+  disk: [["bar", "Barre"], ["gauge", "Jauge"]],
   mic: [["classic", "Icône et texte"], ["icon", "Grande icône"]],
 };
 
@@ -315,7 +347,7 @@ async function init() {
 
 function normalize(cfg) {
   cfg.general = Object.assign({ brightness: 80, led_brightness: 100, base_color: "#00C8FF", press_feedback: true, gif_max_fps: 28, base_effect: 1, auto_pages: true,
-    long_press_ms: 500, double_press_ms: 300, sound_volume: 80, sound_device: "", sound_device2: "", fader_pickup: true, weather_city: "", theme: "graphite" }, cfg.general || {});
+    long_press_ms: 500, double_press_ms: 300, sound_volume: 80, sound_device: "", sound_device2: "", fader_pickup: true, weather_city: "", theme: "graphite", sleep_after: 0, sleep_locked: true, vars_files: false }, cfg.general || {});
   cfg.pages = cfg.pages && cfg.pages.length ? cfg.pages : [{ name: "Accueil", keys: [] }];
   cfg.faders = cfg.faders || [];
   while (cfg.faders.length < 5) cfg.faders.push({ target: "none", color: "#FFFFFF" });
@@ -1036,6 +1068,18 @@ function keyInspector(k) {
         onclick: () => { if (v === styles[0][0]) delete def.widget_style; else def.widget_style = v; keyChanged(k, { immediate: true }); renderInspector(); },
       }, l)));
       out.push(field("Style", row));
+      if (def.widget === "timer" && (def.widget_style || "stopwatch") === "countdown") {
+        out.push(field("Durée", el("input", { class: "input", value: def.widget_target || "5:00", spellcheck: "false", placeholder: "ex. 5:00, 90, 1:30:00, 10 min",
+          onchange: (e) => { def.widget_target = e.target.value.trim() || "5:00"; keyChanged(k, { immediate: true }); } }),
+          el("p", { class: "hint" }, "À la fin, la touche clignote en rouge pendant 10 secondes.")));
+      }
+      if (def.widget === "disk") {
+        out.push(field("Disque", el("input", { class: "input", value: def.widget_target || "C", maxlength: "2", spellcheck: "false", style: "width:80px",
+          onchange: (e) => { def.widget_target = (e.target.value.trim()[0] || "C").toUpperCase(); keyChanged(k, { immediate: true }); } })));
+      }
+      if (def.widget === "media") {
+        out.push(el("p", { class: "hint" }, "Ce que Windows affiche dans ses contrôles multimédia : Spotify, YouTube dans le navigateur, VLC…"));
+      }
       if (def.widget === "app_volume") {
         out.push(field("Application(s)", el("input", { class: "input", value: def.widget_target || "", spellcheck: "false", placeholder: "ex. discord.exe",
           onchange: (e) => {
@@ -1203,7 +1247,7 @@ const ACTION_DEFAULTS = {
   none: { type: "none" }, hotkey: { type: "hotkey", keys: "" }, hold: { type: "hold", keys: "" }, text: { type: "text", text: "" },
   sound: { type: "sound", file: "", volume: 100, mode: "toggle" }, stop_sounds: { type: "stop_sounds" },
   "launch:program": { type: "launch", target: "" }, "launch:url": { type: "launch", target: "https://" },
-  "launch:path": { type: "launch", target: "", _kind: "path" }, media: { type: "media", command: "play_pause" }, app_mute: { type: "app_mute", app: "" },
+  "launch:path": { type: "launch", target: "", _kind: "path" }, media: { type: "media", command: "play_pause" }, app_mute: { type: "app_mute", app: "" }, audio_output: { type: "audio_output", devices: "" }, timer: { type: "timer", op: "toggle" },
   page: { type: "page", to: "next" }, lock: { type: "lock" }, open_config: { type: "open_config" },
   macro: { type: "macro", steps: [{ type: "hotkey", keys: "" }] }, wait: { type: "wait", ms: 500 },
   folder: { type: "folder", to: "" }, back: { type: "back" },
@@ -1223,6 +1267,11 @@ function stepSummary(a) {
     case "launch": return a.target ? `Ouvrir ${a.target.split(/[\\/]/).pop()}` : "Ouvrir…";
     case "media": return (MEDIA[a.command] || [a.command])[0];
     case "app_mute": return `Couper ${(a.app || "une appli").split(",")[0].replace(/\.exe$/, "")}`;
+    case "audio_output": {
+      const d = (a.devices || "").split("|").filter(Boolean);
+      return d.length === 1 ? `Sortie : ${d[0]}` : d.length ? `Sortie suivante (${d.length})` : "Sortie audio suivante";
+    }
+    case "timer": return a.op === "reset" ? "Minuteur à zéro" : "Minuteur : départ / pause";
     case "page": return a.to === "next" ? "Page suivante" : a.to === "previous" ? "Page précédente" : `Page ${a.to}`;
     case "lock": return "Verrouiller le PC";
     case "open_config": return "Ouvrir la configuration";
@@ -1347,6 +1396,28 @@ function actionEditor(st, k, onChange, opts = {}) {
   } else if (t === "media") {
     out.push(field("Commande", el("select", { class: "input", onchange: (e) => upd((x) => { x.command = e.target.value; }) },
       ...Object.entries(MEDIA).map(([v, [l]]) => el("option", { value: v, selected: v === a.command }, l)))));
+  } else if (t === "audio_output") {
+    const chosen = (a.devices || "").split("|").filter(Boolean);
+    const box = el("div", { class: "chips" }, el("span", { class: "hint" }, "Recherche des sorties…"));
+    out.push(field("Sorties", box, el("p", { class: "hint" },
+      "Une seule cochée : la touche passe sur celle-ci. Plusieurs : chaque appui passe à la suivante. Aucune : passe d'une sortie à l'autre parmi toutes.")));
+    invoke("list_audio_outputs").then((list) => {
+      box.innerHTML = "";
+      const names = [...new Set([...(list || []), ...chosen])];
+      if (!names.length) box.append(el("span", { class: "hint" }, "Aucune sortie trouvée."));
+      for (const n of names) box.append(el("span", {
+        class: "chip" + (chosen.includes(n) ? " on style-on" : " add"),
+        onclick: () => {
+          const cur = (a.devices || "").split("|").filter(Boolean);
+          const next = cur.includes(n) ? cur.filter((x) => x !== n) : [...cur, n];
+          upd((x) => { x.devices = next.join("|"); }); renderInspector();
+        },
+      }, n));
+    }).catch(() => { box.innerHTML = ""; box.append(el("span", { class: "hint" }, "Liste indisponible.")); });
+  } else if (t === "timer") {
+    out.push(field("Effet", el("select", { class: "input", onchange: (e) => upd((x) => { x.op = e.target.value; }) },
+      ...[["toggle", "Démarrer / mettre en pause"], ["reset", "Remettre à zéro"]].map(([v, l]) => el("option", { value: v, selected: v === (a.op || "toggle") }, l))),
+      el("p", { class: "hint" }, "Agit sur le minuteur de cette touche (touche vivante « Minuteur »). Astuce : mets « Remettre à zéro » en appui long.")));
   } else if (t === "app_mute") {
     out.push(field("Applications", el("input", { class: "input", value: a.app || "", spellcheck: "false", placeholder: "ex. discord.exe, spotify.exe",
       onchange: (e) => upd((x) => { x.app = exeList(e.target.value); }) }),
@@ -2604,6 +2675,12 @@ function settingsInspector() {
   out.push(field("Sortie des sons", devSel(g.sound_device, (v) => { g.sound_device = v; changed(); }, "Sortie par défaut de Windows")));
   out.push(field("Jouer aussi sur", devSel(g.sound_device2, (v) => { g.sound_device2 = v; changed(); }, "Aucune autre sortie"),
     el("p", { class: "hint" }, "Pour que tes amis entendent les sons dans Discord ou sur ton stream : choisis ici un câble audio virtuel (par exemple VB-CABLE) et mets-le comme micro dans Discord ou OBS.")));
+  out.push(el("h2", { style: "margin-top:18px" }, "Veille"));
+  out.push(field("Mettre le MasterHUB en veille après", el("select", { class: "input", onchange: (e) => { g.sleep_after = Number(e.target.value); changed(); } },
+    ...[[0, "Jamais"], [1, "1 minute"], [2, "2 minutes"], [5, "5 minutes"], [10, "10 minutes"], [15, "15 minutes"], [30, "30 minutes"], [60, "1 heure"]]
+      .map(([v, l]) => el("option", { value: v, selected: v === (g.sleep_after || 0) }, l))),
+    el("p", { class: "hint" }, "Sans toucher ni le PC ni le MasterHUB. Écrans et LED s'éteignent ; un appui les rallume (sans lancer l'action).")));
+  out.push(switchRow("En veille quand le PC est verrouillé", g.sleep_locked, (v) => { g.sleep_locked = v; changed(); }));
   out.push(el("h2", { style: "margin-top:18px" }, "Faders"));
   out.push(switchRow("Reprise douce des faders", g.fader_pickup, (v) => { g.fader_pickup = v; changed(); }));
   out.push(el("p", { class: "hint", style: "margin-top:-4px" }, "Quand un fader contrôle autre chose en changeant de page ou de profil, il n'agit qu'une fois passé par le volume actuel : pas de saut de volume. Sa LED pulse en attendant."));
@@ -2612,6 +2689,9 @@ function settingsInspector() {
   out.push(vars.length
     ? el("div", { class: "vars-list" }, ...vars.map(([n, v]) => el("div", { class: "row var-row" }, el("code", {}, "{" + n + "}"), el("span", { class: "spacer" }), el("b", {}, v))))
     : el("p", { class: "hint", style: "margin:0 0 8px" }, "Aucune variable pour l'instant. Crée-en avec l'action « Variable » (bibliothèque : Macros intelligentes)."));
+  out.push(switchRow("Écrire les variables dans des fichiers texte", g.vars_files, (v) => { g.vars_files = v; changed(); }));
+  if (g.vars_files) out.push(el("p", { class: "hint", style: "margin-top:-4px" }, "Un fichier par variable (nom.txt), à afficher dans OBS avec une source « Texte » → « Lire depuis un fichier ». ",
+    el("a", { href: "#", style: "color:var(--accent-2)", onclick: async (e) => { e.preventDefault(); try { await invoke("open_vars_folder"); } catch (err) { toast(String(err), true); } } }, "Ouvrir le dossier")));
   if (vars.length) out.push(el("button", { class: "btn small", style: "margin-top:6px", onclick: async () => {
     if (!(await confirm_("Remettre toutes les variables à zéro ?"))) return;
     await invoke("clear_vars"); toast("Variables remises à zéro");
@@ -3061,6 +3141,8 @@ async function mockInvoke(cmd, args) {
     case "list_sound_devices": return ["Haut-parleurs (Realtek(R) Audio)", "CABLE Input (VB-Audio Virtual Cable)"];
     case "import_sound": case "import_sound_data": return "sounds/" + String(args.name || args.path || "son.mp3").split(/[\\/]/).pop();
     case "test_sound": return null;
+    case "list_audio_outputs": return ["Haut-parleurs (Realtek(R) Audio)", "Casque (Arctis 7 Game)", "CABLE Input (VB-Audio Virtual Cable)"];
+    case "open_vars_folder": return "C:/Users/…/HubForge/variables";
     case "clear_vars": onStatus(Object.assign({}, S.status, { vars: {} })); return null;
     case "start_doom": if (location.search.includes("doom")) { setTimeout(() => onStatus(Object.assign({}, S.status, { doom: true })), 300); return "freedoom1.wad"; } throw "no_wad";
     case "download_freedoom": return null;

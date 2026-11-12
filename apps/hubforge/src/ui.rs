@@ -945,3 +945,21 @@ pub fn test_sound(state: State<AppState>, file: String, volume: u8) {
 pub fn clear_vars(state: State<AppState>) {
     let _ = state.engine.lock().unwrap().send(EngineMsg::ClearVars);
 }
+
+/// Sorties audio actives (pour l'action « changer de sortie audio »).
+#[tauri::command]
+pub fn list_audio_outputs(state: State<AppState>) -> Vec<String> {
+    state.audio.list_outputs()
+}
+
+/// Ouvre le dossier des variables (fichiers texte pour OBS) dans l'explorateur.
+#[tauri::command]
+pub fn open_vars_folder(state: State<AppState>) -> Result<String, String> {
+    let dir = state.cfg_dir.join("variables");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    let _ = std::process::Command::new("explorer").arg(&dir).spawn();
+    #[cfg(not(windows))]
+    let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+    Ok(dir.display().to_string())
+}
