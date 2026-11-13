@@ -399,6 +399,38 @@ pub enum Action {
         #[serde(default, rename = "else", skip_serializing_if = "Vec::is_empty")]
         else_steps: Vec<Action>,
     },
+    /// Requête web (domotique, webhook, serveur local…). L'adresse, le corps
+    /// et les en-têtes peuvent contenir des {variables}. La réponse peut être
+    /// rangée dans une variable (`save_to`), éventuellement un seul champ
+    /// d'une réponse JSON (`pick`, ex. « data.temperature » ou « items.0.name »).
+    Http {
+        #[serde(default = "default_http_method")]
+        method: String,
+        url: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        body: String,
+        /// Un en-tête par ligne : « Nom: valeur ».
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        headers: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        save_to: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        pick: String,
+    },
+    /// IA sur le texte sélectionné : `preset` (fix, translate_en,
+    /// translate_fr, summarize, formal, custom), consigne libre pour
+    /// « custom », et `output` : replace (remplace la sélection), clipboard
+    /// (copie le résultat) ou var (le range dans la variable `save_to`).
+    Ai {
+        #[serde(default = "default_ai_preset")]
+        preset: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        prompt: String,
+        #[serde(default = "default_ai_output")]
+        output: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        save_to: String,
+    },
 }
 
 impl Action {
@@ -420,6 +452,35 @@ impl Action {
             _ => Vec::new(),
         }
     }
+}
+
+pub const HTTP_METHODS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+pub const AI_PRESETS: [&str; 6] = ["fix", "translate_en", "translate_fr", "summarize", "formal", "custom"];
+pub const AI_OUTPUTS: [&str; 3] = ["replace", "clipboard", "var"];
+
+fn default_http_method() -> String {
+    "GET".into()
+}
+
+fn default_ai_preset() -> String {
+    "fix".into()
+}
+
+fn default_ai_output() -> String {
+    "replace".into()
+}
+
+fn check_var_target(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Ok(());
+    }
+    if !crate::vars::valid_name(name) {
+        return Err(format!("nom de variable invalide « {name} » (lettres, chiffres, _ et -)"));
+    }
+    if crate::vars::SPECIALS.contains(&name.trim().to_lowercase().as_str()) {
+        return Err(format!("« {name} » est un nom réservé"));
+    }
+    Ok(())
 }
 
 /// Opérations et comparaisons possibles.
@@ -487,6 +548,28 @@ pub fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
                 return Err(format!("condition trop longue (maximum {MACRO_MAX_STEPS} étapes)"));
             }
             then_steps.iter().chain(else_steps).try_for_each(|s| validate_action(s, depth + 1))
+        }
+        Action::Http { method, url, save_to, .. } => {
+            if !HTTP_METHODS.contains(&method.to_uppercase().as_str()) {
+                return Err(format!("méthode HTTP inconnue « {method} » (GET, POST, PUT, PATCH ou DELETE)"));
+            }
+            let u = url.trim().to_lowercase();
+            if !u.is_empty() && !u.starts_with("http://") && !u.starts_with("https://") && !u.starts_with('{') {
+                return Err(format!("adresse invalide « {url} » : elle doit commencer par http:// ou https://"));
+            }
+            check_var_target(save_to)
+        }
+        Action::Ai { preset, output, save_to, .. } => {
+            if !AI_PRESETS.contains(&preset.as_str()) {
+                return Err(format!("consigne d'IA inconnue « {preset} »"));
+            }
+            if !AI_OUTPUTS.contains(&output.as_str()) {
+                return Err(format!("sortie d'IA inconnue « {output} » (replace, clipboard ou var)"));
+            }
+            if output == "var" && save_to.trim().is_empty() {
+                return Err("IA : indique la variable où ranger le résultat".into());
+            }
+            check_var_target(save_to)
         }
         _ => Ok(()),
     }

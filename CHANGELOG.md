@@ -4,6 +4,20 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.18.0] — 2026-11-13
+
+### Nouveautés
+- **IA sur le texte sélectionné** (nouvelle catégorie « Connecteurs ») : sélectionne un texte dans n'importe quelle appli, appuie sur la touche, et il est corrigé, traduit en anglais ou en français, résumé, passé en style professionnel, ou transformé selon ta propre consigne.
+  - Le résultat remplace la sélection, est copié dans le presse-papiers, ou va dans une variable à afficher sur une touche. Ton ancien presse-papiers est remis ensuite.
+  - Fonctionne avec **Ollama** (gratuit, sur ton PC), **OpenAI** et les services compatibles (Mistral, Groq, OpenRouter, LM Studio…), ou **Claude d'Anthropic**. Réglages › Intelligence artificielle, avec un bouton « Essayer ».
+  - La clé API reste sur ton PC : elle n'est jamais incluse dans un profil exporté.
+- **Requête web** : GET, POST, PUT, PATCH ou DELETE vers n'importe quelle adresse (domotique, webhook Discord, serveur local…).
+  - Corps et en-têtes libres ; `{variables}` acceptées partout.
+  - La réponse, ou un seul champ d'une réponse JSON, peut aller dans une variable affichée sur une touche.
+  - Bouton « Essayer » dans l'éditeur.
+- **Liseré d'état** : pendant une requête ou un travail de l'IA, la touche s'entoure d'orange, puis de vert si tout s'est bien passé, de rouge en cas d'erreur.
+- Nouvelles icônes : correction, traduction, document, porte-documents, baguette magique, webhook, robot, avion en papier.
+
 ## [0.17.0] — 2026-11-13
 
 ### Nouveautés

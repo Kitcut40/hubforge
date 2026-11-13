@@ -12,6 +12,7 @@ use crate::game::{self, Game};
 use crate::doom;
 use crate::sound::{SoundCmd, Sounds};
 use crate::vars::{self, Vars};
+use crate::{clip, connect};
 use crate::lights::{self, Rgb};
 use crate::profiles::{self, SharedActive};
 use crate::topology::{self, Placement};
@@ -20,7 +21,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -50,6 +51,27 @@ pub enum EngineMsg {
     /// Remettre toutes les variables à zéro.
     ClearVars,
 }
+
+/// Résultat d'une action qui tourne en arrière-plan (requête web, IA).
+struct JobDone {
+    /// Touche qui l'a lancée (page, touche), pour son liseré d'état.
+    at: Option<(usize, u8)>,
+    result: Result<JobOut, String>,
+}
+
+enum JobOut {
+    Nothing,
+    /// Donner une valeur à une variable.
+    Var(String, String),
+    /// Coller ce texte à la place de la sélection, puis remettre l'ancien
+    /// contenu du presse-papiers.
+    Paste { text: String, restore: Option<String> },
+}
+
+/// Liseré affiché autour d'une touche : en cours, réussi, échec.
+const MARK_BUSY: [u8; 3] = [255, 166, 0];
+const MARK_OK: [u8; 3] = [48, 209, 88];
+const MARK_ERR: [u8; 3] = [255, 59, 48];
 
 /// Minuteur d'une touche (chronomètre ou compte à rebours).
 #[derive(Debug, Clone, Copy, Default)]
@@ -254,6 +276,13 @@ pub struct Engine {
     /// Reprise douce : faders en attente, et cible de chaque fader au dernier changement.
     pickup: [Option<Pickup>; FADER_COUNT],
     fader_targets: [String; FADER_COUNT],
+    /// Actions en arrière-plan : canal des résultats.
+    job_tx: Sender<JobDone>,
+    job_rx: Receiver<JobDone>,
+    /// Liserés d'état : touche → (page, couleur, fin).
+    marks: HashMap<u8, (usize, [u8; 3], Instant)>,
+    /// Ancien contenu du presse-papiers à remettre après un collage de l'IA.
+    clip_restore: Option<(String, Instant)>,
 }
 
 fn kind_id(k: Kind) -> &'static str {
@@ -273,6 +302,7 @@ impl Engine {
         let cfg_path = active.lock().unwrap().path.clone();
         let cfg_mtime = std::fs::metadata(&cfg_path).and_then(|m| m.modified()).ok();
         let cfg_dir_for_vars = cfg_dir.clone();
+        let (job_tx, job_rx) = std::sync::mpsc::channel();
         let mut e = Engine {
             mgr,
             events,
@@ -335,6 +365,10 @@ impl Engine {
             wake_swallow: None,
             pickup: [None; FADER_COUNT],
             fader_targets: Default::default(),
+            job_tx,
+            job_rx,
+            marks: HashMap::new(),
+            clip_restore: None,
         };
         e.sync_fader_targets();
         crate::weather::set_city(&e.cfg.general.weather_city);
@@ -410,6 +444,7 @@ impl Engine {
                 self.message(m);
             }
             self.run_macro();
+            self.poll_jobs();
             self.vars.save_if_due();
             if self.sleep_check.elapsed() >= Duration::from_secs(1) {
                 self.sleep_check = Instant::now();
@@ -422,7 +457,9 @@ impl Engine {
             } else if Instant::now() >= self.widgets_due {
                 self.update_widgets(false);
             }
-            let busy_lights = self.preview.is_some()
+            let busy_lights = !self.marks.is_empty()
+                || self.clip_restore.is_some()
+                || self.preview.is_some()
                 || self.base_soft
                 || self.gesture.is_some()
                 || self.pickup.iter().any(|p| p.is_some())
@@ -684,6 +721,67 @@ impl Engine {
             }
             .to_string()),
             _ => self.vars.get(name).cloned(),
+        }
+    }
+
+    /// Résultats des requêtes web et de l'IA, liserés et presse-papiers à remettre.
+    fn poll_jobs(&mut self) {
+        while let Ok(job) = self.job_rx.try_recv() {
+            match job.result {
+                Ok(out) => {
+                    self.set_mark(job.at, MARK_OK, Duration::from_millis(900));
+                    match out {
+                        JobOut::Nothing => {}
+                        JobOut::Var(name, value) => {
+                            if self.vars.apply(&name, "set", &value) {
+                                if self.cfg.general.vars_files {
+                                    self.vars.export(&self.cfg_dir.join("variables"), Some(&name));
+                                }
+                                self.refresh_var_keys();
+                                self.notify();
+                            }
+                        }
+                        JobOut::Paste { text, restore } => {
+                            if clip::set_text(&text) {
+                                self.input.hotkey("ctrl+v");
+                                self.clip_restore = restore.map(|r| (r, Instant::now() + Duration::from_millis(700)));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("action en arrière-plan : {e}");
+                    self.set_mark(job.at, MARK_ERR, Duration::from_millis(2500));
+                }
+            }
+        }
+        if let Some((_, due)) = &self.clip_restore {
+            if Instant::now() >= *due {
+                let (text, _) = self.clip_restore.take().unwrap();
+                clip::set_text(&text);
+            }
+        }
+        if !self.marks.is_empty() {
+            let now = Instant::now();
+            let done: Vec<(u8, usize)> = self.marks.iter().filter(|(_, (_, _, end))| now >= *end).map(|(k, (p, _, _))| (*k, *p)).collect();
+            for (key, page) in done {
+                self.marks.remove(&key);
+                if page == self.page && self.game.is_none() {
+                    let f = self.current_frame(key).jpeg.clone();
+                    self.send_image(key, &f);
+                }
+            }
+        }
+    }
+
+    /// Entoure une touche d'un liseré de couleur pendant `dur`.
+    fn set_mark(&mut self, at: Option<(usize, u8)>, color: [u8; 3], dur: Duration) {
+        let Some((page, key)) = at else { return };
+        self.marks.insert(key, (page, color, Instant::now() + dur));
+        if page == self.page && self.game.is_none() && (key as usize) < KEY_COUNT {
+            let f = self.current_frame(key).jpeg.clone();
+            let marked = Arc::new(render::with_border(&f, color));
+            self.send_image(key, &marked);
         }
     }
 
@@ -1142,6 +1240,78 @@ impl Engine {
                     self.refresh_var_keys();
                     self.notify();
                 }
+            }
+            Action::Http { method, url, body, headers, save_to, pick } => {
+                let url = self.expand(url, false);
+                let body = self.expand(body, false);
+                let headers = self.expand(headers, false);
+                let (method, save, pick) = (method.clone(), save_to.trim().to_string(), pick.clone());
+                let at = self.acting;
+                self.set_mark(at, MARK_BUSY, Duration::from_secs(30));
+                let tx = self.job_tx.clone();
+                std::thread::spawn(move || {
+                    let result = connect::http(&method, &url, &body, &headers).and_then(|resp| {
+                        if save.is_empty() {
+                            Ok(JobOut::Nothing)
+                        } else {
+                            connect::pick(&resp, &pick).map(|v| JobOut::Var(save, v))
+                        }
+                    });
+                    let _ = tx.send(JobDone { at, result });
+                });
+            }
+            Action::Ai { preset, prompt, output, save_to } => {
+                let at = self.acting;
+                let settings = connect::load_settings(&self.cfg_dir);
+                if !settings.is_configured() {
+                    log::warn!("IA : pas encore réglée (Réglages › Intelligence artificielle)");
+                    self.set_mark(at, MARK_ERR, Duration::from_secs(2));
+                    return;
+                }
+                // Copie de la sélection : on garde l'ancien presse-papiers.
+                let original = clip::get_text();
+                let seq = clip::sequence();
+                self.input.hotkey("ctrl+c");
+                self.set_mark(at, MARK_BUSY, Duration::from_secs(95));
+                let instruction = connect::instruction(preset, prompt);
+                let (output, save) = (output.clone(), save_to.trim().to_string());
+                let tx = self.job_tx.clone();
+                std::thread::spawn(move || {
+                    let result = (|| {
+                        let t0 = Instant::now();
+                        while clip::sequence() == seq && t0.elapsed() < Duration::from_millis(800) {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        if clip::sequence() == seq {
+                            return Err("aucun texte sélectionné".to_string());
+                        }
+                        let text = clip::get_text().filter(|t| !t.trim().is_empty()).ok_or("aucun texte sélectionné")?;
+                        if text.chars().count() > 20_000 {
+                            return Err("sélection trop longue pour l'IA (20 000 caractères maximum)".into());
+                        }
+                        let answer = connect::ask(&settings, &instruction, &text);
+                        match (output.as_str(), answer) {
+                            ("replace", Ok(a)) => Ok(JobOut::Paste { text: a, restore: original }),
+                            (_, Err(e)) => {
+                                if let Some(o) = &original {
+                                    clip::set_text(o);
+                                }
+                                Err(e)
+                            }
+                            ("var", Ok(a)) => {
+                                if let Some(o) = &original {
+                                    clip::set_text(o);
+                                }
+                                Ok(JobOut::Var(save, connect::clip(&a)))
+                            }
+                            (_, Ok(a)) => {
+                                clip::set_text(&a);
+                                Ok(JobOut::Nothing)
+                            }
+                        }
+                    })();
+                    let _ = tx.send(JobDone { at, result });
+                });
             }
             Action::AudioOutput { devices } => {
                 let list: Vec<String> = devices.split('|').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();

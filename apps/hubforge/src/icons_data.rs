@@ -2,6 +2,14 @@
 //! Fichier généré : liste des icônes disponibles pour les touches.
 
 pub const ICONS: &[(&str, &str)] = &[
+    ("wand-sparkles", include_str!("../../../assets/icons/lucide/wand-sparkles.svg")),
+    ("file-text", include_str!("../../../assets/icons/lucide/file-text.svg")),
+    ("briefcase", include_str!("../../../assets/icons/lucide/briefcase.svg")),
+    ("spell-check", include_str!("../../../assets/icons/lucide/spell-check.svg")),
+    ("bot", include_str!("../../../assets/icons/lucide/bot.svg")),
+    ("send", include_str!("../../../assets/icons/lucide/send.svg")),
+    ("webhook", include_str!("../../../assets/icons/lucide/webhook.svg")),
+    ("languages", include_str!("../../../assets/icons/lucide/languages.svg")),
     ("copy", include_str!("../../../assets/icons/lucide/copy.svg")),
     ("clipboard-paste", include_str!("../../../assets/icons/lucide/clipboard-paste.svg")),
     ("scissors", include_str!("../../../assets/icons/lucide/scissors.svg")),

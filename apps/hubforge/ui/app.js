@@ -89,6 +89,17 @@ const LIBRARY = [
     { name: "Condition (si… alors… sinon)", label: "Si…", icon: "git-branch", color: "#4527A0",
       action: { type: "if", left: "{app}", cmp: "contains", right: "", then: [{ type: "hotkey", keys: "" }], else: [] } },
   ]},
+  { cat: "Connecteurs", items: [
+    { name: "IA : corriger la sélection", label: "Corriger", icon: "spell-check", color: "#7C4DFF", action: { type: "ai", preset: "fix", output: "replace" } },
+    { name: "IA : traduire en anglais", label: "→ EN", icon: "languages", color: "#3949AB", action: { type: "ai", preset: "translate_en", output: "replace" } },
+    { name: "IA : traduire en français", label: "→ FR", icon: "languages", color: "#3949AB", action: { type: "ai", preset: "translate_fr", output: "replace" } },
+    { name: "IA : style professionnel", label: "Pro", icon: "briefcase", color: "#455A64", action: { type: "ai", preset: "formal", output: "replace" } },
+    { name: "IA : résumer (copié)", label: "Résumé", icon: "file-text", color: "#00838F", action: { type: "ai", preset: "summarize", output: "clipboard" } },
+    { name: "IA : consigne perso", label: "IA", icon: "wand-sparkles", color: "#8E24AA", action: { type: "ai", preset: "custom", prompt: "", output: "replace" } },
+    { name: "Requête web", label: "Web", icon: "globe", color: "#0277BD", action: { type: "http", method: "GET", url: "https://" } },
+    { name: "Webhook Discord", label: "Discord", icon: "webhook", color: "#5865F2",
+      action: { type: "http", method: "POST", url: "https://discord.com/api/webhooks/", body: '{"content": "Message envoyé depuis HubForge"}' } },
+  ]},
   { cat: "Système", items: [
     { name: "Verrouiller le PC", label: "Verrouiller", icon: "lock", color: "#6A1B9A", action: { type: "lock" } },
     { name: "Capture d'écran", label: "Capture", icon: "scan", color: "#00897B", action: { type: "hotkey", keys: "win+shift+s" } },
@@ -140,6 +151,7 @@ const ACTION_TYPES = [
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
   ["media", "Multimédia"], ["app_mute", "Couper le son d'une application"], ["audio_output", "Changer de sortie audio"], ["timer", "Minuteur de la touche"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
   ["macro", "Macro (plusieurs actions à la suite)"], ["var", "Variable (compteur, interrupteur…)"], ["if", "Condition (si… alors… sinon)"],
+  ["ai", "IA sur le texte sélectionné"], ["http", "Requête web"],
   ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
   ["profile", "Changer de profil"],
 ];
@@ -219,10 +231,63 @@ function childActions(a) {
   return [];
 }
 
+/** Champ « variable où ranger le résultat » (requête web, IA). */
+function varTargetField(a, upd, placeholder, label = "Variable") {
+  const listId = "vars-" + Math.random().toString(36).slice(2);
+  return field(label, el("input", { class: "input", value: a.save_to || "", list: listId, spellcheck: "false", placeholder,
+    oninput: (e) => upd((x) => { x.save_to = e.target.value.trim(); if (!x.save_to) delete x.pick; }), onchange: () => renderInspector() }),
+    el("datalist", { id: listId }, ...knownVars().map((n) => el("option", { value: n }))));
+}
+
+/** Réglages de l'IA (communs à tous les profils, jamais exportés). */
+function aiSettingsBlock() {
+  const box = el("div", { id: "ai-settings" });
+  (async () => {
+    let st;
+    try { st = await invoke("get_ai_settings"); } catch (_) { st = null; }
+    st = Object.assign({ provider: "", url: "", model: "", key: "" }, st || {});
+    const draw = () => {
+      box.innerHTML = "";
+      const prov = AI_PROVIDERS.find(([v]) => v === st.provider) || AI_PROVIDERS[0];
+      const save = async () => { try { await invoke("set_ai_settings", { settings: st }); } catch (e) { toast(String(e), true); } };
+      box.append(field("Fournisseur", el("select", { class: "input", onchange: (e) => {
+        const p = AI_PROVIDERS.find(([v]) => v === e.target.value);
+        st.provider = p[0]; st.url = ""; st.model = p[3]; save(); draw();
+      } }, ...AI_PROVIDERS.map(([v, l]) => el("option", { value: v, selected: v === st.provider }, l)))));
+      if (!st.provider) {
+        box.append(el("p", { class: "hint" }, "Les touches « IA » corrigent, traduisent ou résument le texte sélectionné. Choisis Ollama pour une IA gratuite qui tourne sur ton PC (à installer depuis ollama.com), ou un service en ligne avec ta clé API."));
+        return;
+      }
+      box.append(field("Modèle", el("input", { class: "input mono", value: st.model, spellcheck: "false", placeholder: prov[3], onchange: (e) => { st.model = e.target.value.trim(); save(); } }),
+        st.provider === "ollama" ? el("p", { class: "hint" }, "Le nom d'un modèle téléchargé dans Ollama (commande « ollama pull llama3.2 »).") : null));
+      if (st.provider !== "ollama") box.append(field("Clé API", el("input", { class: "input mono", type: "password", value: st.key, spellcheck: "false", autocomplete: "off",
+        onchange: (e) => { st.key = e.target.value.trim(); save(); } }),
+        el("p", { class: "hint" }, "Gardée sur ce PC seulement : elle n'est jamais incluse quand tu exportes un profil.")));
+      const adv = el("details", { class: "adv" }, el("summary", {}, "Adresse du serveur"),
+        el("input", { class: "input mono", value: st.url, spellcheck: "false", placeholder: prov[2], onchange: (e) => { st.url = e.target.value.trim(); save(); } }),
+        el("p", { class: "hint" }, st.provider === "openai" ? "À changer pour un service compatible OpenAI (Mistral, Groq, OpenRouter, LM Studio…)." : "Laisse vide pour l'adresse par défaut."));
+      if (st.url) adv.open = true;
+      box.append(adv);
+      const res = el("p", { class: "hint" });
+      box.append(el("div", { class: "row", style: "gap:6px;align-items:center" }, el("button", { class: "btn small", onclick: async () => {
+        res.textContent = "Essai en cours…";
+        try { res.textContent = "Réponse : " + await invoke("test_ai", { settings: st }); } catch (e) { res.textContent = "Erreur : " + e; }
+      } }, "Essayer"), res));
+    };
+    draw();
+  })();
+  return box;
+}
+
 /** Noms des variables utilisées dans le profil et de celles qui ont une valeur. */
 function knownVars() {
   const names = new Set(Object.keys((S.status && S.status.vars) || {}));
-  const walk = (a) => { if (!a) return; if (a.type === "var" && a.name) names.add(a.name.trim().toLowerCase()); childActions(a).forEach(walk); };
+  const walk = (a) => {
+    if (!a) return;
+    if (a.type === "var" && a.name) names.add(a.name.trim().toLowerCase());
+    if ((a.type === "http" || a.type === "ai") && a.save_to) names.add(a.save_to.trim().toLowerCase());
+    childActions(a).forEach(walk);
+  };
   for (const p of S.cfg.pages) for (const d of p.keys) { walk(d.action); if (d.toggle) walk(d.toggle.action); walk(d.long); walk(d.double); }
   return [...names].sort();
 }
@@ -978,6 +1043,7 @@ function select(sel) {
   $("#btn-settings").classList.toggle("active", sel.type === "settings");
   $("#btn-addons").classList.toggle("active", sel.type === "addons");
   renderInspector();
+  if (sel.focus) setTimeout(() => { const t = document.getElementById("settings-" + sel.focus); if (t) t.scrollIntoView({ block: "start" }); }, 50);
 }
 
 function renderInspector() {
@@ -1254,7 +1320,19 @@ const ACTION_DEFAULTS = {
   profile: { type: "profile", to: "next" }, game: { type: "game" },
   var: { type: "var", name: "compteur", op: "add", value: "1" },
   if: { type: "if", left: "", cmp: "==", right: "", then: [], else: [] },
+  ai: { type: "ai", preset: "fix", output: "replace" },
+  http: { type: "http", method: "GET", url: "https://" },
 };
+
+const AI_PRESETS = [["fix", "Corriger l'orthographe"], ["translate_en", "Traduire en anglais"], ["translate_fr", "Traduire en français"],
+  ["summarize", "Résumer"], ["formal", "Style professionnel"], ["custom", "Consigne perso…"]];
+const AI_OUTPUTS = [["replace", "Remplacer la sélection"], ["clipboard", "Copier le résultat (à coller où tu veux)"], ["var", "Ranger dans une variable"]];
+const AI_PROVIDERS = [
+  ["", "Pas d'IA", "", ""],
+  ["ollama", "Ollama (sur ton PC, gratuit)", "http://localhost:11434", "llama3.2"],
+  ["openai", "OpenAI ou service compatible (clé API)", "https://api.openai.com/v1", "gpt-4o-mini"],
+  ["anthropic", "Claude d'Anthropic (clé API)", "https://api.anthropic.com", "claude-haiku-5-5"],
+];
 
 /** Résumé d'une étape de macro (affiché dans son en-tête). */
 function stepSummary(a) {
@@ -1286,6 +1364,8 @@ function stepSummary(a) {
       if (a.op === "add") { const v = String(a.value || "0").trim(); return v.startsWith("-") ? `${n} − ${v.slice(1)}` : `${n} + ${v}`; }
       return `${n} = ${a.value || "(vide)"}`;
     }
+    case "ai": return "IA : " + ((AI_PRESETS.find(([v]) => v === a.preset) || AI_PRESETS[0])[1]).replace("…", "");
+    case "http": { let h = a.url || ""; try { h = new URL(a.url).host; } catch (_) {} return `${a.method || "GET"} ${h || "…"}`; }
     case "if": return `Si ${a.left || "…"} ${(CMPS.find(([v]) => v === a.cmp) || CMPS[0])[2]} ${a.right || "(vide)"}`;
     default: return "Aucune action";
   }
@@ -1451,6 +1531,39 @@ function actionEditor(st, k, onChange, opts = {}) {
     const cur = S.status && S.status.vars && a.name ? S.status.vars[a.name.toLowerCase()] : undefined;
     out.push(el("p", { class: "hint" }, cur !== undefined ? `Valeur actuelle : ${cur}. ` : "",
       "Pour l'afficher sur une touche, écris ", el("b", {}, `{${a.name || "nom"}}`), " dans son texte. Les variables sont gardées même après un redémarrage."));
+  } else if (t === "ai") {
+    out.push(field("Que faire du texte sélectionné ?", el("select", { class: "input", onchange: (e) => { upd((x) => { x.preset = e.target.value; }); renderInspector(); } },
+      ...AI_PRESETS.map(([v, l]) => el("option", { value: v, selected: v === (a.preset || "fix") }, l)))));
+    if (a.preset === "custom") out.push(field("Consigne", el("textarea", { class: "input", rows: 3, placeholder: "ex. Mets ce texte en liste à puces. / Réponds poliment à ce message.",
+      oninput: (e) => upd((x) => { x.prompt = e.target.value; }) }, a.prompt || "")));
+    out.push(field("Résultat", el("select", { class: "input", onchange: (e) => { upd((x) => { x.output = e.target.value; }); renderInspector(); } },
+      ...AI_OUTPUTS.map(([v, l]) => el("option", { value: v, selected: v === (a.output || "replace") }, l)))));
+    if (a.output === "var") out.push(varTargetField(a, upd, "ex. resume"));
+    out.push(el("p", { class: "hint" }, "Sélectionne un texte dans n'importe quelle appli, puis appuie sur la touche : elle s'entoure d'orange pendant que l'IA travaille, de vert quand c'est fait, de rouge en cas d'erreur. ",
+      el("a", { href: "#", style: "color:var(--accent-2)", onclick: (e) => { e.preventDefault(); select({ type: "settings", focus: "ai" }); } }, "Régler l'IA")));
+  } else if (t === "http") {
+    out.push(field("Méthode et adresse", el("div", { class: "row", style: "gap:6px" },
+      el("select", { class: "input", style: "width:96px;flex:none", onchange: (e) => { upd((x) => { x.method = e.target.value; }); renderInspector(); } },
+        ...["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => el("option", { value: m, selected: m === (a.method || "GET") }, m))),
+      el("input", { class: "input", value: a.url || "", spellcheck: "false", placeholder: "https://…", oninput: (e) => upd((x) => { x.url = e.target.value.trim(); }) }))));
+    if ((a.method || "GET") !== "GET") out.push(field("Corps (JSON ou texte)", el("textarea", { class: "input mono", rows: 4, spellcheck: "false", placeholder: '{"content": "Bonjour"}',
+      oninput: (e) => upd((x) => { x.body = e.target.value; }) }, a.body || "")));
+    const adv = el("details", { class: "adv" }, el("summary", {}, "En-têtes (clé API, jeton…)"),
+      el("textarea", { class: "input mono", rows: 3, spellcheck: "false", placeholder: "Authorization: Bearer xxx\nX-Api-Key: xxx",
+        oninput: (e) => upd((x) => { x.headers = e.target.value; }) }, a.headers || ""));
+    if (a.headers) adv.open = true;
+    out.push(adv);
+    out.push(varTargetField(a, upd, "ex. temperature", "Ranger la réponse dans la variable (facultatif)"));
+    if (a.save_to) out.push(field("Champ de la réponse JSON (facultatif)", el("input", { class: "input mono", value: a.pick || "", spellcheck: "false", placeholder: "ex. data.temperature ou items.0.name",
+      oninput: (e) => upd((x) => { x.pick = e.target.value.trim(); }) })));
+    const result = el("p", { class: "hint" });
+    out.push(el("div", { class: "row", style: "gap:6px;align-items:center" }, el("button", { class: "btn small", onclick: async () => {
+      result.textContent = "Envoi…";
+      try { const r = await invoke("test_http", { method: a.method || "GET", url: a.url || "", body: a.body || "", headers: a.headers || "", pick: a.save_to ? (a.pick || "") : "" });
+        result.textContent = "Réponse : " + (r || "(vide)"); }
+      catch (e) { result.textContent = "Erreur : " + e; }
+    } }, "Essayer"), result));
+    out.push(el("p", { class: "hint" }, "L'adresse, le corps et les en-têtes acceptent les {variables}. Affiche la réponse sur une touche en écrivant {nom} dans son texte. Attention : « Essayer » envoie vraiment la requête."));
   } else if (t === "if") {
     if (!Array.isArray(a.then)) a.then = [];
     if (!Array.isArray(a["else"])) a["else"] = [];
@@ -2728,6 +2841,8 @@ function settingsInspector() {
   out.push(field("Ville des touches météo", el("input", { class: "input", value: g.weather_city || "", placeholder: "ex. Toulouse", spellcheck: "false",
     onchange: (e) => { g.weather_city = e.target.value.trim(); changed(); } }),
     el("p", { class: "hint" }, "Prévisions Open-Meteo, gratuites et sans compte. HubForge ne se connecte à internet que si une touche météo existe.")));
+  out.push(el("h2", { style: "margin-top:18px", id: "settings-ai" }, "Intelligence artificielle"));
+  out.push(aiSettingsBlock());
   out.push(el("h2", { style: "margin-top:18px" }, "Soundboard"));
   out.push(rangeField("Volume des sons", g.sound_volume, 0, 100, " %", (v) => { g.sound_volume = v; changed(); }));
   const devSel = (value, onPick, emptyLabel) => {

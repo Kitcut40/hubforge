@@ -111,6 +111,8 @@ Types d'action disponibles :
 | `macro` | `steps` | liste d'actions, avec des pauses `{ type = "wait", ms = 300 }` |
 | `var` | `name`, `op`, `value` | variable : `op = "set"` (donne `value`), `"add"` (ajoute, négatif pour retirer) ou `"toggle"` (0 ↔ 1). `{nom}` dans le texte d'une touche affiche sa valeur |
 | `if` | `left`, `cmp`, `right`, `then`, `else` | condition : `cmp` = `==` `!=` `>` `<` `>=` `<=` `contains`. `left` et `right` acceptent `{variable}`, `{app}` (appli au premier plan), `{page}`, `{profile}`, `{hour}`, `{minute}`, `{weekday}` (1 = lundi) |
+| `http` | `method`, `url`, `body`, `headers`, `save_to`, `pick` | requête web : `method` = `GET` `POST` `PUT` `PATCH` `DELETE` ; `headers` = un « Nom: valeur » par ligne ; la réponse peut aller dans la variable `save_to`, ou seulement un champ JSON avec `pick` (ex. `data.temperature`). `url`, `body` et `headers` acceptent les `{variables}` |
+| `ai` | `preset`, `prompt`, `output`, `save_to` | IA sur le texte sélectionné : `preset` = `fix` `translate_en` `translate_fr` `summarize` `formal` `custom` (avec `prompt`) ; `output` = `replace` `clipboard` `var` (avec `save_to`). L'IA se règle dans les réglages de HubForge |
 | `none` | — | ne fait rien |
 
 Exemple de macro (ouvrir la recherche de commandes, taper un nom, valider) :

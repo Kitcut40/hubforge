@@ -17,6 +17,8 @@ mod addons;
 mod anims;
 mod appicon;
 mod audio;
+mod clip;
+mod connect;
 mod autostart;
 mod backups;
 mod config;
@@ -225,6 +227,10 @@ fn main() {
             ui::list_icon_packs,
             ui::remove_icon_pack,
             ui::icon_pack_thumbs,
+            ui::get_ai_settings,
+            ui::set_ai_settings,
+            ui::test_ai,
+            ui::test_http,
             ui::get_diagnostic,
             ui::reconnect_modules,
             ui::light_presets,

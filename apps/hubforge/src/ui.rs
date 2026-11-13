@@ -979,6 +979,34 @@ pub fn test_sound(state: State<AppState>, file: String, volume: u8) {
 }
 
 #[tauri::command]
+pub fn get_ai_settings(state: State<AppState>) -> crate::connect::AiSettings {
+    crate::connect::load_settings(&state.cfg_dir)
+}
+
+#[tauri::command]
+pub fn set_ai_settings(state: State<AppState>, settings: crate::connect::AiSettings) -> Result<(), String> {
+    crate::connect::save_settings(&state.cfg_dir, &settings)
+}
+
+/// Essai des réglages de l'IA (sans les enregistrer) sur une phrase fautive.
+#[tauri::command(async)]
+pub fn test_ai(settings: crate::connect::AiSettings) -> Result<String, String> {
+    crate::connect::ask(&settings, &crate::connect::instruction("fix", ""), "Bonjour, je mapelle HubForge et je fonctione bien.")
+}
+
+/// Essai d'une requête web depuis l'éditeur : renvoie la valeur obtenue.
+#[tauri::command(async)]
+pub fn test_http(method: String, url: String, body: String, headers: String, pick: String) -> Result<String, String> {
+    let resp = crate::connect::http(&method, &url, &body, &headers)?;
+    if pick.trim().is_empty() {
+        let short: String = resp.trim().chars().take(300).collect();
+        Ok(if resp.trim().chars().count() > 300 { format!("{short}…") } else { short })
+    } else {
+        crate::connect::pick(&resp, &pick)
+    }
+}
+
+#[tauri::command]
 pub fn clear_vars(state: State<AppState>) {
     let _ = state.engine.lock().unwrap().send(EngineMsg::ClearVars);
 }

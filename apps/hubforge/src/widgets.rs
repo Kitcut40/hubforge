@@ -1787,6 +1787,33 @@ mod tests {
 
     #[test]
     #[ignore]
+    fn connector_sheet() {
+        let icons = [("spell-check", "Corriger", "#7C4DFF"), ("languages", "→ EN", "#3949AB"), ("briefcase", "Pro", "#455A64"), ("file-text", "Résumé", "#00838F"),
+            ("wand-sparkles", "IA", "#8E24AA"), ("globe", "Web", "#0277BD"), ("webhook", "Discord", "#5865F2"), ("bot", "Bot", "#00897B"), ("send", "Envoyer", "#1E88E5")];
+        let themes = ["graphite", "neon", "classic"];
+        let mut sheet = RgbImage::from_pixel(icons.len() as u32 * (S + 6) + 6, themes.len() as u32 * (S + 6) + 6, Rgb([14, 15, 19]));
+        for (r, th) in themes.iter().enumerate() {
+            for (c, (icon, label, color)) in icons.iter().enumerate() {
+                let mut k = key("cpu", None);
+                k.widget = None;
+                k.icon = Some(format!("builtin:{icon}"));
+                k.label = label.to_string();
+                k.color = Some(color.to_string());
+                k.theme = Some(th.to_string());
+                let v = crate::render::render_key(&k, std::path::Path::new("/tmp"));
+                let mut img = image::load_from_memory(&v.frames[0].jpeg).unwrap().to_rgb8();
+                if c == 0 {
+                    let b = crate::render::with_border(&v.frames[0].jpeg, [255, 166, 0]);
+                    img = image::load_from_memory(&b).unwrap().to_rgb8();
+                }
+                image::imageops::overlay(&mut sheet, &img, (6 + c as u32 * (S + 6)) as i64, (6 + r as u32 * (S + 6)) as i64);
+            }
+        }
+        sheet.save("/tmp/connector_sheet.png").unwrap();
+    }
+
+    #[test]
+    #[ignore]
     fn theme_sheet() {
         fake_weather();
         let mut actions = vec![

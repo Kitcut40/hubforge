@@ -624,3 +624,21 @@ mod anim_tests {
         }
     }
 }
+
+/// La même image entourée d'un liseré de couleur (état d'une action en cours,
+/// réussie ou en échec). Le liseré fait tout le tour : il reste juste quelle
+/// que soit l'orientation du module.
+pub fn with_border(jpeg: &[u8], color: [u8; 3]) -> Vec<u8> {
+    let Ok(img) = image::load_from_memory(jpeg) else { return jpeg.to_vec() };
+    let mut img = img.to_rgb8();
+    let (w, h) = img.dimensions();
+    let t = (w.min(h) / 14).max(3);
+    for y in 0..h {
+        for x in 0..w {
+            if x < t || y < t || x >= w - t || y >= h - t {
+                img.put_pixel(x, y, Rgb(color));
+            }
+        }
+    }
+    encode_jpeg(&img, 90)
+}

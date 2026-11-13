@@ -527,3 +527,8 @@ label.mini select { min-width: 64px; }
 .vars-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
 .var-row { padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: #12141a; font-size: 12px; }
 .var-row code { color: var(--accent-2); }
+details.adv { margin: 4px 0 10px; }
+details.adv > summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+details.adv[open] > summary { color: var(--text, #e6e8ee); }
+.input.mono, textarea.mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+textarea.input { resize: vertical; min-height: 54px; }
