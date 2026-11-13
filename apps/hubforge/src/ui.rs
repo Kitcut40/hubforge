@@ -564,7 +564,7 @@ pub async fn pick_file(app: AppHandle, kind: String) -> Result<Option<String>, S
     d = match kind.as_str() {
         "image" => d.add_filter("Images et GIF", &["png", "jpg", "jpeg", "gif", "webp", "bmp"]),
         "addon" => d.add_filter("Addon HubForge", &["forge"]),
-        "profile" => d.add_filter("Profil HubForge", &["hfprofile"]),
+        "profile" => d.add_filter("Profils et packs d'icônes", &["hfprofile", "streamDeckProfile", "streamDeckIconPack"]),
         "wad" => d.add_filter("Fichier de jeu Doom (WAD)", &["wad", "WAD"]),
         "sound" => d.add_filter("Son", crate::sound::EXTENSIONS),
         "program" => d.add_filter("Programmes", &["exe", "lnk", "bat", "cmd"]).add_filter("Tous les fichiers", &["*"]),
@@ -618,9 +618,11 @@ pub async fn export_profile(app: AppHandle, state: State<'_, AppState>, name: St
 }
 
 fn finish_import(state: &State<AppState>, bytes: &[u8]) -> Result<crate::share::ImportReport, String> {
-    let r = crate::share::import(&state.cfg_dir, bytes)?;
-    log::info!("profil « {} » importé ({} images)", r.name, r.images);
-    let _ = state.engine.lock().unwrap().send(EngineMsg::SwitchProfile(r.name.clone()));
+    let r = crate::sdimport::import_any(&state.cfg_dir, bytes)?;
+    log::info!("« {} » importé ({}, {} images, {} sons)", r.name, r.kind, r.images, r.sounds);
+    if r.kind == "profile" {
+        let _ = state.engine.lock().unwrap().send(EngineMsg::SwitchProfile(r.name.clone()));
+    }
     Ok(r)
 }
 
@@ -634,6 +636,41 @@ pub fn import_profile(state: State<AppState>, path: String) -> Result<crate::sha
 pub fn import_profile_data(state: State<AppState>, data: String) -> Result<crate::share::ImportReport, String> {
     let bytes = base64::engine::general_purpose::STANDARD.decode(data.as_bytes()).map_err(|e| e.to_string())?;
     finish_import(&state, &bytes)
+}
+
+#[tauri::command]
+pub fn list_icon_packs(state: State<AppState>) -> Vec<crate::sdimport::IconPack> {
+    crate::sdimport::list_icon_packs(&state.cfg_dir)
+}
+
+/// Vignettes d'un pack d'icônes : (chemin, nom, image en data URL).
+#[tauri::command]
+pub fn icon_pack_thumbs(state: State<AppState>, folder: String) -> Vec<(String, String, String)> {
+    use base64::Engine as _;
+    let Some(pack) = crate::sdimport::list_icon_packs(&state.cfg_dir).into_iter().find(|p| p.folder == folder) else { return Vec::new() };
+    pack.icons
+        .into_iter()
+        .filter_map(|i| {
+            let data = std::fs::read(state.cfg_dir.join(&i.path)).ok()?;
+            if data.len() > 2 * 1024 * 1024 {
+                return None;
+            }
+            let ext = i.path.rsplit('.').next().unwrap_or("png").to_lowercase();
+            let mime = match ext.as_str() {
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "svg" => "image/svg+xml",
+                _ => "image/png",
+            };
+            Some((i.path, i.name, format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data))))
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn remove_icon_pack(state: State<AppState>, folder: String) -> Result<(), String> {
+    crate::sdimport::remove_icon_pack(&state.cfg_dir, &folder)
 }
 
 #[derive(Serialize)]

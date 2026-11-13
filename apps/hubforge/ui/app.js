@@ -1224,7 +1224,7 @@ function iconField(k, st, upd) {
       class: "chip" + (icon === "anim:" + id ? " on style-on" : " add"),
       onclick: () => { upd((d) => { d.icon = "anim:" + id; }, { immediate: true }); renderInspector(); },
     }, nm)));
-    out.append(el("div", { class: "icon-picker" }, search, grid, el("div", { class: "step-branch" }, "Animations"), anims));
+    out.append(el("div", { class: "icon-picker" }, search, grid, el("div", { class: "step-branch" }, "Animations"), anims, iconPacksBlock(icon, upd)));
   } else {
     out.append(el("p", { class: "hint" }, "Astuce : glisse aussi une image ou un GIF depuis l'Explorateur sur la touche."));
   }
@@ -1903,8 +1903,8 @@ function setupForgeDrop() {
     if (!f) return;
     e.preventDefault();
     if (/\.forge$/i.test(f.name)) installForgeFile(f);
-    else if (/\.hfprofile$/i.test(f.name)) importProfileFile(f);
-    else toast("Dépose un addon .forge ou un profil .hfprofile sur la fenêtre, ou une image sur une touche.");
+    else if (/\.(hfprofile|streamDeckProfile|streamDeckIconPack)$/i.test(f.name)) importProfileFile(f);
+    else toast("Dépose sur la fenêtre un addon .forge, un profil (.hfprofile ou Stream Deck) ou un pack d'icônes Stream Deck, ou une image sur une touche.");
   });
 }
 
@@ -2196,7 +2196,7 @@ async function toggleProfileMenu(forceOpen) {
   m.append(action("✎ Renommer « " + (S.profile || "") + " »…", renameProfile));
   m.append(el("div", { class: "pm-sep" }));
   m.append(action("⇪ Exporter « " + (S.profile || "") + " » dans un fichier…", exportProfile));
-  m.append(action("⇩ Importer un profil…", importProfile));
+  m.append(action("⇩ Importer (profil HubForge ou Stream Deck, pack d'icônes)…", importProfile));
   m.append(action("⟲ Sauvegardes de « " + (S.profile || "") + " »…", showBackups));
   m.classList.remove("hidden");
 }
@@ -2343,12 +2343,78 @@ async function importProfileFile(f) {
 }
 function afterProfileImport(r) {
   if (!r) return;
-  const imgs = r.images ? ` avec ${r.images} image${r.images > 1 ? "s" : ""}` : "";
-  if (r.missing_addons && r.missing_addons.length) {
-    toast(`Profil « ${r.name} » importé${imgs}. Addons à installer pour certaines touches : ${r.missing_addons.join(", ")}.`, true);
-  } else {
-    toast(`Profil « ${r.name} » importé${imgs} et activé.`);
+  const plural = (n, w) => `${n} ${w}${n > 1 ? "s" : ""}`;
+  if (r.kind === "icons") {
+    S.iconPacks = null;
+    S.iconPickerOpen = true;
+    toast(`Pack d'icônes « ${r.name} » ajouté : ${plural(r.images, "icône")}. Tu le trouves dans « Icônes… » de chaque touche.`);
+    if (S.sel && S.sel.type === "key") renderInspector();
+    return;
   }
+  const parts = [];
+  if (r.images) parts.push(plural(r.images, "image"));
+  if (r.sounds) parts.push(plural(r.sounds, "son"));
+  const extra = parts.length ? ` avec ${parts.join(" et ")}` : "";
+  if (r.unsupported && r.unsupported.length) {
+    toast(`Profil « ${r.name} » importé${extra}. Touches sans action (plugins Stream Deck sans équivalent, en gris) : ${r.unsupported.join(", ")}.`, true);
+  } else if (r.missing_addons && r.missing_addons.length) {
+    toast(`Profil « ${r.name} » importé${extra}. Addons à installer pour certaines touches : ${r.missing_addons.join(", ")}.`, true);
+  } else {
+    toast(`Profil « ${r.name} » importé${extra} et activé.`);
+  }
+}
+
+// --- Packs d'icônes (Stream Deck) ---
+async function loadIconPacks() {
+  if (S.iconPacks) return S.iconPacks;
+  try { S.iconPacks = await invoke("list_icon_packs"); } catch (_) { S.iconPacks = []; }
+  return S.iconPacks;
+}
+async function packThumbs(folder) {
+  S.packThumbs = S.packThumbs || {};
+  if (!S.packThumbs[folder]) {
+    try { S.packThumbs[folder] = await invoke("icon_pack_thumbs", { folder }); } catch (_) { S.packThumbs[folder] = []; }
+  }
+  return S.packThumbs[folder];
+}
+function iconPacksBlock(icon, upd) {
+  const box = el("div", {});
+  (async () => {
+    const packs = await loadIconPacks();
+    const head = el("div", { class: "step-branch" }, "Packs d'icônes");
+    const importBtn = el("button", { class: "btn small", onclick: importProfile }, "Importer un pack…");
+    if (!packs.length) {
+      box.append(head, el("p", { class: "hint" }, "Ajoute un pack d'icônes Stream Deck (.streamDeckIconPack) : il apparaîtra ici pour toutes les touches. ", importBtn));
+      return;
+    }
+    if (!S.openPack || !packs.some((p) => p.folder === S.openPack)) S.openPack = packs[0].folder;
+    const grid = el("div", { class: "icon-grid pack-grid" });
+    const tabs = el("div", { class: "chips" }, ...packs.map((p) => el("span", {
+      class: "chip" + (p.folder === S.openPack ? " on style-on" : " add"),
+      title: p.author ? `par ${p.author}` : "",
+      onclick: () => { S.openPack = p.folder; renderInspector(); },
+    }, `${p.name} (${p.icons.length})`)));
+    const pack = packs.find((p) => p.folder === S.openPack);
+    const search = el("input", { class: "input", placeholder: `Rechercher dans « ${pack.name} »` });
+    const thumbs = await packThumbs(pack.folder);
+    const fill = (q) => {
+      grid.innerHTML = "";
+      for (const [path, name, src] of thumbs.filter(([, n]) => !q || n.toLowerCase().includes(q)).slice(0, 400)) {
+        const cell = el("div", { class: "icon-cell" + (icon === path ? " on" : ""), title: name }, el("img", { src, alt: name }));
+        cell.onclick = () => { upd((d) => { d.icon = path; }, { immediate: true }); renderInspector(); };
+        grid.append(cell);
+      }
+    };
+    search.oninput = (e) => fill(e.target.value.trim().toLowerCase());
+    fill("");
+    const remove = el("button", { class: "btn small", onclick: async () => {
+      if (!confirm(`Retirer le pack « ${pack.name} » ? Les touches qui utilisent ses icônes n'auront plus d'image.`)) return;
+      try { await invoke("remove_icon_pack", { folder: pack.folder }); S.iconPacks = null; delete S.packThumbs[pack.folder]; renderInspector(); }
+      catch (e) { toast(String(e), true); }
+    } }, "Retirer ce pack");
+    box.append(head, tabs, search, grid, el("div", { class: "row", style: "gap:6px;margin-top:6px" }, importBtn, remove));
+  })();
+  return box;
 }
 
 // --- Sauvegardes automatiques ---
@@ -3166,6 +3232,8 @@ async function mockInvoke(cmd, args) {
           base_rot: location.search.includes("rot=90") ? 90 : 0, vars: { compteur: "7", interrupteur: "1" }, pickup: [false, true, false, false, false] } };
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;
+    case "list_icon_packs": return window.__mockPacks || [];
+    case "icon_pack_thumbs": return (window.__mockPacks || []).find((p) => p.folder === args.folder).icons.map((i, n) => [i.path, i.name, mockPreview({ label: i.name, color: ["#E5484D", "#3E63DD", "#30A46C", "#F76B15"][n % 4] })]);
     case "list_audio_apps": return ["chrome.exe", "discord.exe", "spotify.exe"];
     case "list_running_apps": return ["chrome.exe", "explorer.exe", "fusion360.exe", "obs64.exe", "prusa-slicer.exe"];
     case "app_info": return { icon: null, name: (args.target.split(/[\\/]/).pop() || "").replace(/\.exe$/i, "") };

@@ -30,6 +30,7 @@ Pour fabriquer l'installateur toi-même : `installer/build.sh` (NSIS).
 | 3 | Faders, molettes, audio par application | ✅ v0.2 |
 | 3b | Noyau avancé : pages automatiques par application ✅ v0.4, macros ✅ v0.4.1, dossiers ✅ v0.4.2, touches vivantes ✅ v0.5.0 (styles v0.6.0), profils ✅ v0.6.0, appui long | 🔧 |
 | 4 | Système d'addons `.forge` | 🔧 niveau 1 (déclaratif) ✅ v0.7.0 + addon officiel Fusion 360 — guide : [docs/ADDON_GUIDE.md](docs/ADDON_GUIDE.md) |
+| 4b | Import des profils et des packs d'icônes Stream Deck | ✅ v0.17.0 |
 | 5 | Linux, installeurs, publication v1.0 | ⏳ |
 
 ## Modules pris en charge
@@ -76,7 +77,7 @@ cargo run --release -p hubforge-probe
 - HubForge est distribué sous licence **GPL-3.0-or-later** (voir [`LICENSE`](LICENSE)) : toute version modifiée et distribuée doit rester open source.
 - Les **addons** qui utilisent uniquement l'interface publique d'addons peuvent avoir la licence de leur choix (voir [`ADDON-EXCEPTION.md`](ADDON-EXCEPTION.md)).
 
-HubForge n'est ni affilié à Cooler Master, ni approuvé par Cooler Master. « Cooler Master » et « MasterHUB » sont des marques de leurs propriétaires respectifs. Le protocole a été documenté à des fins d'interopérabilité ; aucun code ni ressource du logiciel officiel n'est inclus dans ce dépôt.
+HubForge n'est ni affilié à Cooler Master, ni approuvé par Cooler Master. « Cooler Master » et « MasterHUB » sont des marques de leurs propriétaires respectifs. De même, HubForge n'est ni affilié à Elgato ni approuvé par Elgato ; « Stream Deck » est une marque de son propriétaire, citée seulement pour indiquer les fichiers que HubForge sait importer. Aucun pack d'icônes ni profil Stream Deck n'est inclus dans ce dépôt. Le protocole a été documenté à des fins d'interopérabilité ; aucun code ni ressource du logiciel officiel n'est inclus dans ce dépôt.
 
 
 ## Code tiers

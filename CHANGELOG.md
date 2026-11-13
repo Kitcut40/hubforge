@@ -4,6 +4,17 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.17.0] — 2026-11-13
+
+### Nouveautés
+- **Import des profils Stream Deck** (`.streamDeckProfile`) : menu des profils › Importer, ou glisser le fichier sur la fenêtre.
+  - Les actions de base sont converties : raccourci clavier, texte, ouvrir une application ou un fichier, site web, multimédia, soundboard (sons copiés dans HubForge, avec leur volume et leur mode), multi-actions (avec les pauses), dossiers, retour, page suivante ou précédente.
+  - Les images et les titres des touches sont repris.
+  - Les touches d'un plugin Stream Deck sans équivalent arrivent avec leur image, sans action, sur fond gris ; le compte rendu liste ces plugins.
+  - Profils pour Stream Deck XL ou + : les touches en trop vont sur les places libres, puis sur des pages supplémentaires.
+  - Les profils récents et l'ancien format sont reconnus.
+- **Packs d'icônes Stream Deck** (`.streamDeckIconPack`) : importés de la même façon, ils apparaissent dans « Icônes… » de chaque touche, avec une recherche par nom. Un pack se retire en un clic.
+
 ## [0.16.0] — 2026-11-13
 
 ### Nouveautés

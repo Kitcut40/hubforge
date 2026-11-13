@@ -26,13 +26,21 @@ pub struct Manifest {
 }
 
 /// Résultat d'un import.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ImportReport {
     /// Nom du profil créé.
     pub name: String,
     /// Addons utilisés par le profil mais absents de ce PC.
     pub missing_addons: Vec<String>,
     pub images: usize,
+    /// Sons copiés.
+    #[serde(default)]
+    pub sounds: usize,
+    /// Plugins ou actions sans équivalent (import Stream Deck).
+    #[serde(default)]
+    pub unsupported: Vec<String>,
+    /// « profile » ou « icons » (pack d'icônes).
+    pub kind: String,
 }
 
 fn key_icons(cfg: &mut Config) -> Vec<&mut Option<String>> {
@@ -262,6 +270,7 @@ pub fn import(cfg_dir: &Path, bytes: &[u8]) -> Result<ImportReport, String> {
 
     // Sons : extraits dans sounds/import-<profil>/.
     let sounds_dir = cfg_dir.join("sounds").join(format!("import-{slug}"));
+    let mut sounds = 0;
     for entry in names.iter().filter(|n| n.starts_with("sounds/") && !n.ends_with('/')) {
         let base = safe_file_name(entry.trim_start_matches("sounds/").rsplit('/').next().unwrap_or(""));
         let mut f = zip.by_name(entry).map_err(|e| e.to_string())?;
@@ -273,6 +282,7 @@ pub fn import(cfg_dir: &Path, bytes: &[u8]) -> Result<ImportReport, String> {
         f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&sounds_dir).map_err(|e| e.to_string())?;
         std::fs::write(sounds_dir.join(&base), buf).map_err(|e| e.to_string())?;
+        sounds += 1;
         let new_ref = format!("sounds/import-{slug}/{base}");
         for file in key_sounds(&mut cfg) {
             if file.as_str() == entry.as_str() {
@@ -286,7 +296,7 @@ pub fn import(cfg_dir: &Path, bytes: &[u8]) -> Result<ImportReport, String> {
 
     let installed: Vec<String> = crate::addons::scan(cfg_dir).into_iter().filter(|e| e.addon.is_some()).map(|e| e.folder).collect();
     let missing_addons = used_addons(&cfg).into_iter().filter(|a| !installed.contains(a)).collect();
-    Ok(ImportReport { name, missing_addons, images })
+    Ok(ImportReport { name, missing_addons, images, sounds, unsupported: Vec::new(), kind: "profile".into() })
 }
 
 #[cfg(test)]

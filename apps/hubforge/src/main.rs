@@ -30,6 +30,7 @@ mod logging;
 mod official;
 mod profiles;
 mod render;
+mod sdimport;
 mod share;
 mod media;
 mod pcstate;
@@ -79,7 +80,7 @@ fn addon_argument() -> Option<PathBuf> {
     args.iter()
         .find(|a| {
             let l = a.to_lowercase();
-            l.ends_with(".forge") || l.ends_with(".hfprofile")
+            l.ends_with(".forge") || l.ends_with(".hfprofile") || l.ends_with(".streamdeckprofile") || l.ends_with(".streamdeckiconpack")
         })
         .map(PathBuf::from)
 }
@@ -97,9 +98,11 @@ fn send_to_running(msg: &str) -> bool {
 
 /// Installe un addon .forge (ou importe un profil .hfprofile) et prévient l'interface.
 fn install_addon_file(app: &AppHandle, dir: &std::path::Path, path: &std::path::Path) {
-    if path.extension().map(|e| e.eq_ignore_ascii_case("hfprofile")).unwrap_or(false) {
-        let res = std::fs::read(path).map_err(|e| format!("lecture impossible : {e}")).and_then(|b| share::import(dir, &b));
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if ["hfprofile", "streamdeckprofile", "streamdeckiconpack"].contains(&ext.as_str()) {
+        let res = std::fs::read(path).map_err(|e| format!("lecture impossible : {e}")).and_then(|b| sdimport::import_any(dir, &b));
         match &res {
+            Ok(r) if r.kind != "profile" => log::info!("pack d'icônes « {} » importé depuis {}", r.name, path.display()),
             Ok(r) => {
                 log::info!("profil « {} » importé depuis {}", r.name, path.display());
                 if let Some(st) = app.try_state::<ui::AppState>() {
@@ -219,6 +222,9 @@ fn main() {
             ui::export_profile,
             ui::import_profile,
             ui::import_profile_data,
+            ui::list_icon_packs,
+            ui::remove_icon_pack,
+            ui::icon_pack_thumbs,
             ui::get_diagnostic,
             ui::reconnect_modules,
             ui::light_presets,
