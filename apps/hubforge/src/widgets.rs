@@ -133,14 +133,32 @@ fn style_of(def: &KeyDef) -> &'static str {
         .unwrap_or("")
 }
 
-const DAYS_SHORT: [&str; 7] = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
-const DAYS: [&str; 7] = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
-const MONTHS_SHORT: [&str; 12] =
+const DAYS_SHORT_FR: [&str; 7] = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+const DAYS_FR: [&str; 7] = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+const MONTHS_SHORT_FR: [&str; 12] =
     ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
-const MONTHS: [&str; 12] = [
+const MONTHS_FR: [&str; 12] = [
     "janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre",
     "décembre",
 ];
+const DAYS_SHORT_EN: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAYS_EN: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS_SHORT_EN: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS_EN: [&str; 12] =
+    ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+fn days_short() -> &'static [&'static str; 7] {
+    if crate::i18n::en() { &DAYS_SHORT_EN } else { &DAYS_SHORT_FR }
+}
+fn days() -> &'static [&'static str; 7] {
+    if crate::i18n::en() { &DAYS_EN } else { &DAYS_FR }
+}
+fn months_short() -> &'static [&'static str; 12] {
+    if crate::i18n::en() { &MONTHS_SHORT_EN } else { &MONTHS_SHORT_FR }
+}
+fn months() -> &'static [&'static str; 12] {
+    if crate::i18n::en() { &MONTHS_EN } else { &MONTHS_FR }
+}
 /// Nombre de mesures gardées pour les graphiques (une toutes les 500 ms).
 const HISTORY: usize = 40;
 
@@ -484,7 +502,7 @@ struct Metric<'a> {
 fn metric<'a>(kind: &str, snap: &'a Snapshot, label: &'a str) -> Metric<'a> {
     let pick = |default: &'a str| if label.is_empty() { default } else { label };
     let pct_text = |p: Option<u8>| p.map(|p| format!("{p} %")).unwrap_or_else(|| "–".into());
-    let no_gpu = || snap.gpu.is_none().then(|| "Pas de GPU NVIDIA".to_string());
+    let no_gpu = || snap.gpu.is_none().then(|| crate::i18n::t("Pas de GPU NVIDIA", "No NVIDIA GPU").to_string());
     match kind {
         "ram" => Metric {
             title: pick("RAM"),
@@ -569,7 +587,7 @@ fn app_title(def: &KeyDef) -> String {
     let mut c = base.chars();
     match c.next() {
         Some(f) => f.to_uppercase().chain(c).collect(),
-        None => "Appli".into(),
+        None => crate::i18n::t("Appli", "App").into(),
     }
 }
 
@@ -675,7 +693,7 @@ fn render_weather(def: &KeyDef, style: &str, fg: Rgb<u8>, label: &str) -> RgbIma
         "compact" => {
             draw_svg(&mut img, &svg(weather_icon(w.code, w.is_day, 51.0, 22.0, 30.0)));
             draw_text_in(&mut img, &deg(w.temp), fg, 21.0, 38.0, 6, 32, 26);
-            let day = DAYS_SHORT[today.map(|d| d.dow).unwrap_or(0) as usize % 7];
+            let day = days_short()[today.map(|d| d.dow).unwrap_or(0) as usize % 7];
             draw_text_in(&mut img, day, soft, 21.0, 38.0, 40, 14, 11);
             draw_text_sized(&mut img, weather::sky_name(w.code), soft, 55, 14, 10);
         }
@@ -683,7 +701,7 @@ fn render_weather(def: &KeyDef, style: &str, fg: Rgb<u8>, label: &str) -> RgbIma
             draw_svg(&mut img, r##"<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72"><line x1="36" y1="8" x2="36" y2="64" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="1"/></svg>"##);
             for (i, d) in w.days.iter().skip(1).take(2).enumerate() {
                 let cx = 18.0 + i as f32 * 36.0;
-                draw_text_in(&mut img, DAYS_SHORT[d.dow as usize % 7], soft, cx, 32.0, 3, 13, 10);
+                draw_text_in(&mut img, days_short()[d.dow as usize % 7], soft, cx, 32.0, 3, 13, 10);
                 draw_svg(&mut img, &svg(weather_icon(d.code, true, cx, 28.0, 22.0)));
                 draw_text_in(&mut img, &deg(d.max), fg, cx, 32.0, 41, 15, 13);
                 draw_text_in(&mut img, &deg(d.min), soft, cx, 32.0, 55, 13, 10);
@@ -734,7 +752,7 @@ pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
                 _ => {
                     draw_text_sized(&mut img, &format!("{:02}:{:02}", t.hour, t.minute), fg, 10, 32, 26);
                     let sub = if label.is_empty() {
-                        format!("{} {} {}", DAYS_SHORT[t.dow as usize % 7], t.day, MONTHS_SHORT[(t.month as usize + 11) % 12])
+                        format!("{} {} {}", days_short()[t.dow as usize % 7], t.day, months_short()[(t.month as usize + 11) % 12])
                     } else {
                         label.to_string()
                     };
@@ -755,18 +773,18 @@ pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
   <rect x="19" y="4" width="4" height="9" rx="2" fill="#B0B0B8"/><rect x="49" y="4" width="4" height="9" rx="2" fill="#B0B0B8"/>
 </svg>"##,
                 );
-                draw_text_sized(&mut img, &MONTHS_SHORT[(t.month as usize + 11) % 12].to_uppercase(), Rgb([255, 255, 255]), 12, 13, 10);
+                draw_text_sized(&mut img, &months_short()[(t.month as usize + 11) % 12].to_uppercase(), Rgb([255, 255, 255]), 12, 13, 10);
                 draw_text_sized(&mut img, &t.day.to_string(), Rgb([0x1F, 0x22, 0x29]), 25, 28, 28);
-                let low = if label.is_empty() { DAYS_SHORT[t.dow as usize % 7] } else { label };
+                let low = if label.is_empty() { days_short()[t.dow as usize % 7] } else { label };
                 draw_text_sized(&mut img, low, Rgb([0x6B, 0x70, 0x7C]), 52, 13, 10);
                 img
             } else {
                 let bg = color_or(&def.color, dark);
                 let mut img = RgbImage::from_pixel(S, S, bg);
-                let top = if label.is_empty() { DAYS[t.dow as usize % 7] } else { label };
+                let top = if label.is_empty() { days()[t.dow as usize % 7] } else { label };
                 draw_text_sized(&mut img, top, mix(fg, bg, 0.7), 3, 16, 11);
                 draw_text_sized(&mut img, &t.day.to_string(), fg, 17, 34, 30);
-                draw_text_sized(&mut img, MONTHS[(t.month as usize + 11) % 12], mix(fg, bg, 0.7), 51, 18, 11);
+                draw_text_sized(&mut img, months()[(t.month as usize + 11) % 12], mix(fg, bg, 0.7), 51, 18, 11);
                 img
             }
         }
@@ -842,7 +860,7 @@ pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
             let (icon, text, fill) = if def.widget_target.as_deref().unwrap_or("").trim().is_empty() {
                 ("volume-x", "Choisis l'appli".to_string(), mix(fg, bg, 0.35))
             } else if !m.present {
-                ("volume-x", "Aucun son".to_string(), mix(fg, bg, 0.35))
+                ("volume-x", crate::i18n::t("Aucun son", "No sound").to_string(), mix(fg, bg, 0.35))
             } else if m.muted {
                 ("volume-x", "Muet".to_string(), mix(fg, bg, 0.35))
             } else {
@@ -864,13 +882,13 @@ pub fn render(def: &KeyDef, snap: &Snapshot) -> RgbImage {
         "weather" => render_weather(def, style, fg, label),
         "mic" => {
             let (bg, icon, text) = match snap.audio.mic_muted {
-                Some(true) => (Rgb([0xC6, 0x28, 0x28]), "mic-off", "Micro coupé".to_string()),
+                Some(true) => (Rgb([0xC6, 0x28, 0x28]), "mic-off", crate::i18n::t("Micro coupé", "Mic muted").to_string()),
                 Some(false) => (
                     color_or(&def.color, (0x2E, 0x7D, 0x32)),
                     "mic",
-                    if label.is_empty() { "Micro".to_string() } else { label.to_string() },
+                    if label.is_empty() { crate::i18n::t("Micro", "Mic").to_string() } else { label.to_string() },
                 ),
-                None => (Rgb([0x37, 0x47, 0x4F]), "mic-off", "Pas de micro".to_string()),
+                None => (Rgb([0x37, 0x47, 0x4F]), "mic-off", crate::i18n::t("Pas de micro", "No mic").to_string()),
             };
             let mut img = RgbImage::from_pixel(S, S, bg);
             if style == "icon" {
@@ -1163,7 +1181,7 @@ mod themed {
                 let text = if unset {
                     "Choisis l'appli".to_string()
                 } else if !present {
-                    "Aucun son".to_string()
+                    crate::i18n::t("Aucun son", "No sound").to_string()
                 } else if muted {
                     "Muet".to_string()
                 } else {
@@ -1193,9 +1211,9 @@ mod themed {
             }
             "mic" => {
                 let (icon, text) = match snap.audio.mic_muted {
-                    Some(true) => ("mic-off", "Coupé"),
-                    Some(false) => ("mic", if label.is_empty() { "Micro" } else { label }),
-                    None => ("mic-off", "Pas de micro"),
+                    Some(true) => ("mic-off", crate::i18n::t("Coupé", "Muted")),
+                    Some(false) => ("mic", if label.is_empty() { crate::i18n::t("Micro", "Mic") } else { label }),
+                    None => ("mic-off", crate::i18n::t("Pas de micro", "No mic")),
                 };
                 if style == "icon" {
                     b += &format!(
@@ -1210,7 +1228,7 @@ mod themed {
                 }
             }
             "clock" => {
-                let date = format!("{} {} {}", DAYS_SHORT[t.dow as usize % 7], t.day, MONTHS_SHORT[(t.month as usize + 11) % 12]);
+                let date = format!("{} {} {}", days_short()[t.dow as usize % 7], t.day, months_short()[(t.month as usize + 11) % 12]);
                 match style {
                     "analog" => {
                         let (cx, cy) = (36.0, 36.0 + d * 0.5);
@@ -1260,16 +1278,16 @@ mod themed {
                 }
             }
             "date" => {
-                let day = if label.is_empty() { DAYS[t.dow as usize % 7] } else { label };
-                let month = MONTHS[(t.month as usize + 11) % 12];
+                let day = if label.is_empty() { days()[t.dow as usize % 7] } else { label };
+                let month = months()[(t.month as usize + 11) % 12];
                 if style == "calendar" {
                     let a = th::hex_of(st.accent);
                     let (x, y, w, h) = if st.theme == Theme::Console { (12.0, 15.0, 48.0, 46.0) } else { (9.0, 7.0, 54.0, 56.0) };
                     b += &format!(r##"<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="7" fill="#FFFFFF" fill-opacity="0.07" stroke="{a}" stroke-opacity="0.5"/>"##);
                     b += &format!(r#"<path d="M{x} {} a7 7 0 0 1 7 -7 h{} a7 7 0 0 1 7 7 v7 h-{w} z" fill="{a}"/>"#, y + 7.0, w - 14.0);
-                    b += &th::text(36.0, y + 10.5, &MONTHS_SHORT[(t.month as usize + 11) % 12].to_uppercase(), 8.5, "#FFFFFF", 700, 0.6, w - 6.0, 1.0);
+                    b += &th::text(36.0, y + 10.5, &months_short()[(t.month as usize + 11) % 12].to_uppercase(), 8.5, "#FFFFFF", 700, 0.6, w - 6.0, 1.0);
                     b += &val(&st, 36.0, y + h - 12.0, &t.day.to_string(), 24.0);
-                    b += &small(&st, 36.0, y + h - 3.0, DAYS_SHORT[t.dow as usize % 7], 8.0, w - 6.0);
+                    b += &small(&st, 36.0, y + h - 3.0, days_short()[t.dow as usize % 7], 8.0, w - 6.0);
                 } else {
                     b += &small(&st, 36.0, 15.0 + d, day, 10.0, 62.0);
                     b += &val(&st, 36.0, 45.0 + d * 0.6, &t.day.to_string(), 30.0);
@@ -1291,7 +1309,7 @@ mod themed {
                     "compact" => {
                         b += &th::icon(weather_icon_name(w.code, w.is_day), st.weight, 51.0, 23.0 + d, 28.0, &wc, fx);
                         b += &th::text(22.0, 31.0 + d, &deg(w.temp), 22.0, &st.val, st.value_weight, 0.0, 36.0, 1.0);
-                        let day = DAYS_SHORT[w.days.first().map(|x| x.dow).unwrap_or(t.dow) as usize % 7];
+                        let day = days_short()[w.days.first().map(|x| x.dow).unwrap_or(t.dow) as usize % 7];
                         b += &small(&st, 22.0, 44.0 + d, day, 9.5, 34.0);
                         b += &th::label(&st, weather::sky_name(w.code), ly);
                     }
@@ -1299,7 +1317,7 @@ mod themed {
                         let (x0, x1) = if st.theme == Theme::Console { (21.0, 51.0) } else { (19.0, 53.0) };
                         for (i, dd) in w.days.iter().skip(1).take(2).enumerate() {
                             let cx = if i == 0 { x0 } else { x1 };
-                            b += &small(&st, cx, 13.0 + d, DAYS_SHORT[dd.dow as usize % 7], 8.5, 30.0);
+                            b += &small(&st, cx, 13.0 + d, days_short()[dd.dow as usize % 7], 8.5, 30.0);
                             b += &th::icon(weather_icon_name(dd.code, true), st.weight, cx, 28.0 + d, 18.0, &weather_color(&st, dd.code), fx);
                             b += &th::text(cx, 48.0 + d * 0.5, &deg(dd.max), 12.5, &st.val, st.value_weight, 0.0, 32.0, 1.0);
                             b += &th::text(cx, 59.0, &deg(dd.min), 9.0, &st.soft, 600, 0.0, 32.0, 0.9);
@@ -1317,7 +1335,7 @@ mod themed {
                 }
             }
             "audio_output" => {
-                let name = snap.audio.output.clone().unwrap_or_else(|| "Aucune sortie".into());
+                let name = snap.audio.output.clone().unwrap_or_else(|| crate::i18n::t("Aucune sortie", "No output").into());
                 let (main, sub) = match name.split_once(" (") {
                     Some((a, b)) => (a.to_string(), b.trim_end_matches(')').to_string()),
                     None => (name.clone(), String::new()),
@@ -1388,14 +1406,14 @@ mod themed {
                         }
                         let txt = if done { "Fini !".to_string() } else { clock_text(left + 999) };
                         b += &th::text(cx, cy + 5.0, &txt, if txt.len() > 5 { 12.0 } else { 15.0 }, &st.val, st.value_weight, 0.0, 40.0, 1.0);
-                        let cap = title.map(String::from).unwrap_or_else(|| if running { "En cours".into() } else if done { "Terminé".into() } else { clock_text(tot) });
+                        let cap = title.map(String::from).unwrap_or_else(|| if running { crate::i18n::t("En cours", "Running").into() } else if done { crate::i18n::t("Terminé", "Done").into() } else { clock_text(tot) });
                         b += &th::label(&st, &cap, ly);
                     }
                     None => {
                         b += &th::icon(if running { "timer" } else { "pause" }, st.weight, 36.0, 17.0 + d, 18.0, if running { &st.ic } else { &st.soft }, fx);
                         let txt = clock_text(ms);
                         b += &val(&st, 36.0, 43.0 + d * 0.6, &txt, if txt.len() > 5 { 15.0 } else { 20.0 });
-                        let cap = title.unwrap_or(if ms == 0 { "Chrono" } else if running { "En cours" } else { "En pause" });
+                        let cap = title.unwrap_or(if ms == 0 { crate::i18n::t("Chrono", "Stopwatch") } else if running { crate::i18n::t("En cours", "Running") } else { crate::i18n::t("En pause", "Paused") });
                         b += &th::label(&st, cap, ly);
                     }
                 }
@@ -1407,7 +1425,7 @@ mod themed {
                     let mx = snap.net_hist.iter().cloned().fold(1.0f64, f64::max);
                     let hist: Vec<u8> = snap.net_hist.iter().map(|v| ((v / mx) * 100.0).round().clamp(0.0, 100.0) as u8).collect();
                     b += &graph(&st, &hist, 32.0 + d, if st.theme == Theme::Console { 58.0 } else { 66.0 }, &st.line);
-                    b += &small(&st, 36.0, 11.5 + d * 1.4, if label.is_empty() { "Réseau" } else { label }, 8.5, 60.0);
+                    b += &small(&st, 36.0, 11.5 + d * 1.4, if label.is_empty() { crate::i18n::t("Réseau", "Network") } else { label }, 8.5, 60.0);
                     b += &val(&st, 36.0, 28.0 + d, &if known { crate::pcstate::rate_text(down) } else { "–".into() }, 13.0);
                 } else {
                     b += &th::icon("wifi", st.weight, 36.0, 15.0 + d, 16.0, &st.ic, fx);
@@ -1435,7 +1453,7 @@ mod themed {
                     b += &th::icon("hard-drive", st.weight, 36.0, 17.0 + d, 20.0, &st.ic, fx);
                     b += &val(&st, 36.0, 40.0 + d * 0.7, &value, 16.0);
                     b += &bar(&st, 46.0 + d * 0.6, pct.unwrap_or(0) as f32 / 100.0, &color);
-                    let free = du.map(|(u, t)| format!("{letter}: {} Go libres", (t - u).round())).unwrap_or(title);
+                    let free = du.map(|(u, t)| format!("{letter}: {} {}", (t - u).round(), crate::i18n::t("Go libres", "GB free"))).unwrap_or(title);
                     b += &th::label(&st, &free, ly);
                 }
             }

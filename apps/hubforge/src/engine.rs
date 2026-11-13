@@ -50,6 +50,8 @@ pub enum EngineMsg {
     DoomKey { pressed: bool, code: u8 },
     /// Remettre toutes les variables à zéro.
     ClearVars,
+    /// La langue a changé : redessiner les touches (dates, météo…).
+    Redraw,
 }
 
 /// Résultat d'une action qui tourne en arrière-plan (requête web, IA).
@@ -552,6 +554,10 @@ impl Engine {
                 self.apply_config(*cfg);
             }
             EngineMsg::SwitchProfile(name) => self.switch_profile(&name),
+            EngineMsg::Redraw => {
+                self.render_all();
+                self.show_page();
+            }
             EngineMsg::StartGame => self.start_game(),
             EngineMsg::Reconnect => {
                 log::info!("reconnexion des modules demandée");

@@ -372,6 +372,8 @@ async function init() {
   S.update = ini.update || {};
   S.version = ini.version;
   S.uiMode = ini.ui_mode || "advanced";
+  S.lang = ini.lang === "en" ? "en" : "fr";
+  setupLang(S.lang);
   S.autoProfiles = ini.auto_profiles !== false;
   $("#version").textContent = "v" + ini.version;
   S.icons = (await invoke("list_icons")) || [];
@@ -417,7 +419,13 @@ async function init() {
   $("#update-pill").onclick = () => showUpdateDialog();
   $("#dialog-close").onclick = closeDialog;
   $("#dialog").addEventListener("click", (e) => { if (e.target.id === "dialog" && !S.updating) closeDialog(); });
-  if (ini.show_wizard) setTimeout(() => openWizard(), 300);
+  let reopen = null;
+  try { reopen = JSON.parse(sessionStorage.getItem("hf-reopen") || "null"); sessionStorage.removeItem("hf-reopen"); } catch (_) {}
+  if (reopen) {
+    if (reopen.setSec) S.setSec = reopen.setSec;
+    if (reopen.wizard) setTimeout(() => openWizard(), 300);
+    else if (reopen.sel && reopen.sel.type === "settings") setTimeout(() => select({ type: "settings" }), 50);
+  } else if (ini.show_wizard) setTimeout(() => openWizard(), 300);
   else if (ini.whats_new) setTimeout(() => showWhatsNew(ini.version, ini.whats_new), 400);
   $("#lib-search").oninput = () => buildLibrary();
   document.addEventListener("keydown", onGlobalKey, true);
@@ -509,7 +517,7 @@ function renderPages() {
     const tab = el("div", { class: "page-tab" + (i === S.page ? " active" : "") + (p.folder ? " is-folder" : ""), title: "Double-clic pour renommer" },
       i === S.devicePage ? el("span", { class: "on-device", title: "Page affichée sur le MasterHUB" }) : null,
       p.folder ? el("span", { class: "auto folder-mark", title: "Dossier", html: svgIcon("folder") }) : null,
-      el("span", {}, p.name || `Page ${i + 1}`),
+      p.name ? el("span", { translate: "no" }, p.name) : el("span", {}, `Page ${i + 1}`),
       apps.length ? el("span", { class: "auto", title: "S'affiche toute seule avec : " + apps.join(", "), html: svgIcon("app-window") }) : null,
       i === S.page ? el("span", { class: "opts", title: "Réglages de la page", html: svgIcon("settings"),
         onclick: (e) => { e.stopPropagation(); select({ type: "page" }); } }) : null,

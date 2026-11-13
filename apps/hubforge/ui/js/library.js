@@ -61,7 +61,7 @@ function libItem(it, path) {
   const sw = el("span", { class: "lib-swatch", style: `background:${c}26;color:${libTint(c)}`, html: it.preview ? (it.preview.svg || "") : svgIcon(it.icon) });
   if (it.preview && it.preview.src) sw.append(el("img", { src: it.preview.src, alt: "" }));
   const desc = it.description || LIB_DESC[it.name] || "";
-  const node = el("div", { class: "lib-item", draggable: "true", title: desc ? `${it.name} — ${desc}` : it.name, "data-search": (it.name + " " + path + " " + desc).toLowerCase() },
+  const node = el("div", { class: "lib-item", draggable: "true", title: desc ? `${it.name} — ${desc}` : it.name, "data-search": (it.name + " " + path + " " + desc + " " + tr(it.name) + " " + tr(desc)).toLowerCase() },
     sw, el("span", { class: "lib-text" }, el("span", { class: "lib-name" }, it.name), desc ? el("span", { class: "lib-desc" }, desc) : null));
   const payload = () => {
     const p = clone(it);

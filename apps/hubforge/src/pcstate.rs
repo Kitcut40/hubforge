@@ -24,15 +24,16 @@ pub fn disk(drive: &str) -> Option<(f32, f32)> {
 
 /// Débit en texte court : « 12,4 Mo/s », « 850 Ko/s ».
 pub fn rate_text(bytes_per_s: f64) -> String {
+    let en = crate::i18n::en();
     let fr = |v: f64, unit: &str| {
         let s = if v >= 100.0 { format!("{v:.0}") } else if v >= 10.0 { format!("{v:.1}") } else { format!("{v:.2}") };
-        format!("{} {unit}", s.replace('.', ","))
+        format!("{} {unit}", if en { s } else { s.replace('.', ",") })
     };
     match bytes_per_s {
-        b if b >= 1e9 => fr(b / 1e9, "Go/s"),
-        b if b >= 1e6 => fr(b / 1e6, "Mo/s"),
-        b if b >= 1e3 => fr(b / 1e3, "Ko/s"),
-        b => format!("{} o/s", b.round()),
+        b if b >= 1e9 => fr(b / 1e9, if en { "GB/s" } else { "Go/s" }),
+        b if b >= 1e6 => fr(b / 1e6, if en { "MB/s" } else { "Mo/s" }),
+        b if b >= 1e3 => fr(b / 1e3, if en { "KB/s" } else { "Ko/s" }),
+        b => format!("{} {}", b.round(), if en { "B/s" } else { "o/s" }),
     }
 }
 

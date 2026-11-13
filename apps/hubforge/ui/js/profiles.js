@@ -16,7 +16,7 @@ async function toggleProfileMenu(forceOpen) {
     const on = name === S.profile;
     const item = el("div", { class: "pm-item" + (on ? " on" : ""), title: on ? "Profil actif" : "Passer sur ce profil" },
       el("span", { class: "check" }, on ? "✓" : ""),
-      el("span", { class: "grow" }, name),
+      el("span", { class: "grow", translate: "no" }, name),
       on ? null : el("span", { class: "del", title: "Supprimer ce profil", onclick: async (e) => {
         e.stopPropagation();
         if (!(await confirm_(`Supprimer le profil « ${name} » ? (une copie est gardée dans profiles-supprimes)`))) return;

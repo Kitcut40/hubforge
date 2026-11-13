@@ -4,6 +4,17 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.22.0] — 2026-11-14
+
+### Nouveautés
+- **HubForge en anglais** : choix de la langue dans Réglages › Général, et dès la première page de l'assistant de démarrage.
+  - La langue du système est choisie automatiquement au premier lancement.
+  - Toute l'interface est traduite, ainsi que le texte dessiné sur les touches (jours, mois, météo, micro, réseau…) et le menu de la zone de notification (après un redémarrage).
+  - Les noms que tu choisis (profils, pages, textes des touches) ne sont jamais traduits.
+
+### Interne
+- Traduction de l'interface : `ui/js/i18n.js`, généré par `tools/i18n/build_i18n.py` à partir de dictionnaires français → anglais.
+
 ## [0.21.0] — 2026-11-14
 
 ### Nouveautés

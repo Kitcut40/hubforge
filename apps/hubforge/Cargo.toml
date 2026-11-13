@@ -1,6 +1,6 @@
 [package]
 name = "hubforge"
-version = "0.21.0"
+version = "0.22.0"
 description = "HubForge — logiciel libre pour le Cooler Master MasterHUB"
 edition.workspace = true
 license.workspace = true
@@ -39,6 +39,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Environment",
     "Win32_System_Memory",
     "Win32_System_DataExchange",
+    "Win32_Globalization",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Controls",
     "Win32_Media_Audio",

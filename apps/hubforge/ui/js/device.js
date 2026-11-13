@@ -316,7 +316,7 @@ function applySiteName(k, st) {
 /** Touche créée à partir d'une action de la bibliothèque. */
 function defFromItem(item, k) {
   const def = item.addonKey ? Object.assign({ key: k }, clone(item.addonKey))
-    : { key: k, label: item.label, color: item.color, icon: "builtin:" + item.icon, action: clone(item.action) };
+    : { key: k, label: tr(item.label), color: item.color, icon: "builtin:" + item.icon, action: clone(item.action) };
   if (item.toggle) def.toggle = clone(item.toggle);
   if (item.long) def.long = clone(item.long);
   if (item.widget) { def.widget = item.widget; delete def.icon; }

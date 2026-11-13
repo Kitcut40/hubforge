@@ -37,6 +37,7 @@ function settingsSection(id) {
     out.push(setRow("Affichage", isAdv()
       ? "Mode avancé : tout est visible (macros, variables, conditions, requêtes web, appui long…)."
       : "Mode simple : l'essentiel seulement. Le mode avancé montre aussi les macros, variables et requêtes web.", modeSwitch()));
+    out.push(setRow("Langue", "Language — the interface and the text drawn on the keys.", langSwitch()));
     out.push(setRow("Luminosité des écrans", "Les 15 écrans des touches.", rangeCtl(g.brightness, 0, 100, " %", (v) => { g.brightness = v; changed(); })));
     out.push(setRow("Luminosité des LED", "Base et faders.", rangeCtl(g.led_brightness, 0, 100, " %", (v) => { g.led_brightness = v; changed(); })));
     out.push(setRow("Démarrer avec Windows", "HubForge se lance discrètement dans la zone de notification. Fermer la fenêtre ne coupe pas le MasterHUB.",
@@ -149,6 +150,19 @@ function rangeCtl(value, min, max, unit, onChange) {
   return el("div", { class: "range-row", style: "width:260px" }, r, val);
 }
 
+// --- Langue ---
+function langSwitch() {
+  const b = (lang, label) => el("button", { class: "seg-btn" + (S.lang === lang ? " on" : ""), translate: "no", onclick: () => setLang(lang) }, label);
+  return el("div", { class: "seg", translate: "no" }, b("fr", "Français"), b("en", "English"));
+}
+async function setLang(lang) {
+  if (lang === S.lang) return;
+  try { await invoke("set_lang", { lang }); } catch (e) { toast(String(e), true); return; }
+  // L'interface se recharge dans la nouvelle langue et rouvre le même écran.
+  try { sessionStorage.setItem("hf-reopen", JSON.stringify({ sel: S.sel, setSec: S.setSec, wizard: !!document.querySelector("#wizard:not(.hidden)") })); } catch (_) {}
+  location.reload();
+}
+
 // --- Mode simple / avancé ---
 function modeSwitch() {
   const b = (mode, label) => el("button", { class: "seg-btn" + (S.uiMode === mode ? " on" : ""), onclick: () => setUiMode(mode) }, label);
@@ -191,7 +205,7 @@ function starterPages(st) {
     const item = typeof k === "string" ? libItemByName(k) : Object.assign({ name: k.label }, k);
     if (item) keys.push(clean(defFromItem(item, i + 1)));
   });
-  return [{ name: "Accueil", keys }];
+  return [{ name: tr("Accueil"), keys }];
 }
 
 function openWizard() {
@@ -227,7 +241,8 @@ function openWizard() {
         el("div", { class: "wz-detect" + (found.length ? " ok" : "") }, found.length
           ? `Branché : base${found.length ? ", " + found.join(", ") : ""}.`
           : "Aucun module détecté pour l'instant : tu peux quand même tout préparer, ils seront reconnus dès qu'ils seront branchés."),
-        el("p", { class: "hint" }, "Quatre petites questions, et c'est parti. Tout se change ensuite dans les réglages."));
+        el("p", { class: "hint" }, "Quatre petites questions, et c'est parti. Tout se change ensuite dans les réglages."),
+        el("div", { class: "row", style: "gap:10px;align-items:center;margin-top:14px" }, el("span", { class: "hint", style: "margin:0" }, "Langue / Language"), langSwitch()));
     } else if (s === 1) {
       const card = (mode, t, d) => el("div", { class: "wz-card" + (W.mode === mode ? " on" : ""), onclick: () => { W.mode = mode; draw(); } }, el("b", {}, t), el("span", {}, d));
       body.append(el("h2", {}, "Comment veux-tu voir HubForge ?"),
@@ -264,7 +279,7 @@ function openWizard() {
           if (W.mode !== S.uiMode) await setUiMode(W.mode, true);
           const st = STARTERS.find((x) => x.id === W.starter);
           if (st.keys) {
-            const name = await invoke("create_starter_profile", { name: st.name, pages: starterPages(st), theme: W.theme, faders: st.faders });
+            const name = await invoke("create_starter_profile", { name: tr(st.name), pages: starterPages(st), theme: W.theme, faders: st.faders });
             toast(`Profil « ${name} » créé.`);
           } else if ((S.cfg.general.theme || "graphite") !== W.theme) {
             S.cfg.general.theme = W.theme; rethemed();

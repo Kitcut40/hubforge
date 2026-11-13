@@ -64,9 +64,9 @@ pub fn set_city(city: &str) {
 /// Météo de la ville des réglages, ou un message (« Choisis ta ville… »).
 /// Démarre la mise à jour en arrière-plan au premier appel.
 pub fn get() -> Result<Weather, String> {
-    let Ok(mut s) = shared().lock() else { return Err("Météo indisponible".into()) };
+    let Ok(mut s) = shared().lock() else { return Err(crate::i18n::t("Météo indisponible", "Weather unavailable").into()) };
     if s.city.is_empty() {
-        return Err("Choisis ta ville dans les réglages".into());
+        return Err(crate::i18n::t("Choisis ta ville dans les réglages", "Choose your city in the settings").into());
     }
     if !s.started {
         s.started = true;
@@ -75,7 +75,7 @@ pub fn get() -> Result<Weather, String> {
     match (&s.data, &s.error) {
         (Some((c, w)), _) if *c == s.city => Ok(w.clone()),
         (_, Some(e)) => Err(e.clone()),
-        _ => Err("Chargement…".into()),
+        _ => Err(crate::i18n::t("Chargement…", "Loading…").into()),
     }
 }
 
@@ -238,14 +238,14 @@ pub fn sky(code: u8) -> Sky {
 
 pub fn sky_name(code: u8) -> &'static str {
     match sky(code) {
-        Sky::Clear => "Ensoleillé",
-        Sky::Partly => "Éclaircies",
-        Sky::Cloudy => "Couvert",
-        Sky::Fog => "Brouillard",
-        Sky::Drizzle => "Bruine",
-        Sky::Rain => "Pluie",
-        Sky::Snow => "Neige",
-        Sky::Storm => "Orage",
+        Sky::Clear => crate::i18n::t("Ensoleillé", "Sunny"),
+        Sky::Partly => crate::i18n::t("Éclaircies", "Partly cloudy"),
+        Sky::Cloudy => crate::i18n::t("Couvert", "Cloudy"),
+        Sky::Fog => crate::i18n::t("Brouillard", "Fog"),
+        Sky::Drizzle => crate::i18n::t("Bruine", "Drizzle"),
+        Sky::Rain => crate::i18n::t("Pluie", "Rain"),
+        Sky::Snow => crate::i18n::t("Neige", "Snow"),
+        Sky::Storm => crate::i18n::t("Orage", "Storm"),
     }
 }
 

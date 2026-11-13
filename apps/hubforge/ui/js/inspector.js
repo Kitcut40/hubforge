@@ -46,9 +46,9 @@ function closeBtn() {
 }
 
 /** En-tête d'un panneau : titre, sous-titre et bouton de fermeture. */
-function title(text, sub, lead) {
+function title(text, sub, lead, userText) {
   return el("div", { class: "insp-head" }, lead || null,
-    el("div", { class: "insp-head-text" }, el("h3", {}, text), sub ? el("span", { class: "sub" }, sub) : null),
+    el("div", { class: "insp-head-text" }, el("h3", userText ? { translate: "no" } : {}, text), sub ? el("span", { class: "sub" }, sub) : null),
     closeBtn());
 }
 
@@ -78,8 +78,9 @@ function keyInspector(k) {
   const pageName = currentPage().name || `Page ${S.page + 1}`;
   const preview = el("div", { class: "insp-preview", id: "insp-preview" });
   setTimeout(renderKeyPreviewInInspector);
-  const name = def ? ((def.label || "").replace(/\{[^}]*\}/g, "").trim() || (def.widget ? (WIDGETS.find(([v]) => v === def.widget) || [0, "Touche vivante"])[1] : `Touche ${k}`)) : `Touche ${k}`;
-  const out = [title(name, `Touche ${k} · ${pageName}`, preview)];
+  const userLabel = def ? (def.label || "").replace(/\{[^}]*\}/g, "").trim() : "";
+  const name = userLabel || (def && def.widget ? (WIDGETS.find(([v]) => v === def.widget) || [0, "Touche vivante"])[1] : `Touche ${k}`);
+  const out = [title(name, `Touche ${k} · ${pageName}`, preview, !!userLabel)];
   if (!def) {
     out.push(el("div", { class: "insp-empty" },
       el("p", {}, "Cette touche est libre."),

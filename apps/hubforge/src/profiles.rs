@@ -45,6 +45,8 @@ pub struct Settings {
     pub onboarded: bool,
     /// Mode dynamique (changement de profil selon l'application) ; None = activé.
     pub auto_profiles: Option<bool>,
+    /// Langue : "fr", "en" ; vide = celle du système.
+    pub lang: String,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.
@@ -171,7 +173,7 @@ pub fn blank_config() -> Config {
         faders,
         rollers: Rollers::default(),
         pages: vec![Page {
-            name: "Accueil".into(),
+            name: crate::i18n::t("Accueil", "Home").into(),
             apps: Vec::new(),
             folder: false,
             close_after: false,

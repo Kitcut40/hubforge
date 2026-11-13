@@ -18,6 +18,7 @@ mod anims;
 mod appicon;
 mod audio;
 mod clip;
+mod i18n;
 mod connect;
 mod autostart;
 mod backups;
@@ -153,6 +154,7 @@ fn main() {
     }
 
     logging::init(&dir);
+    i18n::set(&i18n::resolve(&profiles::load_settings(&dir).lang));
     let hidden = args.iter().any(|a| a == "--hidden");
     let addon_to_install = addon_argument();
 
@@ -233,6 +235,7 @@ fn main() {
             ui::test_http,
             ui::set_ui_mode,
             ui::set_auto_profiles,
+            ui::set_lang,
             ui::finish_wizard,
             ui::create_starter_profile,
             ui::get_diagnostic,
@@ -348,16 +351,16 @@ fn main() {
                 }
 
                 // --- Icône près de l'horloge ---
-                let open = MenuItem::with_id(app, "open", "Ouvrir HubForge", true, None::<&str>)?;
+                let open = MenuItem::with_id(app, "open", i18n::t("Ouvrir HubForge", "Open HubForge"), true, None::<&str>)?;
                 let auto = CheckMenuItem::with_id(
                     app,
                     "autostart",
-                    "Démarrer avec Windows",
+                    i18n::t("Démarrer avec Windows", "Start with Windows"),
                     cfg!(windows),
                     autostart::is_enabled(),
                     None::<&str>,
                 )?;
-                let quit = MenuItem::with_id(app, "quit", "Quitter HubForge", true, None::<&str>)?;
+                let quit = MenuItem::with_id(app, "quit", i18n::t("Quitter HubForge", "Quit HubForge"), true, None::<&str>)?;
                 let sep = PredefinedMenuItem::separator(app)?;
                 let menu = Menu::with_items(app, &[&open, &auto, &sep, &quit])?;
                 let auto_item = auto.clone();

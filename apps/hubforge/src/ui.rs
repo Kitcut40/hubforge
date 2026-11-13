@@ -133,6 +133,8 @@ pub struct Initial {
     show_wizard: bool,
     /// Mode dynamique (profil selon l'application) activé.
     auto_profiles: bool,
+    /// Langue de l'interface : "fr" ou "en".
+    lang: String,
 }
 
 #[derive(Serialize)]
@@ -172,7 +174,21 @@ pub fn get_initial(state: State<AppState>) -> Result<Initial, String> {
         ui_mode,
         show_wizard,
         auto_profiles: settings.auto_profiles.unwrap_or(true),
+        lang: crate::i18n::resolve(&settings.lang),
     })
+}
+
+#[tauri::command]
+pub fn set_lang(state: State<AppState>, lang: String) -> Result<(), String> {
+    if !crate::i18n::LANGS.contains(&lang.as_str()) {
+        return Err(format!("langue inconnue « {lang} »"));
+    }
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.lang = lang.clone();
+    profiles::save_settings(&state.cfg_dir, &st);
+    crate::i18n::set(&lang);
+    let _ = state.engine.lock().unwrap().send(EngineMsg::Redraw);
+    Ok(())
 }
 
 #[tauri::command]
