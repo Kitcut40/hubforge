@@ -29,6 +29,7 @@
       <span class="brand-version" id="version"></span>
     </div>
 
+    <div class="topbar-spacer"></div>
     <div class="profile-wrap">
       <button class="profile-btn" id="profile-btn" title="Profil : une configuration complète du MasterHUB (touches, faders, molettes, LED)">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
@@ -38,11 +39,10 @@
       <div class="profile-menu hidden" id="profile-menu"></div>
     </div>
 
-    <nav class="pages" id="pages" aria-label="Pages"></nav>
+    <div class="topbar-spacer"></div>
 
     <div class="topbar-right">
       <button class="update-pill hidden" id="update-pill" title="Une nouvelle version de HubForge est disponible">Mise à jour</button>
-      <div class="modules" id="modules" title="Modules connectés"></div>
       <div class="undo-group">
         <button class="icon-btn small" id="btn-undo" title="Annuler (Ctrl+Z)" disabled>
           <svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
@@ -52,6 +52,7 @@
         </button>
       </div>
       <div class="save-state" id="save-state"><span class="dot"></span><span class="label">Enregistré</span></div>
+      <button class="status-pill" id="modules" title="Modules connectés"></button>
       <button class="icon-btn" id="btn-addons" title="Addons">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.4 4.6a2 2 0 1 0-3.4 1.4H8v4a2 2 0 1 1 0 4v4h4a2 2 0 1 0 4 0h4v-4a2 2 0 1 1 0-4V6h-4a2 2 0 0 0-.6-1.4z"/></svg>
       </button>
@@ -67,20 +68,26 @@
     <aside class="library">
       <div class="library-head">
         <h2>Actions</h2>
-        <input type="search" class="input" id="lib-search" placeholder="Rechercher…" autocomplete="off" />
+        <p class="library-sub">Glisse une action sur une touche.</p>
+        <label class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
+          <input type="search" id="lib-search" placeholder="Rechercher" autocomplete="off" aria-label="Rechercher une action" />
+        </label>
+        <div class="lib-groups" id="lib-groups"></div>
       </div>
       <div class="library-list" id="library"></div>
-      <p class="library-hint">Glisse une action sur une touche.</p>
     </aside>
 
     <section class="stage">
+      <nav class="pages" id="pages" aria-label="Pages"></nav>
       <div class="device" id="device">
         <div class="base" id="base"></div>
       </div>
-      <p class="stage-hint">Les modules sont affichés à leur vraie place sur la base · clique sur une touche, un fader, une molette ou la base pour la régler · glisse une touche sur une autre pour les échanger, ou hors du MasterHUB pour la supprimer · dépose une image ou un GIF sur une touche.</p>
+      <p class="stage-hint">Clique sur une touche, un fader ou une molette pour le régler.</p>
     </section>
 
     <aside class="inspector" id="inspector"></aside>
+    <div class="settings-page" id="settings-page"></div>
   </main>
 
   <div class="modal hidden" id="modal">
@@ -140,6 +147,17 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="app.js"></script>
+  <script src="js/mock.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/device.js"></script>
+  <script src="js/inspector.js"></script>
+  <script src="js/modules.js"></script>
+  <script src="js/addons.js"></script>
+  <script src="js/lights.js"></script>
+  <script src="js/profiles.js"></script>
+  <script src="js/fun.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/library.js"></script>
+  <script src="js/main.js"></script>
 </body>
 </html>

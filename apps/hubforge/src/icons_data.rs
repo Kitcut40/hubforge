@@ -2,6 +2,10 @@
 //! Fichier généré : liste des icônes disponibles pour les touches.
 
 pub const ICONS: &[(&str, &str)] = &[
+    ("layout-grid", include_str!("../../../assets/icons/lucide/layout-grid.svg")),
+    ("chevron-left", include_str!("../../../assets/icons/lucide/chevron-left.svg")),
+    ("info", include_str!("../../../assets/icons/lucide/info.svg")),
+    ("sliders-horizontal", include_str!("../../../assets/icons/lucide/sliders-horizontal.svg")),
     ("wand-sparkles", include_str!("../../../assets/icons/lucide/wand-sparkles.svg")),
     ("file-text", include_str!("../../../assets/icons/lucide/file-text.svg")),
     ("briefcase", include_str!("../../../assets/icons/lucide/briefcase.svg")),

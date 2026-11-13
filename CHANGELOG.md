@@ -4,6 +4,20 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.20.0] — 2026-11-13
+
+### Nouveautés
+- **Nouvelle interface**, plus aérée et plus lisible :
+  - **Barre du haut épurée** : le profil au centre, l'état du MasterHUB d'un coup d'œil (« MasterHUB connecté », clic = diagnostic), les réglages.
+  - **Le MasterHUB au centre**, mis en valeur. Les onglets de pages sont juste au-dessus.
+  - **Actions à gauche** : une recherche, des pastilles par famille (Clavier, Applis, Son, Vivantes, IA et web, Système, Addons), et une ligne d'explication sous les actions courantes.
+  - **Le panneau de droite n'apparaît que quand il sert** : clic sur une touche, un fader, une molette ou une page. Il se ferme avec la croix ou Échap.
+  - **Touche** : deux onglets, « Action » et « Apparence », avec l'aperçu en en-tête et Copier / Coller / Vider toujours en bas.
+  - **Réglages en pleine page**, rangés par sections : Général, Apparence, Son, Météo et IA, Veille, Avancé, Mises à jour, À propos. Chaque réglage est expliqué en une ligne.
+
+### Interne
+- Le code de l'interface est découpé en fichiers par thème (bibliothèque, éditeurs, réglages, profils…) au lieu d'un seul fichier de 3 500 lignes.
+
 ## [0.19.0] — 2026-11-13
 
 ### Nouveautés
