@@ -32,7 +32,7 @@ function renderInspector() {
   if (t === "settings") { renderSettingsPage(); return; }
   if (t === "none") return;
   if (t === "key") { box.append(...keyInspector(S.sel.key)); return; }
-  const make = { fader: () => faderInspector(S.sel.index), rollers: rollersInspector, page: pageInspector, base: baseInspector, addons: addonsInspector, lights: lightsInspector }[t];
+  const make = { profile: profileInspector, fader: () => faderInspector(S.sel.index), rollers: rollersInspector, page: pageInspector, base: baseInspector, addons: addonsInspector, lights: lightsInspector }[t];
   if (!make) return;
   const items = make().filter(Boolean);
   const head = items.length && items[0].classList && items[0].classList.contains("insp-head") ? items.shift() : null;
@@ -110,6 +110,7 @@ function keyInspector(k) {
       ? "Action lancée quand la touche est dans l'état 1 ; elle passe ensuite à l'état 2."
       : "Action lancée quand la touche est dans l'état 2 ; elle revient ensuite à l'état 1."));
     body.push(...actionEditor(st, k, () => keyChanged(k)));
+    body.push(...keyOptions(def, st, k));
     body.push(el("div", { class: "sep" }));
     body.push(switchRow("Touche à 2 états", !!def.toggle, (v) => {
       if (v) def.toggle = { label: (def.label || "") + " (2)", icon: def.icon, color: "#FF7A1A", text_color: def.text_color, action: clone(def.action || { type: "none" }) };
@@ -208,6 +209,39 @@ function keyInspector(k) {
       if (!(await confirm_(`Vider la touche ${k} ?`))) return;
       setKeyDef(k, null); delete S.previews[`${S.page}:${k}:0`]; delete S.previews[`${S.page}:${k}:1`]; updateKeyNode(k); changed(); renderInspector();
     } }, "Vider")));
+  return out;
+}
+
+/** Options d'une touche : fermer l'appli lancée, confirmation, répétition. */
+function keyOptions(def, st, k) {
+  const out = [];
+  const a = st.action || {};
+  // Touche « Lancer » d'un programme : point vert et appui long pour le fermer.
+  const exe = a.type === "launch" && /\.exe"?\s*$/i.test(a.target || "") && !/:\/\//.test(a.target || "")
+    ? (a.target || "").trim().replace(/^"|"$/g, "").split(/[\\/]/).pop().toLowerCase() : null;
+  if (exe && S.editState === 0) {
+    const cur = def.long && def.long.type === "close_app" ? (def.long.force ? "force" : "close") : def.long ? "custom" : "none";
+    if (cur !== "custom") {
+      out.push(field("Appui long", el("select", { class: "input", onchange: (e) => {
+        const v = e.target.value;
+        if (v === "none") delete def.long; else def.long = { type: "close_app", target: exe, ...(v === "force" ? { force: true } : {}) };
+        keyChanged(k, { immediate: true }); renderInspector();
+      } }, ...[["none", "Rien"], ["close", `Fermer ${exe}`], ["force", `Forcer la fermeture de ${exe}`]]
+        .map(([v, l]) => el("option", { value: v, selected: v === cur }, l))),
+        el("p", { class: "hint" }, "Un point vert s'affiche sur la touche quand l'application est ouverte.")));
+    } else {
+      out.push(el("p", { class: "hint" }, "Un point vert s'affiche sur la touche quand l'application est ouverte."));
+    }
+  }
+  if (S.editState === 0) {
+    out.push(switchRow("Demander une confirmation", !!def.confirm, (v) => {
+      if (v) def.confirm = true; else delete def.confirm; keyChanged(k);
+    }, "Il faut appuyer deux fois (la touche s'entoure de jaune) : pour « Arrêter le stream », « Éteindre le PC »…"));
+    const canRepeat = ["hotkey", "text", "media", "var"].includes(a.type) && !def.toggle && !def.long && !def.double;
+    if (canRepeat || def.repeat) out.push(switchRow("Répéter tant que la touche est enfoncée", !!def.repeat, (v) => {
+      if (v) def.repeat = true; else delete def.repeat; keyChanged(k);
+    }, "Pratique pour le volume, le zoom ou faire défiler."));
+  }
   return out;
 }
 
@@ -325,6 +359,7 @@ const ACTION_DEFAULTS = {
   var: { type: "var", name: "compteur", op: "add", value: "1" },
   if: { type: "if", left: "", cmp: "==", right: "", then: [], else: [] },
   ai: { type: "ai", preset: "fix", output: "replace" },
+  close_app: { type: "close_app", target: "" },
   http: { type: "http", method: "GET", url: "https://" },
 };
 
@@ -348,6 +383,7 @@ function stepSummary(a) {
     case "text": return a.text ? `Taper « ${a.text.length > 24 ? a.text.slice(0, 24) + "…" : a.text} »` : "Taper un texte";
     case "launch": return a.target ? `Ouvrir ${a.target.split(/[\\/]/).pop()}` : "Ouvrir…";
     case "media": return (MEDIA[a.command] || [a.command])[0];
+    case "close_app": return `Fermer ${(a.target || "une appli").replace(/\.exe$/i, "")}`;
     case "app_mute": return `Couper ${(a.app || "une appli").split(",")[0].replace(/\.exe$/, "")}`;
     case "audio_output": {
       const d = (a.devices || "").split("|").filter(Boolean);
@@ -503,6 +539,11 @@ function actionEditor(st, k, onChange, opts = {}) {
     out.push(field("Effet", el("select", { class: "input", onchange: (e) => upd((x) => { x.op = e.target.value; }) },
       ...[["toggle", "Démarrer / mettre en pause"], ["reset", "Remettre à zéro"]].map(([v, l]) => el("option", { value: v, selected: v === (a.op || "toggle") }, l))),
       el("p", { class: "hint" }, "Agit sur le minuteur de cette touche (touche vivante « Minuteur »). Astuce : mets « Remettre à zéro » en appui long.")));
+  } else if (t === "close_app") {
+    out.push(field("Application", el("input", { class: "input", value: a.target || "", spellcheck: "false", placeholder: "ex. discord.exe",
+      onchange: (e) => upd((x) => { x.target = exeList(e.target.value).split(",")[0] || ""; }) })));
+    out.push(switchRow("Forcer la fermeture", !!a.force, (v) => upd((x) => { if (v) x.force = true; else delete x.force; }),
+      "Ferme même si l'application ne répond plus. Attention : un travail non enregistré est perdu."));
   } else if (t === "app_mute") {
     out.push(field("Applications", el("input", { class: "input", value: a.app || "", spellcheck: "false", placeholder: "ex. discord.exe, spotify.exe",
       onchange: (e) => upd((x) => { x.app = exeList(e.target.value); }) }),

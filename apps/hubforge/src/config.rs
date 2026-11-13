@@ -64,6 +64,16 @@ pub struct General {
     /// Écrire chaque variable dans un fichier texte (dossier `variables/`),
     /// par exemple pour l'afficher dans OBS.
     pub vars_files: bool,
+    /// Mode nuit : écrans et LED moins lumineux entre `night_from` et `night_to` (heures).
+    pub night_dim: bool,
+    pub night_from: u8,
+    pub night_to: u8,
+    /// Luminosité la nuit, en % de la luminosité normale.
+    pub night_level: u8,
+    /// Mode dynamique : ce profil s'active tout seul quand une de ces
+    /// applications passe au premier plan (« fusion360.exe »…).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub profile_apps: Vec<String>,
 }
 
 impl Default for General {
@@ -87,6 +97,11 @@ impl Default for General {
             sleep_after: 0,
             sleep_locked: true,
             vars_files: false,
+            night_dim: false,
+            night_from: 22,
+            night_to: 7,
+            night_level: 30,
+            profile_apps: Vec::new(),
         }
     }
 }
@@ -267,6 +282,13 @@ pub struct KeyDef {
     /// "classic"). None = celui de la page, sinon celui du profil.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
+    /// Demande un second appui (dans les 3 secondes) avant d'agir : pour les
+    /// actions qu'on ne veut pas lancer par erreur.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub confirm: bool,
+    /// Répète l'action tant que la touche reste enfoncée (volume, défilement…).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub repeat: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -302,6 +324,8 @@ impl KeyDef {
                 long: self.long.clone(),
                 double: self.double.clone(),
                 theme: self.theme.clone(),
+                confirm: self.confirm,
+                repeat: self.repeat,
             },
             _ => KeyDef { toggle: None, ..self.clone() },
         }
@@ -337,6 +361,12 @@ pub enum Action {
         target: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
+    },
+    /// Fermer une application (« discord.exe »), proprement ou de force.
+    CloseApp {
+        target: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        force: bool,
     },
     /// Commande multimédia : play_pause, next, previous, stop, mute,
     /// volume_up, volume_down, mic_mute
@@ -548,6 +578,13 @@ pub fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
                 return Err(format!("condition trop longue (maximum {MACRO_MAX_STEPS} étapes)"));
             }
             then_steps.iter().chain(else_steps).try_for_each(|s| validate_action(s, depth + 1))
+        }
+        Action::CloseApp { target, .. } => {
+            let t = crate::foreground::normalize(target);
+            if t.is_empty() || t.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+                return Err(format!("application à fermer invalide « {target} » (ex. discord.exe)"));
+            }
+            Ok(())
         }
         Action::Http { method, url, save_to, .. } => {
             if !HTTP_METHODS.contains(&method.to_uppercase().as_str()) {
@@ -1215,5 +1252,48 @@ double = { type = "media", command = "next" }
         assert!(!text.contains("faders_mode") && !text.contains("[lights.game]"));
         let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(back.faders[0].led, "position");
+    }
+}
+#[cfg(test)]
+mod tests_021 {
+    use super::*;
+
+    #[test]
+    fn new_key_options_and_close_app() {
+        let t = r#"
+[general]
+night_dim = true
+night_from = 23
+profile_apps = ["Fusion360.exe"]
+
+[[pages]]
+name = "P"
+[[pages.keys]]
+key = 1
+label = "Stop"
+confirm = true
+action = { type = "hotkey", keys = "ctrl+q" }
+[[pages.keys]]
+key = 2
+repeat = true
+action = { type = "media", command = "volume_up" }
+long = { type = "close_app", target = "C:\\Apps\\Discord.exe", force = true }
+"#;
+        let cfg: Config = toml::from_str(t).unwrap();
+        validate(&cfg).unwrap();
+        assert!(cfg.general.night_dim && cfg.general.night_from == 23 && cfg.general.night_to == 7);
+        assert_eq!(cfg.general.profile_apps, vec!["Fusion360.exe".to_string()]);
+        assert!(cfg.pages[0].keys[0].confirm && !cfg.pages[0].keys[0].repeat);
+        assert!(cfg.pages[0].keys[1].repeat);
+        // Les options désactivées ne sont pas écrites.
+        let out = toml::to_string(&cfg).unwrap();
+        assert_eq!(out.matches("confirm").count(), 1);
+        let back: Config = toml::from_str(&out).unwrap();
+        assert_eq!(back.pages[0].keys[1].long, cfg.pages[0].keys[1].long);
+        let bad = Action::CloseApp { target: "a*b".into(), force: false };
+        assert!(validate_action(&bad, 0).is_err());
+        assert_eq!(crate::foreground::exe_of_target("C:\\Jeux\\Steam.EXE").as_deref(), Some("steam.exe"));
+        assert_eq!(crate::foreground::exe_of_target("https://youtube.com"), None);
+        assert_eq!(crate::foreground::exe_of_target("C:\\raccourci.lnk"), None);
     }
 }

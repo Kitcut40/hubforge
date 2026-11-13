@@ -31,6 +31,7 @@ async function toggleProfileMenu(forceOpen) {
   m.append(action("+ Nouveau profil vierge…", () => newProfile(null)));
   m.append(action("⧉ Dupliquer « " + (S.profile || "") + " »…", () => newProfile(S.profile)));
   m.append(action("✎ Renommer « " + (S.profile || "") + " »…", renameProfile));
+  m.append(action("⚡ Applications de « " + (S.profile || "") + " » (mode dynamique)…", () => select({ type: "profile" })));
   m.append(el("div", { class: "pm-sep" }));
   m.append(action("⇪ Exporter « " + (S.profile || "") + " » dans un fichier…", exportProfile));
   m.append(action("⇩ Importer un profil ou un pack d'icônes…", importProfile));

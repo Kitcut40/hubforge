@@ -542,6 +542,8 @@ mod tests {
             long: None,
             double: None,
             theme: None,
+            confirm: false,
+            repeat: false,
         }
     }
 
@@ -637,6 +639,38 @@ pub fn with_border(jpeg: &[u8], color: [u8; 3]) -> Vec<u8> {
         for x in 0..w {
             if x < t || y < t || x >= w - t || y >= h - t {
                 img.put_pixel(x, y, Rgb(color));
+            }
+        }
+    }
+    encode_jpeg(&img, 90)
+}
+
+/// La même image avec un point vert dans le coin en haut à droite
+/// (application ouverte). `rot` : rotation appliquée aux images des touches,
+/// pour que le point reste en haut à droite pour l'utilisateur.
+pub fn with_dot(jpeg: &[u8], rot: u16) -> Vec<u8> {
+    let Ok(img) = image::load_from_memory(jpeg) else { return jpeg.to_vec() };
+    let mut img = img.to_rgb8();
+    let (w, h) = img.dimensions();
+    let r = (w.min(h) as f32 * 0.075).max(3.0);
+    let m = r + (w.min(h) as f32 * 0.07);
+    // Centre du point dans l'image telle qu'on la voit (avant rotation).
+    let (lx, ly) = (w as f32 - 1.0 - m, m);
+    // Même transformation que rotate_frame.
+    let (cx, cy) = match rot {
+        90 => (ly, w as f32 - 1.0 - lx),
+        180 => (w as f32 - 1.0 - lx, h as f32 - 1.0 - ly),
+        270 => (h as f32 - 1.0 - ly, lx),
+        _ => (lx, ly),
+    };
+    let ring = r + 1.6;
+    for y in 0..h {
+        for x in 0..w {
+            let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+            if d <= r {
+                img.put_pixel(x, y, Rgb([52, 211, 120]));
+            } else if d <= ring {
+                img.put_pixel(x, y, Rgb([10, 12, 14]));
             }
         }
     }

@@ -18,7 +18,7 @@ use crate::profiles::{self, SharedActive};
 use crate::topology::{self, Placement};
 use hubforge_device::{protocol, Command, DeviceManager, Event, Kind, Wheel, FADER_COUNT, KEY_COUNT};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -72,6 +72,13 @@ enum JobOut {
 const MARK_BUSY: [u8; 3] = [255, 166, 0];
 const MARK_OK: [u8; 3] = [48, 209, 88];
 const MARK_ERR: [u8; 3] = [255, 59, 48];
+/// Liseré « appuie encore pour confirmer ».
+const MARK_CONFIRM: [u8; 3] = [255, 214, 10];
+/// Délai pour confirmer une action sensible.
+const CONFIRM_WINDOW: Duration = Duration::from_secs(3);
+/// Répétition tant que la touche est enfoncée : premier délai, puis cadence.
+const REPEAT_FIRST: Duration = Duration::from_millis(400);
+const REPEAT_EVERY: Duration = Duration::from_millis(90);
 
 /// Minuteur d'une touche (chronomètre ou compte à rebours).
 #[derive(Debug, Clone, Copy, Default)]
@@ -283,6 +290,21 @@ pub struct Engine {
     marks: HashMap<u8, (usize, [u8; 3], Instant)>,
     /// Ancien contenu du presse-papiers à remettre après un collage de l'IA.
     clip_restore: Option<(String, Instant)>,
+    /// Action sensible en attente de confirmation : (page, touche, fin).
+    confirm_pending: Option<(usize, u8, Instant)>,
+    /// Touche qui répète son action : (page, touche, prochaine répétition).
+    repeating: Option<(usize, u8, Instant)>,
+    /// Mode nuit en cours (luminosité réduite).
+    night: bool,
+    /// Touches « Lancer » dont l'application est ouverte (point vert).
+    run_dots: HashSet<u8>,
+    run_check: Instant,
+    /// Mode dynamique : applications de chaque profil, et profil d'avant.
+    profile_apps: Vec<(String, Vec<String>)>,
+    profile_mtimes: HashMap<String, std::time::SystemTime>,
+    profiles_check: Instant,
+    auto_profiles: bool,
+    auto_profile_from: Option<String>,
 }
 
 fn kind_id(k: Kind) -> &'static str {
@@ -369,6 +391,16 @@ impl Engine {
             job_rx,
             marks: HashMap::new(),
             clip_restore: None,
+            confirm_pending: None,
+            repeating: None,
+            night: false,
+            run_dots: HashSet::new(),
+            run_check: Instant::now(),
+            profile_apps: Vec::new(),
+            profile_mtimes: HashMap::new(),
+            profiles_check: Instant::now() - Duration::from_secs(60),
+            auto_profiles: true,
+            auto_profile_from: None,
         };
         e.sync_fader_targets();
         crate::weather::set_city(&e.cfg.general.weather_city);
@@ -449,7 +481,17 @@ impl Engine {
             if self.sleep_check.elapsed() >= Duration::from_secs(1) {
                 self.sleep_check = Instant::now();
                 self.check_sleep();
+                self.check_night();
             }
+            if self.run_check.elapsed() >= Duration::from_secs(2) {
+                self.run_check = Instant::now();
+                self.check_running_apps();
+            }
+            if self.profiles_check.elapsed() >= Duration::from_secs(5) {
+                self.profiles_check = Instant::now();
+                self.load_profile_apps();
+            }
+            self.tick_repeat();
             if self.doom.is_some() {
                 self.tick_doom();
             } else if self.game.is_some() {
@@ -458,6 +500,7 @@ impl Engine {
                 self.update_widgets(false);
             }
             let busy_lights = !self.marks.is_empty()
+                || self.repeating.is_some()
                 || self.clip_restore.is_some()
                 || self.preview.is_some()
                 || self.base_soft
@@ -802,7 +845,53 @@ impl Engine {
         if self.asleep {
             0
         } else {
-            self.cfg.general.led_brightness
+            self.dimmed(self.cfg.general.led_brightness)
+        }
+    }
+
+    /// Luminosité des écrans des touches (0 en veille, réduite la nuit).
+    fn screen_level(&self) -> u8 {
+        if self.asleep {
+            0
+        } else {
+            self.dimmed(self.cfg.general.brightness)
+        }
+    }
+
+    fn dimmed(&self, level: u8) -> u8 {
+        if self.night {
+            let pct = self.cfg.general.night_level.clamp(5, 100) as u32;
+            ((level as u32 * pct + 50) / 100).max(1).min(100) as u8
+        } else {
+            level
+        }
+    }
+
+    /// Mode nuit : entre l'heure de début et l'heure de fin (qui peut être le lendemain).
+    fn check_night(&mut self) {
+        let g = &self.cfg.general;
+        let want = g.night_dim && {
+            let h = widgets::local_time().hour as u8;
+            let (from, to) = (g.night_from.min(23), g.night_to.min(23));
+            if from == to {
+                false
+            } else if from < to {
+                h >= from && h < to
+            } else {
+                h >= from || h < to
+            }
+        };
+        if want != self.night {
+            log::info!("{}", if want { "mode nuit : luminosité réduite" } else { "fin du mode nuit" });
+            self.night = want;
+            let serials: Vec<(String, Kind)> = self.modules.iter().map(|(s, k)| (s.clone(), *k)).collect();
+            for (s, k) in serials {
+                if k == Kind::Keys15 {
+                    self.mgr.send(&s, Command::Feature(protocol::keys15_brightness(self.screen_level())));
+                } else {
+                    self.setup_module(&s, k);
+                }
+            }
         }
     }
 
@@ -857,7 +946,7 @@ impl Engine {
         match kind {
             Kind::Keys15 => {
                 self.mgr.send(serial, Command::Feature(protocol::keys15_sw_mode(true)));
-                self.mgr.send(serial, Command::Feature(protocol::keys15_brightness(if self.asleep { 0 } else { g.brightness })));
+                self.mgr.send(serial, Command::Feature(protocol::keys15_brightness(self.screen_level())));
                 self.show_page();
             }
             Kind::Faders5 => {
@@ -960,7 +1049,46 @@ impl Engine {
         if self.doom.is_some() {
             return;
         }
+        if self.run_dots.contains(&key) && self.game.is_none() {
+            let dotted = Arc::new(render::with_dot(jpeg, self.keys_rot));
+            self.send_image_raw(key, &dotted);
+            return;
+        }
         self.send_image_raw(key, jpeg);
+    }
+
+    /// Point vert sur les touches « Lancer » dont l'application est ouverte.
+    fn check_running_apps(&mut self) {
+        if self.game.is_some() || self.doom.is_some() {
+            return;
+        }
+        let Some(page) = self.cfg.pages.get(self.page) else { return };
+        let targets: Vec<(u8, String)> = page
+            .keys
+            .iter()
+            .filter(|d| d.toggle.is_none() && d.widget.is_none())
+            .filter_map(|d| match &d.action {
+                Action::Launch { target, .. } => foreground::exe_of_target(target).map(|e| (d.key.saturating_sub(1), e)),
+                _ => None,
+            })
+            .filter(|(k, _)| (*k as usize) < KEY_COUNT)
+            .collect();
+        let want: HashSet<u8> = if targets.is_empty() {
+            HashSet::new()
+        } else {
+            let running: HashSet<String> = foreground::running_apps().into_iter().collect();
+            targets.into_iter().filter(|(_, e)| running.contains(e)).map(|(k, _)| k).collect()
+        };
+        if want == self.run_dots {
+            return;
+        }
+        let changed: Vec<u8> = want.symmetric_difference(&self.run_dots).copied().collect();
+        self.run_dots = want;
+        for k in changed {
+            let f = self.current_frame(k).clone();
+            let jpeg = if self.pressed[k as usize] && self.cfg.general.press_feedback { f.pressed } else { f.jpeg };
+            self.send_image(k, &jpeg);
+        }
     }
 
     fn send_image_raw(&self, key: u8, jpeg: &Arc<Vec<u8>>) {
@@ -1121,6 +1249,19 @@ impl Engine {
     /// Action « appui simple » d'une touche (avec ses deux états éventuels).
     fn press_key_action(&mut self, key: u8, def: KeyDef) {
         self.acting = Some((self.page, key));
+        // Action sensible : il faut appuyer une seconde fois pour confirmer.
+        if def.confirm {
+            let now = Instant::now();
+            match self.confirm_pending {
+                Some((p, k, until)) if p == self.page && k == key && now < until => self.confirm_pending = None,
+                _ => {
+                    self.confirm_pending = Some((self.page, key, now + CONFIRM_WINDOW));
+                    self.set_mark(Some((self.page, key)), MARK_CONFIRM, CONFIRM_WINDOW);
+                    return;
+                }
+            }
+            self.marks.remove(&key);
+        }
         let state = if def.toggle.is_some() && self.is_toggled(key) { 1 } else { 0 };
         let action = def.state(state).action;
         if def.toggle.is_some() {
@@ -1146,6 +1287,9 @@ impl Engine {
         let page_before = self.page;
         self.execute(&action);
         self.nudge_widgets();
+        if def.repeat && def.toggle.is_none() && repeatable(&action) && self.pressed[key as usize] && self.page == page_before {
+            self.repeating = Some((self.page, key, Instant::now() + REPEAT_FIRST));
+        }
         // Dossier « refermé après une action » : retour à la page d'avant.
         let closes = !matches!(action, Action::None | Action::Folder { .. } | Action::Back | Action::Page { .. });
         if closes && self.page == page_before && self.is_closing_folder(self.page) {
@@ -1162,7 +1306,30 @@ impl Engine {
         }
     }
 
+    /// Répète l'action de la touche maintenue.
+    fn tick_repeat(&mut self) {
+        let Some((page, key, due)) = self.repeating else { return };
+        if page != self.page || !self.pressed.get(key as usize).copied().unwrap_or(false) || self.game.is_some() {
+            self.repeating = None;
+            return;
+        }
+        if Instant::now() < due {
+            return;
+        }
+        let Some(action) = self.key_def(key).map(|d| d.action.clone()) else {
+            self.repeating = None;
+            return;
+        };
+        self.acting = Some((page, key));
+        self.execute(&action);
+        self.nudge_widgets();
+        self.repeating = Some((page, key, Instant::now() + REPEAT_EVERY));
+    }
+
     fn key_up(&mut self, key: u8) {
+        if matches!(self.repeating, Some((_, k, _)) if k == key) {
+            self.repeating = None;
+        }
         if let Some(combo) = self.held.remove(&key) {
             self.input.release(&combo);
         }
@@ -1227,6 +1394,7 @@ impl Engine {
                 self.play_sound(&id, file, *volume, mode);
             }
             Action::StopSounds => self.sounds.send(SoundCmd::StopAll),
+            Action::CloseApp { target, force } => foreground::close_app(target, *force),
             Action::Text { text } => {
                 let t = self.expand(text, false);
                 self.input.text(&t);
@@ -1423,6 +1591,14 @@ impl Engine {
 
     /// Charge un autre profil : touches, faders, molettes et LED changent.
     fn switch_profile(&mut self, name: &str) {
+        // Choisi à la main : le mode dynamique ne ramène plus à l'ancien profil.
+        self.auto_profile_from = None;
+        self.switch_profile_with(name, true);
+    }
+
+    /// `remember` : profil retenu pour le prochain démarrage (pas pour un
+    /// changement automatique du mode dynamique).
+    fn switch_profile_with(&mut self, name: &str, remember: bool) {
         let path = profiles::path(&self.cfg_dir, name);
         let cfg = match config::load(&path) {
             Ok(c) => c,
@@ -1437,9 +1613,11 @@ impl Engine {
             a.name = name.to_string();
             a.path = path.clone();
         }
-        let mut st = profiles::load_settings(&self.cfg_dir);
-        st.profile = name.to_string();
-        profiles::save_settings(&self.cfg_dir, &st);
+        if remember {
+            let mut st = profiles::load_settings(&self.cfg_dir);
+            st.profile = name.to_string();
+            profiles::save_settings(&self.cfg_dir, &st);
+        }
         log::info!("profil « {name} »");
         self.cfg_path = path;
         self.cfg_mtime = std::fs::metadata(&self.cfg_path).and_then(|m| m.modified()).ok();
@@ -1775,6 +1953,10 @@ impl Engine {
         self.release_held();
         self.pressed = [false; KEY_COUNT];
         self.gesture = None;
+        self.confirm_pending = None;
+        self.repeating = None;
+        self.run_dots.clear();
+        self.run_check = Instant::now() - Duration::from_secs(10);
         self.page = p;
         self.show_page();
         // Les faders et molettes peuvent avoir leurs propres réglages sur cette page.
@@ -1883,6 +2065,63 @@ impl Engine {
             .filter(|&i| i < self.visuals.len())
     }
 
+    /// Mode dynamique : passe au profil lié à l'application au premier plan,
+    /// et revient au profil d'avant en la quittant. Vrai si le profil a changé.
+    fn check_auto_profile(&mut self, exe: &str) -> bool {
+        if !self.auto_profiles || self.profile_apps.is_empty() {
+            return false;
+        }
+        let current = self.active.lock().map(|a| a.name.clone()).unwrap_or_default();
+        let target = self.profile_apps.iter().find(|(_, apps)| apps.iter().any(|a| foreground::normalize(a) == exe)).map(|(n, _)| n.clone());
+        match target {
+            Some(name) if !name.eq_ignore_ascii_case(&current) => {
+                if self.auto_profile_from.is_none() {
+                    self.auto_profile_from = Some(current);
+                }
+                log::info!("{exe} au premier plan → profil « {name} »");
+                let from = self.auto_profile_from.clone();
+                self.switch_profile_with(&name, false);
+                self.auto_profile_from = from;
+                true
+            }
+            Some(_) => false,
+            None => {
+                // On quitte l'application : retour au profil d'avant, si on est
+                // toujours dans un profil d'application.
+                let in_app_profile = self.profile_apps.iter().any(|(n, apps)| n.eq_ignore_ascii_case(&current) && !apps.is_empty());
+                match self.auto_profile_from.take() {
+                    Some(prev) if in_app_profile && !prev.eq_ignore_ascii_case(&current) && profiles::list(&self.cfg_dir).contains(&prev) => {
+                        log::info!("retour au profil « {prev} »");
+                        self.switch_profile_with(&prev, false);
+                        true
+                    }
+                    _ => false,
+                }
+            }
+        }
+    }
+
+    /// Relit les applications liées à chaque profil (seulement les fichiers modifiés).
+    fn load_profile_apps(&mut self) {
+        self.auto_profiles = profiles::load_settings(&self.cfg_dir).auto_profiles.unwrap_or(true);
+        let names = profiles::list(&self.cfg_dir);
+        self.profile_apps.retain(|(n, _)| names.contains(n));
+        self.profile_mtimes.retain(|n, _| names.contains(n));
+        for name in names {
+            let path = profiles::path(&self.cfg_dir, &name);
+            let Ok(mtime) = std::fs::metadata(&path).and_then(|m| m.modified()) else { continue };
+            if self.profile_mtimes.get(&name) == Some(&mtime) {
+                continue;
+            }
+            self.profile_mtimes.insert(name.clone(), mtime);
+            let apps = config::load(&path).map(|c| c.general.profile_apps).unwrap_or_default();
+            self.profile_apps.retain(|(n, _)| n != &name);
+            if !apps.is_empty() {
+                self.profile_apps.push((name, apps));
+            }
+        }
+    }
+
     fn page_has_apps(&self, page: usize) -> bool {
         self.cfg.pages.get(page).map(|p| !p.apps.is_empty()).unwrap_or(false)
     }
@@ -1902,6 +2141,9 @@ impl Engine {
         let Some(exe) = fg else { return };
         // La fenêtre de HubForge ne change rien : on peut éditer tranquillement.
         if exe == "hubforge.exe" {
+            return;
+        }
+        if self.check_auto_profile(&exe) {
             return;
         }
         match self.page_for_app(&exe) {
@@ -2344,4 +2586,9 @@ fn render_key_visuals(def: &KeyDef, vars: &BTreeMap<String, String>, dir: &std::
         states.push(render::render_key_rot(&def.state(1), dir, rot));
     }
     KeyVisuals { states }
+}
+
+/// Actions qu'on peut répéter tant que la touche est enfoncée.
+fn repeatable(a: &Action) -> bool {
+    matches!(a, Action::Hotkey { .. } | Action::Text { .. } | Action::Media { .. } | Action::Var { .. })
 }

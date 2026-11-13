@@ -232,6 +232,7 @@ fn main() {
             ui::test_ai,
             ui::test_http,
             ui::set_ui_mode,
+            ui::set_auto_profiles,
             ui::finish_wizard,
             ui::create_starter_profile,
             ui::get_diagnostic,

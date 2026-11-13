@@ -131,6 +131,8 @@ pub struct Initial {
     ui_mode: String,
     /// Montrer l'assistant de premier lancement.
     show_wizard: bool,
+    /// Mode dynamique (profil selon l'application) activé.
+    auto_profiles: bool,
 }
 
 #[derive(Serialize)]
@@ -169,7 +171,15 @@ pub fn get_initial(state: State<AppState>) -> Result<Initial, String> {
         update: update_snapshot(&state.cfg_dir, &state.update),
         ui_mode,
         show_wizard,
+        auto_profiles: settings.auto_profiles.unwrap_or(true),
     })
+}
+
+#[tauri::command]
+pub fn set_auto_profiles(state: State<AppState>, on: bool) {
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.auto_profiles = Some(on);
+    profiles::save_settings(&state.cfg_dir, &st);
 }
 
 #[tauri::command]

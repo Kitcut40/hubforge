@@ -43,6 +43,8 @@ pub struct Settings {
     pub ui_mode: String,
     /// Assistant de premier lancement terminé (ou passé).
     pub onboarded: bool,
+    /// Mode dynamique (changement de profil selon l'application) ; None = activé.
+    pub auto_profiles: Option<bool>,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.

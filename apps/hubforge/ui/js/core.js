@@ -102,6 +102,18 @@ const LIBRARY = [
     { name: "Webhook Discord", label: "Discord", icon: "webhook", color: "#5865F2",
       action: { type: "http", method: "POST", url: "https://discord.com/api/webhooks/", body: '{"content": "Message envoyé depuis HubForge"}' } },
   ]},
+  { cat: "Jeu", items: [
+    { name: "Relecture instantanée NVIDIA", label: "Clip", icon: "circle-dot", color: "#76B900", action: { type: "hotkey", keys: "alt+f10" } },
+    { name: "Enregistrer (NVIDIA)", label: "REC", icon: "video", color: "#76B900", action: { type: "hotkey", keys: "alt+f9" } },
+    { name: "Capture d'écran (NVIDIA)", label: "Capture", icon: "camera", color: "#76B900", action: { type: "hotkey", keys: "alt+f1" } },
+    { name: "Overlay NVIDIA", label: "NVIDIA", icon: "layout-grid", color: "#76B900", action: { type: "hotkey", keys: "alt+z" } },
+    { name: "Xbox Game Bar", label: "Game Bar", icon: "gamepad-2", color: "#107C10", action: { type: "hotkey", keys: "win+g" } },
+    { name: "Enregistrer les 30 dernières s (Game Bar)", label: "30 s", icon: "circle-dot", color: "#107C10", action: { type: "hotkey", keys: "win+alt+g" } },
+    { name: "Enregistrer (Game Bar)", label: "REC", icon: "video", color: "#107C10", action: { type: "hotkey", keys: "win+alt+r" } },
+    { name: "Capture de jeu (Game Bar)", label: "Capture", icon: "camera", color: "#107C10", action: { type: "hotkey", keys: "win+alt+printscreen" } },
+    { name: "Overlay Steam", label: "Steam", icon: "layout-grid", color: "#1B2838", action: { type: "hotkey", keys: "shift+tab" } },
+    { name: "Capture d'écran Steam", label: "Steam", icon: "camera", color: "#1B2838", action: { type: "hotkey", keys: "f12" } },
+  ]},
   { cat: "Système", items: [
     { name: "Verrouiller le PC", label: "Verrouiller", icon: "lock", color: "#6A1B9A", action: { type: "lock" } },
     { name: "Capture d'écran", label: "Capture", icon: "scan", color: "#00897B", action: { type: "hotkey", keys: "win+shift+s" } },
@@ -151,7 +163,7 @@ const LIBRARY = [
 const ACTION_TYPES = [
   ["none", "Aucune action"], ["hotkey", "Raccourci clavier"], ["hold", "Maintenir des touches"], ["text", "Taper un texte"],
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
-  ["media", "Multimédia"], ["app_mute", "Couper le son d'une application"], ["audio_output", "Changer de sortie audio"], ["timer", "Minuteur de la touche"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
+  ["media", "Multimédia"], ["close_app", "Fermer une application"], ["app_mute", "Couper le son d'une application"], ["audio_output", "Changer de sortie audio"], ["timer", "Minuteur de la touche"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
   ["macro", "Macro (plusieurs actions à la suite)"], ["var", "Variable (compteur, interrupteur…)"], ["if", "Condition (si… alors… sinon)"],
   ["ai", "IA sur le texte sélectionné"], ["http", "Requête web"],
   ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
@@ -360,6 +372,7 @@ async function init() {
   S.update = ini.update || {};
   S.version = ini.version;
   S.uiMode = ini.ui_mode || "advanced";
+  S.autoProfiles = ini.auto_profiles !== false;
   $("#version").textContent = "v" + ini.version;
   S.icons = (await invoke("list_icons")) || [];
   S.layout = (await invoke("get_layout")) || { base_rot: 0, placements: {} };

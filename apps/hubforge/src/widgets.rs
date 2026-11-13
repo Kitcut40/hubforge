@@ -1651,6 +1651,8 @@ mod tests {
             long: None,
             double: None,
             theme: None,
+            confirm: false,
+            repeat: false,
         }
     }
 

@@ -4,6 +4,19 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.21.0] — 2026-11-14
+
+### Nouveautés
+- **Mode dynamique** : un profil s'active tout seul quand son application passe au premier plan (DaVinci, un jeu, Fusion 360…), puis HubForge revient au profil d'avant en la quittant.
+  - Menu des profils › Applications de ce profil.
+  - Activé ou non dans Réglages › Général.
+  - Les pages automatiques continuent de marcher à l'intérieur de chaque profil.
+- **Point vert « application ouverte »** sur les touches qui lancent un programme. L'appui long peut fermer l'application, proprement ou de force. Nouvelle action « Fermer une application ».
+- **Confirmation** : une touche peut demander un second appui dans les 3 secondes (elle s'entoure de jaune), pour les actions qu'on ne veut pas lancer par erreur.
+- **Répétition** : une touche peut répéter son action tant qu'elle reste enfoncée (volume, zoom, défilement…).
+- **Mode nuit** : écrans et LED moins lumineux aux heures choisies (Réglages › Général).
+- **Nouvelle famille « Jeu »** dans les actions : relecture instantanée, enregistrement, captures et overlay NVIDIA, Xbox Game Bar et Steam.
+
 ## [0.20.0] — 2026-11-13
 
 ### Nouveautés

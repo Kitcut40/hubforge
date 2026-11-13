@@ -596,6 +596,8 @@ mod tests {
             long: None,
             double: None,
             theme: Some(theme.into()),
+            confirm: false,
+            repeat: false,
         }
     }
 

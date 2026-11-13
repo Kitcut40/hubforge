@@ -500,6 +500,8 @@ impl AddonAction {
             long: None,
             double: None,
             theme: None,
+            confirm: false,
+            repeat: false,
         }
     }
 }
@@ -543,6 +545,8 @@ impl Addon {
                                 long: None,
                                 double: None,
                                 theme: None,
+                                confirm: false,
+                                repeat: false,
                             }
                         } else {
                             let target = k.open.as_deref().and_then(|o| self.pages.iter().find(|p| p.id == o));
@@ -560,6 +564,8 @@ impl Addon {
                                 long: None,
                                 double: None,
                                 theme: None,
+                                confirm: false,
+                                repeat: false,
                             }
                         };
                         if let Some(l) = &k.label {

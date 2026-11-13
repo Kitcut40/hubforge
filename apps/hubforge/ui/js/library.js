@@ -23,6 +23,7 @@ const LIB_GROUPS = [
   ["apps", "Applis", ["Applications"]],
   ["sound", "Son", ["Multimédia", "Son et musique", "Soundboard", "Touches à 2 états"]],
   ["live", "Vivantes", ["Touches vivantes", "Minuteurs", "Animations"]],
+  ["game", "Jeu", ["Jeu"]],
   ["ai", "IA et web", ["Connecteurs"]],
   ["system", "Système", ["Système", "Macros intelligentes", "HubForge"]],
 ];
@@ -48,6 +49,9 @@ const LIB_DESC = {
   "État du micro": "Coupé ou actif", "Carte graphique (GPU)": "Charge en direct", "Température du GPU": "En degrés",
   "Volume d'une application": "Discord, Spotify…", "Météo": "Ta ville, en direct", "Réseau (débits)": "Envoi et réception",
   "Disque C:": "Espace libre", "Nouveau dossier (sous-page)": "Une page qui s'ouvre d'un appui",
+  "Relecture instantanée NVIDIA": "Les dernières minutes de jeu (Alt+F10)", "Enregistrer (NVIDIA)": "Début / fin (Alt+F9)",
+  "Overlay NVIDIA": "Alt+Z", "Xbox Game Bar": "Win+G", "Enregistrer les 30 dernières s (Game Bar)": "Win+Alt+G",
+  "Enregistrer (Game Bar)": "Début / fin (Win+Alt+R)", "Overlay Steam": "Maj+Tab",
   "Fenêtre à gauche": "Moitié gauche de l'écran", "Fenêtre à droite": "Moitié droite de l'écran", "Vers l'autre écran": "Déplace la fenêtre",
 };
 

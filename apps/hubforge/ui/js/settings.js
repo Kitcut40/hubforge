@@ -42,6 +42,18 @@ function settingsSection(id) {
     out.push(setRow("Démarrer avec Windows", "HubForge se lance discrètement dans la zone de notification. Fermer la fenêtre ne coupe pas le MasterHUB.",
       toggleCtl(S.autostart, async (v) => { try { S.autostart = await invoke("set_autostart", { on: v }); } catch (e) { toast(String(e), true); } renderInspector(); })));
     out.push(setRow("Assombrir la touche pendant l'appui", "Un retour visuel à chaque appui.", toggleCtl(g.press_feedback, (v) => { g.press_feedback = v; changed(); })));
+    out.push(setRow("Mode nuit", "Écrans et LED moins lumineux le soir, tout seuls.", toggleCtl(g.night_dim, (v) => { g.night_dim = v; changed(); renderInspector(); })));
+    if (g.night_dim) {
+      const hourSel = (val, onPick) => el("select", { class: "input", style: "width:96px", onchange: (e) => onPick(Number(e.target.value)) },
+        ...Array.from({ length: 24 }, (_, h) => el("option", { value: h, selected: h === val }, `${h} h`)));
+      out.push(setRow("Horaires du mode nuit", "De l'heure de début à l'heure de fin (le lendemain si elle est plus tôt).",
+        el("div", { class: "row", style: "gap:8px;align-items:center" },
+          hourSel(g.night_from ?? 22, (v) => { g.night_from = v; changed(); }), el("span", { class: "hint", style: "margin:0" }, "à"),
+          hourSel(g.night_to ?? 7, (v) => { g.night_to = v; changed(); }))));
+      out.push(setRow("Luminosité la nuit", "En pourcentage de la luminosité normale.", rangeCtl(g.night_level ?? 30, 5, 100, " %", (v) => { g.night_level = v; changed(); })));
+    }
+    out.push(setRow("Mode dynamique", "Un profil peut s'activer tout seul quand son application passe au premier plan (menu des profils › Applications de ce profil).",
+      toggleCtl(S.autoProfiles, async (v) => { S.autoProfiles = v; try { await invoke("set_auto_profiles", { on: v }); } catch (e) { toast(String(e), true); } })));
     out.push(setCard("sparkles", "Assistant de démarrage", "Choisir un style et un profil prêt à l'emploi en quatre étapes.",
       el("button", { class: "btn", onclick: () => openWizard() }, "Lancer")));
   } else if (id === "look") {

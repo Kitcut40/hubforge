@@ -244,3 +244,42 @@ function pageInspector() {
 
 let pagesTimer = null;
 function renderPagesSoon() { clearTimeout(pagesTimer); pagesTimer = setTimeout(renderPages, 250); }
+
+// --- Profil : mode dynamique ---
+function profileInspector() {
+  const g = S.cfg.general;
+  const apps = g.profile_apps || [];
+  const out = [title(S.profile || "Profil", "Mode dynamique")];
+  out.push(el("p", { class: "hint", style: "margin:0 0 14px" },
+    "Quand une de ces applications passe au premier plan, HubForge active ce profil tout seul. En la quittant, il revient au profil d'avant."));
+  const setApps = (list) => { g.profile_apps = list; changed(); renderInspector(); };
+  const addIt = (name) => {
+    name = (name || "").trim().split(/[\\/]/).pop().toLowerCase();
+    if (!name) return;
+    if (!/\.exe$/.test(name)) name += ".exe";
+    if (name === "hubforge.exe" || apps.includes(name)) return;
+    setApps([...apps, name]);
+  };
+  const chips = apps.length
+    ? el("div", { class: "chips" }, ...apps.map((a) => el("span", { class: "chip removable", title: "Retirer", onclick: () => setApps(apps.filter((x) => x !== a)) }, a, " ×")))
+    : el("p", { class: "hint", style: "margin:0" }, "Aucune application liée : ce profil ne s'active qu'à la main.");
+  const add = el("input", { class: "input grow", placeholder: "ex. resolve.exe", spellcheck: "false" });
+  add.onkeydown = (e) => { if (e.key === "Enter") addIt(add.value); };
+  out.push(field("Applications liées", chips,
+    el("div", { class: "row", style: "margin-top:10px" }, add, el("button", { class: "btn", onclick: () => addIt(add.value) }, "Ajouter")),
+    el("button", { class: "btn", style: "width:100%;margin-top:8px", onclick: async () => {
+      const f = await invoke("pick_file", { kind: "program" });
+      if (f) addIt(f);
+    } }, "Choisir un programme…")));
+  const running = el("div", { class: "chips" }, el("span", { class: "hint", style: "margin:0" }, "Recherche des applications ouvertes…"));
+  invoke("list_running_apps").then((list) => {
+    running.innerHTML = "";
+    const others = (list || []).filter((x) => !apps.includes(x));
+    if (!others.length) running.append(el("span", { class: "hint", style: "margin:0" }, "Aucune autre application ouverte."));
+    for (const a of others) running.append(el("span", { class: "chip add", onclick: () => addIt(a) }, "+ " + a));
+  });
+  out.push(field("Applications ouvertes en ce moment", running));
+  out.push(el("p", { class: "hint" }, "Les pages automatiques d'un profil marchent toujours : le mode dynamique change de profil, puis la page de l'application s'affiche si elle en a une."));
+  if (!S.autoProfiles) out.push(el("p", { class: "hint", style: "color:var(--warn, #ffb74d)" }, "Le mode dynamique est désactivé dans Réglages › Général."));
+  return out;
+}

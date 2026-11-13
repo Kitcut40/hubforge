@@ -36,6 +36,41 @@ pub fn running_exe_path(name: &str) -> Option<String> {
     imp::window_exes().into_iter().find(|p| normalize(p) == want)
 }
 
+/// Ferme une application (« discord.exe ») : proprement (comme la croix de
+/// la fenêtre) ou de force.
+pub fn close_app(name: &str, force: bool) {
+    let exe = normalize(name);
+    if exe.is_empty() || exe == "hubforge.exe" {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut cmd = std::process::Command::new("taskkill");
+        if force {
+            cmd.args(["/F", "/T"]);
+        }
+        let r = cmd.args(["/IM", &exe]).creation_flags(CREATE_NO_WINDOW).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+        if let Err(e) = r {
+            log::warn!("fermeture de {exe} impossible : {e}");
+        }
+    }
+    #[cfg(not(windows))]
+    log::info!("fermer {exe} (force : {force}) — seulement sous Windows");
+}
+
+/// Programme lancé par une cible « Lancer » (« C:\\…\\Discord.exe »,
+/// « spotify.exe »), pour savoir s'il est ouvert. None pour un site web,
+/// un raccourci ou un dossier.
+pub fn exe_of_target(target: &str) -> Option<String> {
+    let t = target.trim().trim_matches('"');
+    if t.contains("://") || !t.to_lowercase().ends_with(".exe") {
+        return None;
+    }
+    Some(normalize(t))
+}
+
 /// Programmes à ne jamais proposer (HubForge lui-même, éléments du système).
 const IGNORED: &[&str] = &[
     "hubforge.exe",
