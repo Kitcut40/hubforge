@@ -38,6 +38,11 @@ pub struct Settings {
     pub placements: std::collections::HashMap<String, crate::topology::Placement>,
     /// Fichier WAD choisi pour l'easter egg Doom.
     pub doom_wad: String,
+    /// Mode de l'interface : "simple" ou "advanced" (vide : avancé, pour
+    /// ceux qui utilisaient HubForge avant l'arrivée des modes).
+    pub ui_mode: String,
+    /// Assistant de premier lancement terminé (ou passé).
+    pub onboarded: bool,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.
@@ -273,5 +278,26 @@ mod tests {
         assert_eq!(init(&d).name, "Laura");
         assert_eq!(load_settings(&d).game_best, 12);
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod starter_tests {
+    use super::*;
+
+    /// Profils de départ de l'assistant (exportés par l'interface dans
+    /// /tmp/starters.json lors des essais) : ils doivent être valides.
+    #[test]
+    fn starter_profiles_are_valid() {
+        let Ok(text) = std::fs::read_to_string("/tmp/starters.json") else { return };
+        let all: std::collections::HashMap<String, Vec<crate::config::Page>> = serde_json::from_str(&text).unwrap();
+        assert!(all.len() >= 4);
+        for (id, pages) in all {
+            let mut cfg = blank_config();
+            cfg.pages = pages;
+            crate::config::validate(&cfg).unwrap_or_else(|e| panic!("{id} : {e}"));
+            let back: Config = toml::from_str(&toml::to_string(&cfg).unwrap()).unwrap();
+            assert_eq!(back.pages[0].keys.len(), cfg.pages[0].keys.len(), "{id}");
+        }
     }
 }

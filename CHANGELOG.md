@@ -4,6 +4,21 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.19.0] — 2026-11-13
+
+### Nouveautés
+- **Assistant de premier lancement** : au tout premier démarrage, HubForge montre les modules branchés, puis demande en quatre étapes :
+  - le mode d'affichage (simple ou avancé) ;
+  - le style des touches, avec un aperçu en direct ;
+  - un profil de départ prêt à l'emploi : **Bureau**, **Streaming et Discord**, **Jeu**, **Partir de zéro**, ou garder son profil actuel.
+  - Le profil de départ remplit les 15 touches et règle les faders. Il est créé à côté du profil actuel, sans le modifier.
+  - L'assistant se relance quand on veut : Réglages › Relancer l'assistant de démarrage.
+- **Modes simple et avancé** (Réglages › Affichage) :
+  - le mode **simple** garde l'essentiel et cache les macros, variables, conditions, requêtes web, touches maintenues, l'appui long et double appui, et les réglages fins (faders, variables, délais des touches) ;
+  - le mode **avancé** montre tout, comme avant ;
+  - une touche qui utilise déjà une fonction avancée reste modifiable dans les deux modes.
+  - Les nouveaux utilisateurs démarrent en simple ; ceux qui avaient déjà HubForge restent en avancé.
+
 ## [0.18.0] — 2026-11-13
 
 ### Nouveautés

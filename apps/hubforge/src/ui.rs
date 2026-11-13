@@ -127,6 +127,10 @@ pub struct Initial {
     /// Notes de version à montrer (première ouverture après une mise à jour).
     whats_new: Option<String>,
     update: UpdateState,
+    /// "simple" ou "advanced".
+    ui_mode: String,
+    /// Montrer l'assistant de premier lancement.
+    show_wizard: bool,
 }
 
 #[derive(Serialize)]
@@ -138,6 +142,16 @@ pub struct Preview {
 #[tauri::command]
 pub fn get_initial(state: State<AppState>) -> Result<Initial, String> {
     let active = state.active.lock().unwrap().clone();
+    // Avant whats_new, qui note la version lancée : un premier lancement n'a
+    // encore aucune version notée.
+    let settings = profiles::load_settings(&state.cfg_dir);
+    let show_wizard = !settings.onboarded && settings.last_version_run.is_empty();
+    let ui_mode = match settings.ui_mode.as_str() {
+        "simple" => "simple",
+        "" if show_wizard => "simple",
+        _ => "advanced",
+    }
+    .to_string();
     let config = config::load(&active.path).unwrap_or_else(|e| {
         log::error!("{e}");
         profiles::blank_config()
@@ -153,7 +167,57 @@ pub fn get_initial(state: State<AppState>) -> Result<Initial, String> {
         version: env!("CARGO_PKG_VERSION").into(),
         whats_new: whats_new(&state.cfg_dir),
         update: update_snapshot(&state.cfg_dir, &state.update),
+        ui_mode,
+        show_wizard,
     })
+}
+
+#[tauri::command]
+pub fn set_ui_mode(state: State<AppState>, mode: String) -> Result<(), String> {
+    if mode != "simple" && mode != "advanced" {
+        return Err(format!("mode inconnu « {mode} »"));
+    }
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.ui_mode = mode;
+    profiles::save_settings(&state.cfg_dir, &st);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn finish_wizard(state: State<AppState>) {
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.onboarded = true;
+    profiles::save_settings(&state.cfg_dir, &st);
+}
+
+/// Profil de départ de l'assistant : pages, style et cibles des faders
+/// choisis par l'interface ; le reste vient d'un profil vierge.
+#[tauri::command]
+pub fn create_starter_profile(state: State<AppState>, name: String, pages: Vec<crate::config::Page>, theme: String, faders: Vec<String>) -> Result<String, String> {
+    let mut cfg = profiles::blank_config();
+    if !pages.is_empty() {
+        cfg.pages = pages;
+    }
+    if crate::theme::THEMES.iter().any(|(id, _)| *id == theme) {
+        cfg.general.theme = theme;
+    }
+    for (slot, target) in cfg.faders.iter_mut().zip(faders) {
+        slot.target = target;
+    }
+    config::validate(&cfg)?;
+    // Nom libre : « Bureau », « Bureau (2) »…
+    let existing = profiles::list(&state.cfg_dir);
+    let base = profiles::check_name(&name)?;
+    let mut name = base.clone();
+    let mut n = 2;
+    while existing.iter().any(|e| e.eq_ignore_ascii_case(&name)) {
+        name = format!("{base} ({n})");
+        n += 1;
+    }
+    let name = profiles::create(&state.cfg_dir, &name, None)?;
+    config::save(&profiles::path(&state.cfg_dir, &name), &cfg)?;
+    let _ = state.engine.lock().unwrap().send(EngineMsg::SwitchProfile(name.clone()));
+    Ok(name)
 }
 
 /// Nouveautés à afficher une fois, après une mise à jour.

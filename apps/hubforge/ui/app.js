@@ -357,6 +357,7 @@ async function init() {
   S.gameBest = ini.game_best || 0;
   S.update = ini.update || {};
   S.version = ini.version;
+  S.uiMode = ini.ui_mode || "advanced";
   $("#version").textContent = "v" + ini.version;
   S.icons = (await invoke("list_icons")) || [];
   S.layout = (await invoke("get_layout")) || { base_rot: 0, placements: {} };
@@ -401,7 +402,8 @@ async function init() {
   $("#update-pill").onclick = () => showUpdateDialog();
   $("#dialog-close").onclick = closeDialog;
   $("#dialog").addEventListener("click", (e) => { if (e.target.id === "dialog" && !S.updating) closeDialog(); });
-  if (ini.whats_new) setTimeout(() => showWhatsNew(ini.version, ini.whats_new), 400);
+  if (ini.show_wizard) setTimeout(() => openWizard(), 300);
+  else if (ini.whats_new) setTimeout(() => showWhatsNew(ini.version, ini.whats_new), 400);
   $("#lib-search").oninput = (e) => filterLibrary(e.target.value);
   document.addEventListener("keydown", onGlobalKey, true);
   fitDevice();
@@ -887,6 +889,25 @@ function applySiteName(k, st) {
   if (inp) inp.value = n;
 }
 
+/** Touche créée à partir d'une action de la bibliothèque. */
+function defFromItem(item, k) {
+  const def = item.addonKey ? Object.assign({ key: k }, clone(item.addonKey))
+    : { key: k, label: item.label, color: item.color, icon: "builtin:" + item.icon, action: clone(item.action) };
+  if (item.toggle) def.toggle = clone(item.toggle);
+  if (item.long) def.long = clone(item.long);
+  if (item.widget) { def.widget = item.widget; delete def.icon; }
+  if (item.anim) def.icon = "anim:" + item.anim;
+  if (item.widget_style) def.widget_style = item.widget_style;
+  if (item.widget_target) def.widget_target = item.widget_target;
+  return def;
+}
+
+/** Action de la bibliothèque par son nom. */
+function libItemByName(name) {
+  for (const c of LIBRARY) { const it = c.items.find((i) => i.name === name); if (it) return it; }
+  return null;
+}
+
 async function onDropOnKey(k, dt) {
   const fromKey = dt.getData("text/hubforge-key");
   const lib = dt.getData("text/hubforge-action");
@@ -911,19 +932,12 @@ async function onDropOnKey(k, dt) {
   }
   if (lib) {
     const item = JSON.parse(lib);
-    const def = item.addonKey ? Object.assign({ key: k }, clone(item.addonKey))
-      : { key: k, label: item.label, color: item.color, icon: "builtin:" + item.icon, action: clone(item.action) };
+    const def = defFromItem(item, k);
     if (item.newFolder) {
       const idx = createFolder(nextFolderName());
       def.label = S.cfg.pages[idx].name;
       def.action = { type: "folder", to: String(idx + 1) };
     }
-    if (item.toggle) def.toggle = clone(item.toggle);
-    if (item.long) def.long = clone(item.long);
-    if (item.widget) { def.widget = item.widget; delete def.icon; }
-    if (item.anim) def.icon = "anim:" + item.anim;
-    if (item.widget_style) def.widget_style = item.widget_style;
-    if (item.widget_target) def.widget_target = item.widget_target;
     setKeyDef(k, def);
     S.editState = 0;
     select({ type: "key", key: k });
@@ -1201,7 +1215,7 @@ function keyInspector(k) {
     ? "Action lancée quand la touche est dans l'état 1 ; elle passe ensuite à l'état 2."
     : "Action lancée quand la touche est dans l'état 2 ; elle revient ensuite à l'état 1."));
   out.push(...actionEditor(st, k, () => keyChanged(k)));
-  if (S.editState === 0) out.push(...gestureEditors(def, k));
+  if (S.editState === 0 && (isAdv() || def.long || def.double)) out.push(...gestureEditors(def, k));
   out.push(el("div", { class: "sep" }));
   out.push(el("div", { class: "row", style: "margin-bottom:8px" },
     el("button", { class: "btn grow", title: "Ctrl+C", onclick: () => copyKey(k) }, "Copier"),
@@ -1308,6 +1322,12 @@ function actionTypeId(a) {
   return a.type;
 }
 
+/** Mode simple : on cache ce qui sert surtout aux utilisateurs avancés. */
+const isAdv = () => S.uiMode !== "simple";
+const SIMPLE_HIDDEN_CATS = ["Macros intelligentes"];
+const SIMPLE_HIDDEN_ITEMS = ["Maintenir des touches", "Macro (plusieurs actions)", "Requête web", "Webhook Discord", "Bascule personnalisée"];
+const ADV_TYPES = ["hold", "macro", "var", "if", "http", "open_config"];
+
 /** Valeurs par défaut quand on choisit un type d'action. */
 const ACTION_DEFAULTS = {
   none: { type: "none" }, hotkey: { type: "hotkey", keys: "" }, hold: { type: "hold", keys: "" }, text: { type: "text", text: "" },
@@ -1381,6 +1401,7 @@ function actionEditor(st, k, onChange, opts = {}) {
   let types = opts.nested
     ? [...ACTION_TYPES.filter(([v]) => v !== "macro"), ["wait", "Attendre (pause)"]]
     : ACTION_TYPES;
+  if (!isAdv()) types = types.filter(([v]) => !ADV_TYPES.includes(v) || v === actionTypeId(a));
   if (S.gameBest > 0 || a.type === "game") types = [...types, ["game", "🎮 Mini-jeu tape-taupe"]];
   const typeSel = el("select", { class: "input" }, ...types.map(([v, l]) => el("option", { value: v, selected: v === actionTypeId(a) }, l)));
   typeSel.onchange = () => {
@@ -2823,6 +2844,9 @@ function launchGame() {
 function settingsInspector() {
   const g = S.cfg.general;
   const out = [title("Réglages généraux")];
+  out.push(field("Affichage", modeSwitch(), el("p", { class: "hint" }, isAdv()
+    ? "Mode avancé : tout est visible (macros, variables, conditions, requêtes web, appui long…)."
+    : "Mode simple : l'essentiel seulement. Passe en avancé pour les macros, les variables, les requêtes web et l'appui long.")));
   out.push(rangeField("Luminosité des écrans", g.brightness, 0, 100, " %", (v) => { g.brightness = v; changed(); }));
   out.push(rangeField("Luminosité des LED", g.led_brightness, 0, 100, " %", (v) => { g.led_brightness = v; changed(); }));
   out.push(field("Style des touches du profil", themeChips(g.theme || "graphite", null, (v) => { g.theme = v; rethemed(); renderInspector(); }),
@@ -2862,6 +2886,7 @@ function settingsInspector() {
       .map(([v, l]) => el("option", { value: v, selected: v === (g.sleep_after || 0) }, l))),
     el("p", { class: "hint" }, "Sans toucher ni le PC ni le MasterHUB. Écrans et LED s'éteignent ; un appui les rallume (sans lancer l'action).")));
   out.push(switchRow("En veille quand le PC est verrouillé", g.sleep_locked, (v) => { g.sleep_locked = v; changed(); }));
+  if (!isAdv()) { out.push(...settingsTail()); return out; }
   out.push(el("h2", { style: "margin-top:18px" }, "Faders"));
   out.push(switchRow("Reprise douce des faders", g.fader_pickup, (v) => { g.fader_pickup = v; changed(); }));
   out.push(el("p", { class: "hint", style: "margin-top:-4px" }, "Quand un fader contrôle autre chose en changeant de page ou de profil, il n'agit qu'une fois passé par le volume actuel : pas de saut de volume. Sa LED pulse en attendant."));
@@ -2885,6 +2910,13 @@ function settingsInspector() {
   out.push(el("p", { class: "hint", style: "margin-top:-4px" }, "Lie une page à une application avec le bouton ⚙ de l'onglet de la page."));
   out.push(rangeField("Fluidité max. des GIF", g.gif_max_fps, 5, 40, " i/s", (v) => { g.gif_max_fps = v; changed(); },
     "Partagée entre toutes les touches animées."));
+  out.push(...settingsTail());
+  return out;
+}
+
+/** Fin des réglages, commune aux deux modes. */
+function settingsTail() {
+  const out = [];
   out.push(el("div", { class: "sep" }));
   out.push(switchRow("Démarrer avec Windows", S.autostart, async (v) => {
     try { S.autostart = await invoke("set_autostart", { on: v }); } catch (e) { toast(String(e), true); }
@@ -2892,12 +2924,146 @@ function settingsInspector() {
   }));
   out.push(el("p", { class: "hint" }, "Fermer cette fenêtre ne coupe pas le MasterHUB : HubForge reste dans la zone de notification, près de l'horloge."));
   out.push(el("div", { class: "sep" }));
+  out.push(el("button", { class: "btn", style: "width:100%;margin-bottom:6px", onclick: () => openWizard() }, "Relancer l'assistant de démarrage"));
   out.push(el("button", { class: "btn", style: "width:100%", onclick: () => invoke("open_config_folder") }, "Ouvrir le dossier de configuration"));
   out.push(el("p", { class: "hint" }, S.configPath || ""));
   out.push(el("button", { class: "btn", style: "width:100%", onclick: showDiagnostic }, "Diagnostic et reconnexion des modules…"));
   out.push(...updateSettings());
   out.push(...aboutSection());
   return out;
+}
+
+// --- Mode simple / avancé ---
+function modeSwitch() {
+  const b = (mode, label) => el("button", { class: "seg-btn" + (S.uiMode === mode ? " on" : ""), onclick: () => setUiMode(mode) }, label);
+  return el("div", { class: "seg" }, b("simple", "Simple"), b("advanced", "Avancé"));
+}
+async function setUiMode(mode, quiet) {
+  S.uiMode = mode;
+  try { await invoke("set_ui_mode", { mode }); } catch (e) { toast(String(e), true); }
+  buildLibrary();
+  renderInspector();
+  if (!quiet) toast(mode === "simple" ? "Mode simple : l'essentiel seulement." : "Mode avancé : toutes les fonctions sont visibles.");
+}
+
+// --- Assistant de premier lancement ---
+const STARTERS = [
+  { id: "bureau", name: "Bureau", desc: "Copier, coller, captures, fenêtres, horloge et processeur.", icon: "monitor",
+    keys: ["Copier", "Coller", "Couper", "Annuler", "Capture d'écran",
+      "Explorateur", "Calculatrice", "Afficher le bureau", "Fenêtre à gauche", "Fenêtre à droite",
+      "Horloge", "Processeur (CPU)", "Mémoire (RAM)", "Lecture / Pause", "Verrouiller le PC"],
+    faders: ["master", "mic", "none", "none", "none"] },
+  { id: "stream", name: "Streaming et Discord", desc: "Micro, son, musique, chronomètre, compteur et correction par IA.", icon: "mic",
+    keys: ["Micro ON / OFF", "Son ON / OFF", "Changer de sortie audio", "Musique en cours (pochette)", "Piste suivante",
+      "Chronomètre (appui long = 0)", "Compteur (+1, appui long = 0)", "IA : corriger la sélection", "Capture d'écran", "Horloge",
+      "Volume général", "État du micro", "Lecture / Pause", "Piste précédente", "Arrêter tous les sons"],
+    faders: ["master", "mic", "app:discord.exe", "app:spotify.exe", "none"] },
+  { id: "jeu", name: "Jeu", desc: "Températures, carte graphique, Game Bar, micro et musique.", icon: "gamepad-2",
+    keys: ["Horloge", "Processeur (CPU)", "Température du GPU", "Carte graphique (GPU)", "Mémoire (RAM)",
+      "Micro ON / OFF", "Son ON / OFF", "Changer de sortie audio", "Capture d'écran",
+      { label: "Game Bar", icon: "gamepad-2", color: "#107C10", action: { type: "hotkey", keys: "win+g" } },
+      "Piste précédente", "Lecture / Pause", "Piste suivante", "Réseau (débits)",
+      { label: "Clip 30 s", icon: "circle-dot", color: "#C62828", action: { type: "hotkey", keys: "win+alt+g" } }],
+    faders: ["master", "mic", "app:discord.exe", "none", "none"] },
+  { id: "vide", name: "Partir de zéro", desc: "Une page vide : tu glisses toi-même les actions sur les touches.", icon: "square", keys: [], faders: ["master", "none", "none", "none", "none"] },
+  { id: "keep", name: "Garder mon profil actuel", desc: "Ne rien créer ; seul le style choisi est appliqué.", icon: "check", keys: null },
+];
+
+function starterPages(st) {
+  const keys = [];
+  st.keys.forEach((k, i) => {
+    const item = typeof k === "string" ? libItemByName(k) : Object.assign({ name: k.label }, k);
+    if (item) keys.push(clean(defFromItem(item, i + 1)));
+  });
+  return [{ name: "Accueil", keys }];
+}
+
+function openWizard() {
+  const W = { step: 0, mode: S.uiMode || "simple", theme: (S.cfg.general && S.cfg.general.theme) || "graphite",
+    starter: S.cfg.pages.some((p) => p.keys.length) ? "keep" : "bureau" };
+  let node = $("#wizard");
+  if (!node) { node = el("div", { class: "wizard", id: "wizard" }); document.body.append(node); }
+  node.classList.remove("hidden");
+  const close = async () => { node.classList.add("hidden"); try { await invoke("finish_wizard"); } catch (_) {} };
+  const steps = ["Bienvenue", "Affichage", "Style", "Profil", "C'est prêt"];
+
+  const preview = async (box) => {
+    const sample = ["Copier", "Micro ON / OFF", "Horloge", "Processeur (CPU)", "Lecture / Pause"].map((n, i) => {
+      const d = clean(defFromItem(libItemByName(n), i + 1)); d.theme = W.theme; return d;
+    });
+    try {
+      const res = await invoke("render_keys", { keys: sample });
+      box.innerHTML = "";
+      res.forEach((r) => box.append(el("div", { class: "wz-key" }, r ? el("img", { src: r.src }) : null)));
+    } catch (_) { /* aperçu facultatif */ }
+  };
+
+  const draw = () => {
+    node.innerHTML = "";
+    const body = el("div", { class: "wz-body" });
+    const s = W.step;
+    if (s === 0) {
+      const mods = (S.status && S.status.modules) || [];
+      const names = { keys15: "module 15 touches", faders5: "module 5 faders", rollers2: "module 2 molettes" };
+      const found = mods.map((m) => names[m.kind]).filter(Boolean);
+      body.append(el("h2", {}, "Bienvenue dans HubForge"),
+        el("p", {}, "HubForge pilote ton Cooler Master MasterHUB : des touches qui lancent des actions, affichent l'heure, la musique ou la température, des faders pour le volume de chaque application, et bien plus."),
+        el("div", { class: "wz-detect" + (found.length ? " ok" : "") }, found.length
+          ? `Branché : base${found.length ? ", " + found.join(", ") : ""}.`
+          : "Aucun module détecté pour l'instant : tu peux quand même tout préparer, ils seront reconnus dès qu'ils seront branchés."),
+        el("p", { class: "hint" }, "Quatre petites questions, et c'est parti. Tout se change ensuite dans les réglages."));
+    } else if (s === 1) {
+      const card = (mode, t, d) => el("div", { class: "wz-card" + (W.mode === mode ? " on" : ""), onclick: () => { W.mode = mode; draw(); } }, el("b", {}, t), el("span", {}, d));
+      body.append(el("h2", {}, "Comment veux-tu voir HubForge ?"),
+        el("div", { class: "wz-cards two" },
+          card("simple", "Simple", "L'essentiel : raccourcis, applis, son, musique, touches vivantes, IA. Idéal pour commencer."),
+          card("advanced", "Avancé", "Tout : macros, variables, conditions, requêtes web, appui long et double appui.")));
+    } else if (s === 2) {
+      const pv = el("div", { class: "wz-preview" });
+      body.append(el("h2", {}, "Choisis le style des touches"),
+        themeChips(W.theme, null, (v) => { W.theme = v; draw(); }), pv,
+        el("p", { class: "hint" }, "Chaque page et chaque touche pourra aussi avoir son propre style. Tes images et GIF restent tels quels."));
+      preview(pv);
+    } else if (s === 3) {
+      body.append(el("h2", {}, "Par quoi commencer ?"),
+        el("div", { class: "wz-cards" }, ...STARTERS.map((st) => el("div", { class: "wz-card row-card" + (W.starter === st.id ? " on" : ""), onclick: () => { W.starter = st.id; draw(); } },
+          el("span", { class: "wz-ic", html: svgIcon(st.icon) }), el("div", {}, el("b", {}, st.name), el("span", {}, st.desc))))),
+        el("p", { class: "hint" }, W.starter === "keep" ? "Ton profil reste tel quel ; il prend seulement le style choisi."
+          : W.starter === "vide" ? "Un nouveau profil vide est créé : ton profil actuel n'est pas modifié."
+          : "Un nouveau profil est créé : ton profil actuel n'est pas modifié. Les faders contrôlent le volume général, le micro et des applications courantes ; tout se change ensuite."));
+    } else {
+      body.append(el("h2", {}, "C'est prêt !"),
+        el("ul", { class: "wz-tips" },
+          el("li", {}, "Glisse une action de la liste de gauche sur une touche pour la changer."),
+          el("li", {}, "Clique sur une touche pour régler son texte, son icône et son action."),
+          el("li", {}, "Clique sur un fader ou une molette pour choisir ce qu'il contrôle."),
+          el("li", {}, "Les réglages (roue en haut à droite) permettent de passer en mode avancé ou de relancer cet assistant.")));
+    }
+    const back = s > 0 ? el("button", { class: "btn ghost", onclick: () => { W.step--; draw(); } }, "Retour") : el("button", { class: "btn ghost", onclick: close }, "Passer");
+    const next = el("button", { class: "btn primary", onclick: async () => {
+      if (s < 3) { W.step++; draw(); return; }
+      if (s === 3) {
+        next.disabled = true;
+        try {
+          if (W.mode !== S.uiMode) await setUiMode(W.mode, true);
+          const st = STARTERS.find((x) => x.id === W.starter);
+          if (st.keys) {
+            const name = await invoke("create_starter_profile", { name: st.name, pages: starterPages(st), theme: W.theme, faders: st.faders });
+            toast(`Profil « ${name} » créé.`);
+          } else if ((S.cfg.general.theme || "graphite") !== W.theme) {
+            S.cfg.general.theme = W.theme; rethemed();
+          }
+        } catch (e) { toast(String(e), true); next.disabled = false; return; }
+        W.step++; draw(); return;
+      }
+      close();
+    } }, s === 0 ? "Commencer" : s === 3 ? "Créer" : s === 4 ? "C'est parti" : "Suivant");
+    node.append(el("div", { class: "wz-card-main" },
+      el("div", { class: "wz-steps" }, ...steps.map((t, i) => el("span", { class: i === s ? "on" : i < s ? "done" : "" }, t))),
+      body,
+      el("div", { class: "wz-actions" }, back, el("span", { class: "spacer" }), next)));
+  };
+  draw();
 }
 
 // --- Mises à jour ---
@@ -3170,6 +3336,10 @@ function buildLibrary() {
   if (S.gameBest > 0) cats.find((c) => c.cat === "HubForge").items.push(
     { name: "Mini-jeu tape-taupe", label: "Jouer", icon: "gamepad-2", color: "#2E7D32", action: { type: "game" } });
   for (const cat of cats) {
+    if (!isAdv()) {
+      if (SIMPLE_HIDDEN_CATS.includes(cat.cat)) continue;
+      cat.items = cat.items.filter((it) => !SIMPLE_HIDDEN_ITEMS.includes(it.name));
+    }
     box.append(libFolder({
       key: `cat:${cat.cat}`, title: cat.cat, level: 0, defaultOpen: true,
       children: cat.items.map((it) => libItem(it, cat.cat)),
@@ -3340,7 +3510,7 @@ async function mockInvoke(cmd, args) {
     case "addons_signature": return "x";
     case "addon_pages": return [{ name: "Fusion 360", apps: ["Fusion360.exe"], keys: [{ key: 1, label: "Esquisse", color: "#1565C0", action: { type: "hotkey", keys: "s" } }] }];
     case "get_initial":
-      return { update: window.__mockUpdate(), whats_new: location.search.includes("new") ? "### Nouveautés\n- **Installateur Windows** : menu Démarrer, désinstallation propre.\n- **Mises à jour depuis GitHub** en un clic.\n- Double-clic sur un fichier `.forge`." : null, profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.8.1",
+      return { update: window.__mockUpdate(), whats_new: location.search.includes("new") ? "### Nouveautés\n- **Installateur Windows** : menu Démarrer, désinstallation propre.\n- **Mises à jour depuis GitHub** en un clic.\n- Double-clic sur un fichier `.forge`." : null, profile: "Benjamin", profiles: ["Benjamin", "Laura", "Streaming"], game_best: 0, config: window.__mock.cfg, config_path: "C:\\Users\\benja\\AppData\\Roaming\\HubForge\\config.toml", autostart: false, version: "0.8.1", ui_mode: location.search.includes("simple") || location.search.includes("wizard") ? "simple" : "advanced", show_wizard: location.search.includes("wizard"),
         status: { modules: mods, faders: [72, 35, 60, 18, 90], page: 0, pressed: Array(15).fill(false), toggled: Array(15).fill(false),
           leds: location.search.includes("leds") ? { base: "#FFC800", faders: ["#00E676", "#00E676", "#FFC800", "#FFC800", "#000000"] } : { base: null, faders: [] },
           sim: location.search.includes("leds") ? { name: "Assetto Corsa", live: true, rpm: 7120, max_rpm: 8000, flag: 2 } : null,
@@ -3348,6 +3518,7 @@ async function mockInvoke(cmd, args) {
     case "render_keys": return args.keys.map((d) => d && { src: mockPreview(d), animated: !!(d.icon && /\.gif$/i.test(d.icon)) });
     case "list_icons": return window.__mock.icons;
     case "list_icon_packs": return window.__mockPacks || [];
+    case "create_starter_profile": window.__starter = args; return args.name;
     case "icon_pack_thumbs": return (window.__mockPacks || []).find((p) => p.folder === args.folder).icons.map((i, n) => [i.path, i.name, mockPreview({ label: i.name, color: ["#E5484D", "#3E63DD", "#30A46C", "#F76B15"][n % 4] })]);
     case "list_audio_apps": return ["chrome.exe", "discord.exe", "spotify.exe"];
     case "list_running_apps": return ["chrome.exe", "explorer.exe", "fusion360.exe", "obs64.exe", "prusa-slicer.exe"];
