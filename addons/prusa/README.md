@@ -3,7 +3,7 @@
 L'écran de ton imprimante Prusa sur le MasterHUB, dans le style de son
 interface : aperçu de la pièce sur 4 touches, barre d'avancement sur une
 rangée, temps restant, heure de fin, températures de la buse et du plateau,
-pause, arrêt, ré-impression et préchauffage des filaments du menu Prusa.
+pause, arrêt et ré-impression.
 
 Le programme parle à l'imprimante par **PrusaLink**, sur le réseau local
 (rien ne passe par Internet).
@@ -15,8 +15,9 @@ Le programme parle à l'imprimante par **PrusaLink**, sur le réseau local
 2. Dans la fiche de l'addon : **Autoriser ce programme**, puis renseigne
    l'adresse IP de l'imprimante et le mot de passe PrusaLink (sur
    l'imprimante : Réglages › Réseau › PrusaLink, utilisateur `maker`).
-3. **Ajouter ses pages au profil** : trois pages arrivent (« Imprimante »,
-   et les dossiers « Menu » et « Préchauffage »).
+3. **Ajouter ses pages au profil** : deux pages arrivent (« Imprimante » et
+   le dossier « Menu »). Les touches glissées une par une depuis la
+   bibliothèque marchent aussi (HubForge 0.25.1 ou plus récent).
 4. Dans Réglages › Apparence › *Zones sur plusieurs touches*, affiche la mire
    et règle l'écart pour que l'aperçu et la barre tombent juste d'une touche
    à l'autre.
@@ -26,11 +27,11 @@ Le programme parle à l'imprimante par **PrusaLink**, sur le réseau local
 | Page | Touches |
 |---|---|
 | Imprimante | aperçu de la pièce (1, 2, 6, 7), buse, plateau, Menu, temps restant, heure de fin, pause, % et barre (11 à 15) |
-| Menu | Retour, pause, arrêter (double appui), relancer (double appui), PrusaLink, préchauffage, refroidir, actualiser, buse, plateau, % et barre |
-| Préchauffage | PLA, PETG, ASA, PC, PVB, ABS, HIPS, PP, FLEX, PA, perso, Retour, buse, plateau, refroidir |
+| Menu | Retour, pause, arrêter (double appui), relancer (double appui), PrusaLink, actualiser, état, buse, plateau, % et barre |
 
-Le préchauffage envoie un mini fichier G-code (`hubforge-preheat.gcode`) et
-le lance : PrusaLink n'a pas de commande « régler la température ».
+Le préchauffage est retiré pour l'instant : l'API locale PrusaLink n'a pas
+de commande « régler la température », et le contournement par un petit
+fichier G-code fait s'arrêter l'imprimante sur un écran à valider.
 
 ## Licences
 

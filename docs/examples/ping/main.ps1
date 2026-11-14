@@ -1,4 +1,4 @@
-# Programme de l'addon « Ping » pour HubForge.
+﻿# Programme de l'addon « Ping » pour HubForge.
 # HubForge écrit une ligne JSON par message sur l'entrée standard ;
 # on lui répond par des lignes JSON sur la sortie standard.
 

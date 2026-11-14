@@ -102,7 +102,11 @@ function addonFolder(ad) {
   const toItem = (x) => ({
     name: x.name, color: x.color || "#37474F", preview: x.preview, description: x.description,
     addonKey: { label: x.label, icon: x.icon || undefined, color: x.color || undefined, text_color: x.text_color || undefined, action: x.action,
-      ...(x.state_var ? { state_var: x.state_var, toggle: x.on } : {}) },
+      ...(x.state_var ? { state_var: x.state_var, toggle: x.on } : {}),
+      // Dessin du programme de l'addon, zone sur plusieurs touches, style imposé.
+      ...(x.canvas ? { canvas: x.canvas } : {}),
+      ...(x.span ? { span: x.span } : {}),
+      ...(x.theme ? { theme: x.theme } : {}) },
   });
   const known = new Set(a.categories.map((c) => c.id));
   const countIn = (cid) => {

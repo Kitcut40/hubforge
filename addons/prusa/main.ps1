@@ -1,4 +1,4 @@
-# Programme de l'addon « Imprimante Prusa » pour HubForge.
+﻿# Programme de l'addon « Imprimante Prusa » pour HubForge.
 #
 # Il interroge l'imprimante par PrusaLink (API locale documentée par Prusa :
 # https://github.com/prusa3d/Prusa-Link-Web/blob/master/spec/openapi.yaml),
@@ -489,6 +489,8 @@ function IsIdle { return @('IDLE', 'READY', 'FINISHED', 'STOPPED') -contains $sc
 
 # Envoie un petit fichier G-code et le lance aussitôt (préchauffage,
 # refroidissement) : PrusaLink n'a pas de commande « température ».
+# DÉSACTIVÉ dans le manifeste (2.1.0) : l'imprimante s'arrête sur un écran à
+# valider avant de lancer le fichier, ce qui rend la touche inutile.
 function RunGcode($name, $lines) {
     $st = Api 'GET' 'api/v1/storage' $null $null
     $storage = 'usb'

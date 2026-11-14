@@ -247,10 +247,26 @@ impl Host {
     }
 }
 
+/// Windows PowerShell 5.1 lit un script sans marque UTF-8 (BOM) comme du
+/// texte « ANSI » : les accents, « ° » ou « — » du script sont abîmés. On
+/// ajoute la marque au script installé s'il contient des caractères non ASCII.
+fn ensure_utf8_bom(path: &Path) {
+    let Ok(bytes) = std::fs::read(path) else { return };
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) || bytes.is_ascii() || std::str::from_utf8(&bytes).is_err() {
+        return;
+    }
+    let mut out = vec![0xEF, 0xBB, 0xBF];
+    out.extend_from_slice(&bytes);
+    if let Err(e) = std::fs::write(path, out) {
+        log::warn!("{} : marque UTF-8 non ajoutée ({e})", path.display());
+    }
+}
+
 fn command_for(dir: &Path, def: &ServiceDef) -> Result<Command, String> {
     let main = dir.join(safe_rel(&def.main).ok_or("fichier invalide")?);
     let mut cmd = match def.run.as_str() {
         "powershell" => {
+            ensure_utf8_bom(&main);
             let mut c = Command::new("powershell");
             c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]).arg(&main);
             c
@@ -512,6 +528,24 @@ pub fn restart(id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn powershell_scripts_get_a_utf8_bom() {
+        let d = std::env::temp_dir().join("hubforge-bom-test");
+        let _ = std::fs::create_dir_all(&d);
+        let f = d.join("main.ps1");
+        std::fs::write(&f, "Write-Output '25°'\n").unwrap();
+        ensure_utf8_bom(&f);
+        let b = std::fs::read(&f).unwrap();
+        assert!(b.starts_with(&[0xEF, 0xBB, 0xBF]));
+        ensure_utf8_bom(&f); // une seule fois
+        assert_eq!(std::fs::read(&f).unwrap().len(), b.len());
+        let g = d.join("ascii.ps1");
+        std::fs::write(&g, "Write-Output 'ok'\n").unwrap();
+        ensure_utf8_bom(&g);
+        assert!(!std::fs::read(&g).unwrap().starts_with(&[0xEF]));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn parses_service_and_settings() {

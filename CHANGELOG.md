@@ -4,6 +4,13 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.25.1] — 2026-11-14
+
+### Corrections
+- Les actions d'addon glissées depuis la bibliothèque gardent leur dessin et leur zone sur plusieurs touches (elles s'affichaient en touches ordinaires).
+- Accents, « ° » et « — » abîmés (`25Â°`, `PRÃŠTE`) dans les touches des addons PowerShell : HubForge ajoute la marque UTF-8 au script pour que Windows PowerShell 5.1 le lise correctement.
+- Addon Imprimante Prusa 2.1.0 : préchauffage et refroidissement retirés (l'imprimante s'arrêtait sur un écran à valider).
+
 ## [0.25.0] — 2026-11-14
 
 ### Nouveautés

@@ -936,8 +936,8 @@ mod tests_services {
         let a = super::parse_manifest(&text, &dir).unwrap();
         assert_eq!(a.id, "prusa");
         assert_eq!(a.settings.len(), 7);
-        assert_eq!(a.actions.len(), 28);
-        assert_eq!(a.pages.len(), 3);
+        assert_eq!(a.actions.len(), 15);
+        assert_eq!(a.pages.len(), 2);
         assert_eq!(a.pages[0].keys.len(), 9);
         // Zones et dessins : l'aperçu couvre 2 × 2 touches, la barre 4.
         let thumb = a.actions.iter().find(|x| x.id == "thumb").unwrap().key_def(1);
@@ -957,8 +957,6 @@ mod tests_services {
         }
         let pause = a.actions.iter().find(|x| x.id == "pause").unwrap();
         assert_eq!(pause.state_var.as_deref(), Some("prusa.paused"));
-        let pla = a.actions.iter().find(|x| x.id == "heat_pla").unwrap();
-        assert!(matches!(&pla.action, crate::config::Action::Service { event, data, .. } if event == "preheat" && data.get("filament").and_then(|v| v.as_str()) == Some("PLA")));
     }
 
     /// Planche des pages d'un addon qui dessine, à partir des dessins de son
