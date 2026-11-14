@@ -20,3 +20,24 @@ EN3.update({
 "Rien n'est envoyé : « Copier le rapport » met ces informations dans le presse-papiers pour que tu puisses les joindre à une demande d'aide.": "Nothing is sent: \"Copy the report\" puts this information on the clipboard so you can attach it to a help request.",
 "Journal": "Log", "Cette touche est libre.": "This key is free.",
 })
+
+# 0.23 : addons nouvelle génération
+EN3.update({
+"Addons": "Addons", "Actions, pages et programmes": "Actions, pages and programs",
+"Cet addon contient un programme": "This addon includes a program",
+"Autoriser ce programme": "Allow this program",
+"Programme autorisé : il démarre dans quelques secondes.": "Program allowed: it starts in a few seconds.",
+"Programme en marche": "Program running", "Programme en cours de démarrage…": "Program starting…",
+"Programme arrêté (addon désactivé)": "Program stopped (addon disabled)", "En attente de ton accord": "Waiting for your approval",
+"Programme en erreur": "Program error", "Relancer": "Restart", "Retirer l'autorisation": "Revoke permission",
+"Le programme ne sera plus lancé": "The program won't be started anymore",
+"Action d'un addon": "Addon action", "Addon": "Addon", "Choisir un addon…": "Choose an addon…",
+"Aucun addon installé n'a de programme.": "No installed addon has a program.",
+"Événement": "Event", "ex. ping_now": "e.g. ping_now",
+"Le nom que le programme de l'addon attend (voir sa documentation).": "The name the addon's program expects (see its documentation).",
+"Son programme ne tourne pas : ouvre la fiche de l'addon (bouton Addons en haut).": "Its program isn't running: open the addon's card (Addons button at the top).",
+"État piloté par une variable": "State driven by a variable",
+"Action lancée quand la touche est dans l'état 1 (l'état suit la variable).": "Action run when the key is in state 1 (the state follows the variable).",
+"Action lancée quand la touche est dans l'état 2 (l'état suit la variable).": "Action run when the key is in state 2 (the state follows the variable).",
+"La touche passe à l'état 2 quand la variable vaut autre chose que vide, 0, false ou off (par exemple le direct d'OBS, envoyé par son addon). L'appui ne change alors plus l'état lui-même.": "The key switches to state 2 when the variable is anything other than empty, 0, false or off (for example OBS going live, sent by its addon). Pressing the key then no longer changes the state itself.",
+})

@@ -465,6 +465,10 @@ pub struct AddonView {
     addon: Option<crate::addons::Addon>,
     icon: IconView,
     actions: Vec<AddonActionView>,
+    /// Programme de l'addon : état, accord de l'utilisateur, réglages.
+    service: Option<crate::services::State>,
+    trusted: bool,
+    settings: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -477,8 +481,10 @@ pub struct AddonsInfo {
 #[tauri::command]
 pub async fn list_addons(state: State<'_, AppState>) -> Result<AddonsInfo, String> {
     let dir = state.cfg_dir.clone();
-    let disabled = profiles::load_settings(&dir).disabled_addons;
+    let st = profiles::load_settings(&dir);
+    let disabled = st.disabled_addons;
     let official = crate::official::ids();
+    let states = crate::services::states();
     let addons = crate::addons::scan(&dir)
         .into_iter()
         .map(|e| {
@@ -492,7 +498,18 @@ pub async fn list_addons(state: State<'_, AppState>) -> Result<AddonsInfo, Strin
                 ),
                 None => (IconView::default(), Vec::new()),
             };
+            let (service, trusted, settings) = match &e.addon {
+                Some(a) if a.service.is_some() || !a.settings.is_empty() => (
+                    a.service.as_ref().map(|_| states.get(&a.id).cloned().unwrap_or_default()),
+                    st.trusted_services.contains(&crate::services::trust_key(&a.id, &a.version)),
+                    crate::services::load_values(&dir, &a.id, &a.settings),
+                ),
+                _ => (None, false, serde_json::Map::new()),
+            };
             AddonView {
+                service,
+                trusted,
+                settings,
                 enabled: !disabled.contains(&e.folder),
                 official: official.contains(&e.folder.as_str()),
                 folder: e.folder,
@@ -560,6 +577,42 @@ pub fn set_addon_enabled(state: State<AppState>, id: String, on: bool) {
         st.disabled_addons.push(id);
     }
     profiles::save_settings(&state.cfg_dir, &st);
+    let _ = state.engine.lock().unwrap().send(EngineMsg::SyncServices);
+}
+
+/// Autorise (ou non) le programme d'un addon, pour sa version actuelle.
+#[tauri::command]
+pub fn trust_addon_service(state: State<AppState>, id: String, on: bool) -> Result<(), String> {
+    let entry = crate::addons::scan(&state.cfg_dir).into_iter().find(|e| e.folder == id).ok_or("addon introuvable")?;
+    let addon = entry.addon.ok_or("addon en erreur")?;
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.trusted_services.retain(|k| !k.starts_with(&format!("{}@", addon.id)));
+    if on {
+        st.trusted_services.push(crate::services::trust_key(&addon.id, &addon.version));
+        log::info!("programme de l'addon « {} » {} autorisé", addon.id, addon.version);
+    }
+    profiles::save_settings(&state.cfg_dir, &st);
+    let _ = state.engine.lock().unwrap().send(EngineMsg::SyncServices);
+    Ok(())
+}
+
+/// Enregistre les réglages d'un addon (le programme les reçoit aussitôt).
+#[tauri::command]
+pub fn save_addon_settings(state: State<AppState>, id: String, values: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let entry = crate::addons::scan(&state.cfg_dir).into_iter().find(|e| e.folder == id).ok_or("addon introuvable")?;
+    let addon = entry.addon.ok_or("addon en erreur")?;
+    // Seulement les réglages déclarés.
+    let clean: serde_json::Map<String, serde_json::Value> =
+        addon.settings.iter().filter_map(|d| values.get(&d.id).map(|v| (d.id.clone(), v.clone()))).collect();
+    crate::services::save_values(&state.cfg_dir, &addon.id, &clean)?;
+    crate::services::send(&addon.id, &serde_json::json!({ "type": "settings", "settings": crate::services::load_values(&state.cfg_dir, &addon.id, &addon.settings) }));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn restart_addon_service(state: State<AppState>, id: String) {
+    crate::services::restart(&id);
+    let _ = state.engine.lock().unwrap().send(EngineMsg::SyncServices);
 }
 
 /// Pages prêtes à l'emploi d'un addon, numérotées pour être ajoutées

@@ -1,0 +1,48 @@
+# Addon d'exemple « Ping » — niveau 2 (avec programme).
+# Il montre ta latence vers un serveur sur une touche, en direct.
+# Pour le tester : zippe ce dossier, renomme l'archive en ping.forge et
+# glisse-la sur la fenêtre de HubForge, puis autorise son programme.
+
+[addon]
+id = "ping"
+name = "Ping"
+version = "1.0.0"
+author = "HubForge"
+license = "MIT"
+description = "Ta latence (ping) vers un serveur, en direct sur une touche. La touche devient rouge si le serveur ne répond plus."
+format = 2
+icon = "builtin:activity"
+
+[service]
+run = "powershell"
+main = "main.ps1"
+
+[[setting]]
+id = "host"
+label = "Serveur à tester"
+default = "1.1.1.1"
+help = "Une adresse ou un nom : 1.1.1.1, google.com, l'IP de ton serveur de jeu…"
+
+[[setting]]
+id = "every"
+label = "Mesure toutes les (secondes)"
+type = "number"
+default = 5
+
+[[category]]
+id = "ping"
+name = "Ping"
+
+[[action]]
+id = "ping"
+name = "Ping en direct"
+category = "ping"
+description = "Affiche la latence ; un appui mesure tout de suite."
+label = "{ping.ms}"
+icon = "builtin:activity"
+color = "#00897B"
+type = "service"
+event = "ping_now"
+state_var = "down"
+on_label = "Hors ligne"
+on_color = "#C62828"

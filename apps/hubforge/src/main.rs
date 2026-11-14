@@ -34,6 +34,7 @@ mod official;
 mod profiles;
 mod render;
 mod sdimport;
+mod services;
 mod share;
 mod media;
 mod pcstate;
@@ -236,6 +237,9 @@ fn main() {
             ui::set_ui_mode,
             ui::set_auto_profiles,
             ui::set_lang,
+            ui::trust_addon_service,
+            ui::save_addon_settings,
+            ui::restart_addon_service,
             ui::finish_wizard,
             ui::create_starter_profile,
             ui::get_diagnostic,

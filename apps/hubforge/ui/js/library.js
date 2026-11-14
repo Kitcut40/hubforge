@@ -101,7 +101,8 @@ function addonFolder(ad) {
   const a = ad.addon;
   const toItem = (x) => ({
     name: x.name, color: x.color || "#37474F", preview: x.preview, description: x.description,
-    addonKey: { label: x.label, icon: x.icon || undefined, color: x.color || undefined, text_color: x.text_color || undefined, action: x.action },
+    addonKey: { label: x.label, icon: x.icon || undefined, color: x.color || undefined, text_color: x.text_color || undefined, action: x.action,
+      ...(x.state_var ? { state_var: x.state_var, toggle: x.on } : {}) },
   });
   const known = new Set(a.categories.map((c) => c.id));
   const countIn = (cid) => {

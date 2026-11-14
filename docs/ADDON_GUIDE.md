@@ -1,6 +1,6 @@
 # Créer un addon HubForge
 
-Un addon ajoute à HubForge des **actions prêtes à l'emploi** (avec leurs icônes), des **pages toutes faites** et la **détection d'une application**. Ce guide décrit le **niveau 1** : un addon déclaratif, sans aucun code, donc sans aucun risque pour l'utilisateur.
+Un addon ajoute à HubForge des **actions prêtes à l'emploi** (avec leurs icônes), des **pages toutes faites** et la **détection d'une application**. Ce guide décrit le **niveau 1** : un addon déclaratif, sans aucun code, donc sans aucun risque pour l'utilisateur ; puis le **niveau 2** (§8) : un addon avec un petit programme.
 
 > Plus aucun addon n'est livré avec HubForge : ils seront proposés dans un catalogue à télécharger.
 
@@ -222,6 +222,76 @@ en faire un fichier .forge.
 
 Les addons qui n'utilisent que ce format (manifeste + icônes) **ne sont pas soumis à la GPL** de HubForge : chaque auteur choisit sa licence. Voir [`ADDON-EXCEPTION.md`](../ADDON-EXCEPTION.md).
 
-## 8. Et après ?
+## 8. Niveau 2 : un addon avec un programme
 
-Les niveaux 2 (scripts Lua dans un bac à sable, touches qui changent selon l'état du logiciel) et 3 (programme externe) sont prévus dans [`SPECS.md`](SPECS.md) §4.5. Le `format = 1` restera compris par toutes les versions futures.
+Depuis HubForge 0.23, un addon peut embarquer un **petit programme** qui tourne en arrière-plan : il peut se connecter à un logiciel (OBS, un serveur, un jeu…), réagir en direct et afficher des informations sur les touches. Exemple complet et commenté : [`docs/examples/ping`](examples/ping) (PowerShell, rien à installer).
+
+**Sécurité.** Le programme tourne avec les droits de l'utilisateur. HubForge ne le lance **qu'après un accord explicite**, donné dans la fiche de l'addon, et pour **une version précise** : une mise à jour de l'addon redemande l'accord.
+
+### 8.1 Le manifeste
+
+```toml
+[addon]
+id = "ping"
+name = "Ping"
+version = "1.0.0"
+format = 2                 # obligatoire pour [service] et [[setting]]
+
+[service]
+run = "powershell"         # powershell, python, node ou exe
+main = "main.ps1"          # fichier dans le dossier de l'addon
+
+[[setting]]                # réglages affichés dans la fiche de l'addon
+id = "host"
+label = "Serveur à tester"
+type = "text"              # text, password, number ou bool
+default = "1.1.1.1"
+help = "Une phrase d'aide (facultatif)."
+
+[[action]]
+id = "ping"
+name = "Ping en direct"
+type = "service"           # l'appui est envoyé au programme
+event = "ping_now"         # nom libre, reçu par le programme
+data = { mode = "rapide" } # facultatif, transmis tel quel
+label = "{ping.ms}"        # affiche la variable « ms » du programme
+state_var = "down"         # facultatif : 2e état quand « ping.down » est vrai
+on_label = "Hors ligne"    # texte, icône et couleur du 2e état
+on_color = "#C62828"
+```
+
+- `python` lance `python main.py` et `node` lance `node main.js` : Python ou Node.js doivent être installés sur le PC. `powershell` est présent sur tous les Windows. `exe` lance un programme fourni dans l'addon.
+- Les variables du programme s'appellent `<id de l'addon>.<nom>` : `{ping.ms}` dans le texte d'une touche, dans une condition (« Si… »), ou dans un fichier texte pour OBS.
+- `state_var` : la touche passe à son second état quand la variable vaut autre chose que vide, `0`, `false`, `off` ou `non`. Un appui ne change alors pas l'état lui-même : c'est le programme qui décide.
+
+### 8.2 Le dialogue avec HubForge
+
+Une **ligne JSON par message**. HubForge écrit sur l'**entrée standard** du programme, le programme répond sur sa **sortie standard**. Ce que le programme écrit sur sa sortie d'erreur va dans le journal de HubForge.
+
+HubForge → programme :
+
+| Message | Quand |
+|---|---|
+| `{"type":"init","addon":"ping","hubforge":"0.23.0","lang":"fr","settings":{…}}` | au démarrage |
+| `{"type":"action","event":"ping_now","data":{…},"key":{"page":1,"key":4}}` | une touche de l'addon est appuyée (`key` peut être `null`, dans une macro par exemple) |
+| `{"type":"settings","settings":{…}}` | l'utilisateur a modifié les réglages |
+| `{"type":"shutdown"}` | arrêt : le programme a une seconde pour se terminer |
+
+Programme → HubForge :
+
+| Message | Effet |
+|---|---|
+| `{"type":"set_var","name":"ms","value":"23 ms"}` | donne une valeur à la variable `ping.ms` (texte, nombre ou booléen ; 500 caractères au plus) |
+| `{"type":"notify","text":"Connecté à OBS","level":"info"}` | message affiché dans HubForge (`level` = `info` ou `error`) |
+| `{"type":"ok","key":{"page":1,"key":4}}` | liseré vert sur la touche (`alert` : liseré rouge) |
+| `{"type":"log","text":"…"}` | ligne dans le journal |
+
+Un programme qui s'arrête est relancé (après 2, 4, 8… secondes), au plus 5 fois en 10 minutes ; ensuite la fiche de l'addon propose de le relancer.
+
+### 8.3 Licence
+
+Le programme d'un addon communique avec HubForge seulement par ce protocole : il n'est **pas** soumis à la GPL de HubForge, son auteur choisit sa licence.
+
+## 9. Et après ?
+
+Le `format = 1` reste compris par toutes les versions de HubForge. Un catalogue d'addons à télécharger est prévu.

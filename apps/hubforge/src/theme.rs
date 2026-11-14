@@ -598,6 +598,7 @@ mod tests {
             theme: Some(theme.into()),
             confirm: false,
             repeat: false,
+            state_var: None,
         }
     }
 

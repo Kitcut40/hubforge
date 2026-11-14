@@ -289,6 +289,11 @@ pub struct KeyDef {
     /// Répète l'action tant que la touche reste enfoncée (volume, défilement…).
     #[serde(default, skip_serializing_if = "is_false")]
     pub repeat: bool,
+    /// Touche à 2 états pilotée par une variable (souvent celle d'un addon,
+    /// ex. « obs.live ») : état 2 quand elle vaut autre chose que vide, 0,
+    /// false, off ou non. Un appui ne change alors pas l'état lui-même.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_var: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -326,6 +331,7 @@ impl KeyDef {
                 theme: self.theme.clone(),
                 confirm: self.confirm,
                 repeat: self.repeat,
+                state_var: self.state_var.clone(),
             },
             _ => KeyDef { toggle: None, ..self.clone() },
         }
@@ -361,6 +367,15 @@ pub enum Action {
         target: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
+    },
+    /// Action d'un addon avec programme : l'événement est envoyé à son
+    /// programme (voir services.rs), avec `data` tel quel.
+    Service {
+        #[serde(default)]
+        addon: String,
+        event: String,
+        #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
+        data: toml::Table,
     },
     /// Fermer une application (« discord.exe »), proprement ou de force.
     CloseApp {
@@ -475,6 +490,14 @@ impl Action {
     }
 
     /// Actions contenues (étapes d'une macro, branches d'une condition).
+    /// Applique `f` à cette action et à toutes ses sous-actions.
+    pub fn for_each_mut(&mut self, f: &mut dyn FnMut(&mut Action)) {
+        f(self);
+        for c in self.children_mut() {
+            c.for_each_mut(f);
+        }
+    }
+
     pub fn children_mut(&mut self) -> Vec<&mut Action> {
         match self {
             Action::Macro { steps } => steps.iter_mut().collect(),
@@ -578,6 +601,15 @@ pub fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
                 return Err(format!("condition trop longue (maximum {MACRO_MAX_STEPS} étapes)"));
             }
             then_steps.iter().chain(else_steps).try_for_each(|s| validate_action(s, depth + 1))
+        }
+        Action::Service { addon, event, .. } => {
+            if !addon.is_empty() && !crate::addons::valid_id(addon) {
+                return Err(format!("action d'addon : identifiant « {addon} » invalide"));
+            }
+            if event.trim().is_empty() || event.len() > 80 {
+                return Err("action d'addon : « event » est obligatoire".into());
+            }
+            Ok(())
         }
         Action::CloseApp { target, .. } => {
             let t = crate::foreground::normalize(target);

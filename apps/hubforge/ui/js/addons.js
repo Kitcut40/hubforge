@@ -89,7 +89,7 @@ async function addAddonPages(ad) {
 }
 
 function addonsInspector() {
-  const out = [title("Addons", "Niveau 1 · sans code")];
+  const out = [title("Addons", "Actions, pages et programmes")];
   out.push(el("div", { class: "row", style: "margin-bottom:10px" },
     el("button", { class: "btn primary grow", onclick: async () => {
       const p = await invoke("pick_file", { kind: "addon" });
@@ -107,13 +107,13 @@ function addonsInspector() {
     const card = el("div", { class: "addon-card" + (ad.error ? " broken" : "") + (ad.enabled ? "" : " off") });
     const head = el("div", { class: "addon-head" }, addonIcon(ad, 34),
       el("div", { class: "grow" },
-        el("div", { class: "addon-name" }, a ? a.name : ad.folder, ad.official ? el("span", { class: "addon-badge" }, "officiel") : null),
+        el("div", { class: "addon-name", translate: "no" }, a ? a.name : ad.folder, ad.official ? el("span", { class: "addon-badge" }, "officiel") : null),
         el("div", { class: "addon-meta" }, a ? [`v${a.version}`, a.author, a.license].filter(Boolean).join(" · ") : "Addon en erreur")));
     card.append(head);
     if (ad.error) {
       card.append(el("div", { class: "addon-error" }, ad.error));
     } else {
-      if (a.description) card.append(el("p", { class: "addon-desc" }, a.description));
+      if (a.description) card.append(el("p", { class: "addon-desc", translate: "no" }, a.description));
       const counts = [`${a.actions.length} action${a.actions.length > 1 ? "s" : ""}`];
       if (a.pages.length) counts.push(`${a.pages.length} page${a.pages.length > 1 ? "s" : ""} prête${a.pages.length > 1 ? "s" : ""}`);
       if (a.detect.length) counts.push(`détecte ${a.detect.join(", ")}`);
@@ -124,6 +124,7 @@ function addonsInspector() {
         buildLibrary();
         renderInspector();
       }));
+      if (a.service || (a.settings && a.settings.length)) card.append(...addonServiceBlock(ad));
       if (a.pages.length) card.append(el("button", { class: "btn", style: "width:100%;margin-top:4px", onclick: () => addAddonPages(ad) },
         `Ajouter ${a.pages.length > 1 ? "ses pages" : "sa page"} au profil « ${S.profile} »`));
     }
@@ -141,5 +142,53 @@ function addonsInspector() {
   }
   out.push(el("div", { class: "sep" }));
   out.push(el("p", { class: "hint" }, "Créer un addon : un dossier avec un manifest.toml et des icônes, zippé et renommé en .forge. Le guide complet (avec un modèle à donner à une IA) est dans docs/ADDON_GUIDE.md du dépôt GitHub."));
+  return out;
+}
+
+const RUNTIME_NAMES = { powershell: "PowerShell", python: "Python", node: "Node.js", exe: "un programme .exe" };
+
+/** Programme d'un addon (niveau 2) : accord, état, réglages. */
+function addonServiceBlock(ad) {
+  const a = ad.addon;
+  const out = [];
+  const refresh = async () => { await loadAddons(); renderInspector(); };
+  if (a.service) {
+    if (!ad.trusted) {
+      out.push(el("div", { class: "addon-trust" },
+        el("b", {}, "Cet addon contient un programme"),
+        el("p", {}, `Il lance ${RUNTIME_NAMES[a.service.run] || a.service.run} (${a.service.main}) en arrière-plan, avec les mêmes droits que toi sur ce PC. N'autorise que les addons dont tu connais la source.`),
+        el("button", { class: "btn primary small", onclick: async () => {
+          try { await invoke("trust_addon_service", { id: ad.folder, on: true }); toast("Programme autorisé : il démarre dans quelques secondes."); setTimeout(refresh, 1500); }
+          catch (e) { toast(String(e), true); }
+        } }, "Autoriser ce programme")));
+    } else {
+      const st = ad.service || { state: "stopped", message: "" };
+      const label = { running: "Programme en marche", stopped: ad.enabled ? "Programme en cours de démarrage…" : "Programme arrêté (addon désactivé)", waiting: "En attente de ton accord", error: "Programme en erreur" }[st.state] || st.state;
+      out.push(el("div", { class: "addon-svc " + (st.state || "") },
+        el("span", { class: "dot" }), el("span", { class: "grow" }, label, st.message ? el("small", {}, " — " + st.message) : null),
+        st.state === "error" ? el("button", { class: "btn small", onclick: async () => { await invoke("restart_addon_service", { id: a.id }); setTimeout(refresh, 1500); } }, "Relancer") : null,
+        el("button", { class: "btn ghost small", title: "Le programme ne sera plus lancé", onclick: async () => {
+          await invoke("trust_addon_service", { id: ad.folder, on: false }); setTimeout(refresh, 800);
+        } }, "Retirer l'autorisation")));
+    }
+  }
+  if (a.settings && a.settings.length) {
+    // Les textes des réglages viennent de l'addon : on ne les traduit pas.
+    const first = out.length;
+    const values = Object.assign({}, ad.settings || {});
+    const save = async () => { try { await invoke("save_addon_settings", { id: ad.folder, values }); ad.settings = values; } catch (e) { toast(String(e), true); } };
+    for (const d of a.settings) {
+      let input;
+      if (d.kind === "bool") {
+        out.push(switchRow(d.label, !!values[d.id], (v) => { values[d.id] = v; save(); }, d.help || undefined));
+        continue;
+      }
+      input = el("input", { class: "input" + (d.kind === "password" ? " mono" : ""), type: d.kind === "password" ? "password" : d.kind === "number" ? "number" : "text",
+        value: values[d.id] ?? "", spellcheck: "false", autocomplete: "off",
+        onchange: (e) => { values[d.id] = d.kind === "number" ? Number(e.target.value) : e.target.value; save(); } });
+      out.push(field(d.label, input, d.help ? el("p", { class: "hint" }, d.help) : null));
+    }
+    for (const n of out.slice(first)) n.setAttribute("translate", "no");
+  }
   return out;
 }

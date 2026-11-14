@@ -6,6 +6,11 @@
 // ---------------------------------------------------------------------------
 function onStatus(st) {
   const prev = S.status;
+  // Message d'un addon (programme) : une seule fois par message.
+  if (st.notice && (!prev || !prev.notice || prev.notice[0] !== st.notice[0]) && S.noticeSeen !== st.notice[0]) {
+    S.noticeSeen = st.notice[0];
+    if (prev) toast(`${st.notice[1]} : ${st.notice[2]}`, st.notice[3]);
+  }
   if (st.profile && S.profile && st.profile !== S.profile) {
     S.status = st;
     reloadProfile();

@@ -52,6 +52,8 @@ pub enum EngineMsg {
     ClearVars,
     /// La langue a changé : redessiner les touches (dates, météo…).
     Redraw,
+    /// Addons avec programme : activation, accord ou réglages modifiés.
+    SyncServices,
 }
 
 /// Résultat d'une action qui tourne en arrière-plan (requête web, IA).
@@ -175,6 +177,8 @@ pub struct Status {
     pub pickup: Vec<bool>,
     /// MasterHUB en veille.
     pub asleep: bool,
+    /// Dernier message d'un addon à afficher : (numéro, addon, texte, erreur).
+    pub notice: Option<(u64, String, String, bool)>,
 }
 
 fn hex(c: Rgb) -> String {
@@ -307,6 +311,11 @@ pub struct Engine {
     profiles_check: Instant,
     auto_profiles: bool,
     auto_profile_from: Option<String>,
+    /// Addons avec programme : dernière synchronisation, signature des addons.
+    services_check: Instant,
+    services_sig: String,
+    services_last_full: Instant,
+    notice: Option<(u64, String, String, bool)>,
 }
 
 fn kind_id(k: Kind) -> &'static str {
@@ -403,6 +412,10 @@ impl Engine {
             profiles_check: Instant::now() - Duration::from_secs(60),
             auto_profiles: true,
             auto_profile_from: None,
+            services_check: Instant::now() - Duration::from_secs(60),
+            services_sig: String::new(),
+            services_last_full: Instant::now() - Duration::from_secs(60),
+            notice: None,
         };
         e.sync_fader_targets();
         crate::weather::set_city(&e.cfg.general.weather_city);
@@ -429,6 +442,7 @@ impl Engine {
             page: self.page,
             pressed: self.pressed.to_vec(),
             toggled: (0..KEY_COUNT as u8).map(|k| self.is_toggled(k)).collect(),
+            notice: self.notice.clone(),
             config_error: self.config_error.clone(),
             profile: self.active.lock().map(|a| a.name.clone()).unwrap_or_default(),
             game: self.game.is_some(),
@@ -494,6 +508,7 @@ impl Engine {
                 self.load_profile_apps();
             }
             self.tick_repeat();
+            self.tick_services();
             if self.doom.is_some() {
                 self.tick_doom();
             } else if self.game.is_some() {
@@ -540,6 +555,7 @@ impl Engine {
 
     fn shutdown(&mut self) {
         log::info!("arrêt de HubForge…");
+        crate::services::stop_all();
         self.release_held();
         self.vars.save_now();
         // Le module 15 touches retrouve son animation du logo.
@@ -554,6 +570,10 @@ impl Engine {
                 self.apply_config(*cfg);
             }
             EngineMsg::SwitchProfile(name) => self.switch_profile(&name),
+            EngineMsg::SyncServices => {
+                self.services_check = Instant::now() - Duration::from_secs(60);
+                self.services_last_full = Instant::now() - Duration::from_secs(60);
+            }
             EngineMsg::Redraw => {
                 self.render_all();
                 self.show_page();
@@ -1037,7 +1057,75 @@ impl Engine {
     // ------------------------------------------------------------------
 
     fn is_toggled(&self, key: u8) -> bool {
+        if let Some(name) = self.key_def(key).and_then(|d| d.state_var.as_deref()).filter(|n| !n.is_empty()) {
+            return truthy(self.vars.all().get(name).map(|s| s.as_str()).unwrap_or(""));
+        }
         self.toggled.get(&(self.page, key)).copied().unwrap_or(false)
+    }
+
+    /// Addons avec programme : démarrage / arrêt, et messages reçus.
+    fn tick_services(&mut self) {
+        if self.services_check.elapsed() >= Duration::from_secs(4) {
+            self.services_check = Instant::now();
+            let sig = crate::addons::signature(&self.cfg_dir);
+            // Rescan complet si les addons ont changé (ou sur demande), sinon
+            // toutes les 30 s pour relancer ce qui doit l'être.
+            if sig != self.services_sig || self.services_last_full.elapsed() >= Duration::from_secs(30) {
+                self.services_sig = sig;
+                self.services_last_full = Instant::now();
+                crate::services::sync(crate::addons::desired_services(&self.cfg_dir));
+            }
+        }
+        let msgs = crate::services::poll();
+        if msgs.is_empty() {
+            return;
+        }
+        let mut vars_changed: Vec<String> = Vec::new();
+        for m in msgs {
+            match m {
+                crate::services::Incoming::SetVar { name, value } => {
+                    if self.vars.all().get(&name) != Some(&value) && self.vars.apply(&name, "set", &value) {
+                        if self.cfg.general.vars_files {
+                            self.vars.export(&self.cfg_dir.join("variables"), Some(&name));
+                        }
+                        vars_changed.push(name);
+                    }
+                }
+                crate::services::Incoming::Notify { addon, text, error } => {
+                    let id = self.notice.as_ref().map(|n| n.0 + 1).unwrap_or(1);
+                    if error {
+                        log::warn!("addon {addon} : {text}");
+                    } else {
+                        log::info!("addon {addon} : {text}");
+                    }
+                    self.notice = Some((id, addon, text, error));
+                    self.notify();
+                }
+                crate::services::Incoming::Mark { page, key, ok } => {
+                    if (key as usize) < KEY_COUNT {
+                        self.set_mark(Some((page, key)), if ok { MARK_OK } else { MARK_ERR }, Duration::from_millis(if ok { 900 } else { 2500 }));
+                    }
+                }
+            }
+        }
+        if !vars_changed.is_empty() {
+            self.refresh_var_keys();
+            // Touches à 2 états qui suivent une de ces variables.
+            let keys: Vec<u8> = self
+                .cfg
+                .pages
+                .get(self.page)
+                .map(|p| p.keys.iter().filter(|d| d.state_var.as_ref().map(|n| vars_changed.contains(n)).unwrap_or(false)).map(|d| d.key - 1).collect())
+                .unwrap_or_default();
+            if self.game.is_none() {
+                for k in keys.into_iter().filter(|k| (*k as usize) < KEY_COUNT) {
+                    let f = self.visual(k).frames[0].clone();
+                    self.send_image(k, &f.jpeg);
+                    self.restart_anim(k);
+                }
+            }
+            self.notify();
+        }
     }
 
     fn visual(&self, key: u8) -> &KeyVisual {
@@ -1270,7 +1358,7 @@ impl Engine {
         }
         let state = if def.toggle.is_some() && self.is_toggled(key) { 1 } else { 0 };
         let action = def.state(state).action;
-        if def.toggle.is_some() {
+        if def.toggle.is_some() && def.state_var.is_none() {
             let page = self.page;
             self.toggled.insert((page, key), state == 0);
         }
@@ -1401,6 +1489,19 @@ impl Engine {
             }
             Action::StopSounds => self.sounds.send(SoundCmd::StopAll),
             Action::CloseApp { target, force } => foreground::close_app(target, *force),
+            Action::Service { addon, event, data } => {
+                let key = self.acting.map(|(p, k)| serde_json::json!({ "page": p + 1, "key": k + 1 })).unwrap_or(serde_json::Value::Null);
+                let msg = serde_json::json!({
+                    "type": "action",
+                    "event": event,
+                    "data": serde_json::to_value(data).unwrap_or(serde_json::Value::Null),
+                    "key": key,
+                });
+                if !crate::services::send(addon, &msg) {
+                    log::warn!("addon {addon} : son programme ne tourne pas (activé et autorisé dans sa fiche ?)");
+                    self.set_mark(self.acting, MARK_ERR, Duration::from_millis(1500));
+                }
+            }
             Action::Text { text } => {
                 let t = self.expand(text, false);
                 self.input.text(&t);
@@ -2597,4 +2698,10 @@ fn render_key_visuals(def: &KeyDef, vars: &BTreeMap<String, String>, dir: &std::
 /// Actions qu'on peut répéter tant que la touche est enfoncée.
 fn repeatable(a: &Action) -> bool {
     matches!(a, Action::Hotkey { .. } | Action::Text { .. } | Action::Media { .. } | Action::Var { .. })
+}
+
+/// Valeur « vraie » d'une variable pour une touche à 2 états.
+fn truthy(v: &str) -> bool {
+    let v = v.trim().to_lowercase();
+    !matches!(v.as_str(), "" | "0" | "false" | "off" | "non" | "no" | "faux")
 }

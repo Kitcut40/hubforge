@@ -6,3 +6,4 @@ hubforge-probe-log-*.txt
 Thumbs.db
 apps/hubforge/gen/
 dist/
+__pycache__/

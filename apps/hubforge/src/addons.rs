@@ -18,7 +18,7 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 /// Version du format de manifeste comprise par cette version de HubForge.
-pub const FORMAT: i64 = 1;
+pub const FORMAT: i64 = 2;
 const MAX_ARCHIVE_FILES: usize = 2000;
 const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
 
@@ -47,6 +47,10 @@ pub struct AddonAction {
     pub color: Option<String>,
     pub text_color: Option<String>,
     pub action: Action,
+    /// Touche à 2 états pilotée par une variable du programme de l'addon
+    /// (« live » → « <id>.live ») : texte, icône et couleur du second état.
+    pub state_var: Option<String>,
+    pub on: Option<crate::config::KeyState>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,6 +91,10 @@ pub struct Addon {
     pub categories: Vec<Category>,
     pub actions: Vec<AddonAction>,
     pub pages: Vec<AddonPage>,
+    /// Programme de l'addon (niveau 2), s'il en a un.
+    pub service: Option<crate::services::ServiceDef>,
+    /// Réglages proposés dans la fiche de l'addon.
+    pub settings: Vec<crate::services::SettingDef>,
 }
 
 /// Addon trouvé sur le disque : chargé, ou en erreur (message précis).
@@ -112,7 +120,7 @@ pub fn resolve_icon(cfg_dir: &Path, icon: &str) -> Option<PathBuf> {
     Some(dir(cfg_dir).join(rel))
 }
 
-fn valid_id(id: &str) -> bool {
+pub fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 40 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
@@ -192,6 +200,11 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
     let name = req_str(a, "name", "[addon]")?;
     let icon = icon_ref(&id, addon_dir, get_str(a, "icon"), "[addon]")?;
 
+    let (service, settings) = crate::services::parse(&root, addon_dir)?;
+    if (service.is_some() || !settings.is_empty()) && format < 2 {
+        return Err("[service] et [[setting]] demandent format = 2 dans [addon]".into());
+    }
+
     let detect = match root.get("detect").and_then(|v| v.as_table()) {
         Some(d) => str_list(d, "windows", "[detect]")?,
         None => Vec::new(),
@@ -238,13 +251,24 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
         }
         // Les champs restants décrivent l'action elle-même (comme dans config.toml).
         let mut act = t.clone();
-        for meta in ["id", "name", "category", "description", "label", "icon", "color", "text_color"] {
+        for meta in ["id", "name", "category", "description", "label", "icon", "color", "text_color", "state_var", "on_label", "on_icon", "on_color"] {
             act.remove(meta);
         }
         if !act.contains_key("type") {
             return Err(format!("{ctx} : le champ « type » est obligatoire (hotkey, text, launch, media, macro…)"));
         }
-        let action: Action = toml::Value::Table(act).try_into().map_err(|e| format!("{ctx} : {e}"))?;
+        let mut action: Action = toml::Value::Table(act).try_into().map_err(|e| format!("{ctx} : {e}"))?;
+        // Action « service » : toujours pour le programme de cet addon.
+        let mut uses_service = false;
+        action.for_each_mut(&mut |a| {
+            if let Action::Service { addon, .. } = a {
+                *addon = id.clone();
+                uses_service = true;
+            }
+        });
+        if uses_service && service.is_none() {
+            return Err(format!("{ctx} : type = \"service\" demande une section [service] (le programme de l'addon)"));
+        }
         if action.any(&|a| matches!(a, Action::Game | Action::Profile { .. } | Action::OpenConfig | Action::Sound { .. })) {
             return Err(format!("{ctx} : ce type d'action n'est pas autorisé dans un addon"));
         }
@@ -252,7 +276,37 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
         let text_color = get_str(t, "text_color");
         check_color(&color, &ctx)?;
         check_color(&text_color, &ctx)?;
+        // État piloté par une variable du programme.
+        let state_var = match get_str(t, "state_var").filter(|s| !s.is_empty()) {
+            Some(v) => {
+                if !crate::vars::valid_name(&v) || v.contains('.') {
+                    return Err(format!("{ctx} : state_var « {v} » : lettres, chiffres, _ et -"));
+                }
+                if service.is_none() {
+                    return Err(format!("{ctx} : state_var demande une section [service]"));
+                }
+                Some(format!("{id}.{v}"))
+            }
+            None => None,
+        };
+        let on_color = get_str(t, "on_color");
+        check_color(&on_color, &ctx)?;
+        let on = match &state_var {
+            Some(_) => Some(crate::config::KeyState {
+                label: get_str(t, "on_label").unwrap_or_else(|| get_str(t, "label").unwrap_or_else(|| aname.clone())),
+                icon: match get_str(t, "on_icon") {
+                    Some(i) => icon_ref(&id, addon_dir, Some(i), &ctx)?,
+                    None => icon_ref(&id, addon_dir, get_str(t, "icon"), &ctx)?,
+                },
+                color: on_color.or_else(|| Some("#E5484D".into())),
+                text_color: text_color.clone(),
+                action: action.clone(),
+            }),
+            None => None,
+        };
         actions.push(AddonAction {
+            state_var,
+            on,
             label: get_str(t, "label").unwrap_or_else(|| aname.clone()),
             icon: icon_ref(&id, addon_dir, get_str(t, "icon"), &ctx)?,
             id: aid,
@@ -330,7 +384,31 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
         categories,
         actions,
         pages,
+        service,
+        settings,
     })
+}
+
+/// Addons avec programme, et ce que l'utilisateur en a permis.
+pub fn desired_services(cfg_dir: &Path) -> Vec<crate::services::Desired> {
+    let st = crate::profiles::load_settings(cfg_dir);
+    scan(cfg_dir)
+        .into_iter()
+        .filter_map(|e| {
+            let a = e.addon?;
+            let def = a.service.clone()?;
+            let enabled = !st.disabled_addons.contains(&e.folder);
+            let trusted = st.trusted_services.contains(&crate::services::trust_key(&a.id, &a.version));
+            Some(crate::services::Desired {
+                settings: crate::services::load_values(cfg_dir, &a.id, &a.settings),
+                dir: dir(cfg_dir).join(&e.folder),
+                id: a.id,
+                def,
+                allowed: enabled && trusted,
+                needs_trust: enabled && !trusted,
+            })
+        })
+        .collect()
 }
 
 // ----------------------------------------------------------------------
@@ -493,7 +571,7 @@ impl AddonAction {
             color: self.color.clone(),
             text_color: self.text_color.clone(),
             action: self.action.clone(),
-            toggle: None,
+            toggle: self.on.clone(),
             widget: None,
             widget_style: None,
             widget_target: None,
@@ -502,6 +580,7 @@ impl AddonAction {
             theme: None,
             confirm: false,
             repeat: false,
+            state_var: self.state_var.clone(),
         }
     }
 }
@@ -547,6 +626,7 @@ impl Addon {
                                 theme: None,
                                 confirm: false,
                                 repeat: false,
+                                state_var: None,
                             }
                         } else {
                             let target = k.open.as_deref().and_then(|o| self.pages.iter().find(|p| p.id == o));
@@ -566,6 +646,7 @@ impl Addon {
                                 theme: None,
                                 confirm: false,
                                 repeat: false,
+                                state_var: None,
                             }
                         };
                         if let Some(l) = &k.label {
@@ -770,5 +851,25 @@ keys = [ { key = 1, back = true }, { key = 2, action = "hello", label = "Salut" 
         assert!(e.error.is_none(), "{:?}", e.error);
         println!("OK : addon « {id} », {} actions", e.addon.as_ref().unwrap().actions.len());
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod tests_services {
+    #[test]
+    fn example_ping_addon_loads() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples/ping");
+        let text = std::fs::read_to_string(dir.join("manifest.toml")).unwrap();
+        let a = super::parse_manifest(&text, &dir).unwrap();
+        assert_eq!(a.service.as_ref().unwrap().run, "powershell");
+        assert_eq!(a.settings.len(), 2);
+        let act = &a.actions[0];
+        assert_eq!(act.state_var.as_deref(), Some("ping.down"));
+        let k = act.key_def(1);
+        assert!(matches!(&k.action, crate::config::Action::Service { addon, event, .. } if addon == "ping" && event == "ping_now"));
+        assert!(k.toggle.is_some());
+        crate::config::validate_action(&k.action, 0).unwrap();
+        // Sans format = 2 : refusé.
+        assert!(super::parse_manifest(&text.replace("format = 2", "format = 1"), &dir).is_err());
     }
 }

@@ -4,6 +4,23 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.23.0] — 2026-11-14
+
+### Nouveautés
+- **Addons nouvelle génération (niveau 2)** : un addon peut maintenant embarquer un petit programme (PowerShell, Python, Node ou .exe) qui tourne en arrière-plan.
+  - Le programme reçoit les appuis sur les touches, met à jour des variables (`{addon.nom}` sur les touches), affiche des notifications et entoure une touche de vert ou de rouge.
+  - Rien ne démarre sans ton accord : la fiche de l'addon affiche « Autoriser ce programme ». L'accord est à redonner à chaque nouvelle version de l'addon.
+  - État du programme visible dans la fiche (en marche, en erreur…), bouton Relancer. En cas de plantage, HubForge le relance tout seul (5 fois au plus en 10 minutes).
+  - Les programmes sont arrêtés proprement à la fermeture de HubForge.
+- **Réglages d'addon** : un addon peut déclarer ses propres réglages (texte, nombre, mot de passe, interrupteur), modifiables dans sa fiche.
+- **Touches pilotées par une variable** : l'état d'une touche à 2 états peut suivre une variable (par exemple « en direct » / « hors ligne »), au lieu de changer à chaque appui.
+- Nouvelle action « Action d'un addon » (mode avancé).
+- Addon d'exemple **Ping** : ta latence vers un serveur, en direct sur une touche, rouge si la connexion tombe.
+
+### Pour les créateurs d'addons
+- Format de manifest 2 (`format = 2`) avec les sections `[service]` et `[[setting]]`.
+- Protocole simple : une ligne JSON par message sur l'entrée et la sortie standard. Tout est décrit dans `docs/ADDON_GUIDE.md` (§8 et §9), avec l'exemple complet `docs/examples/ping`.
+
 ## [0.22.0] — 2026-11-14
 
 ### Nouveautés

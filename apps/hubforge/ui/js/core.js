@@ -165,7 +165,7 @@ const ACTION_TYPES = [
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
   ["media", "Multimédia"], ["close_app", "Fermer une application"], ["app_mute", "Couper le son d'une application"], ["audio_output", "Changer de sortie audio"], ["timer", "Minuteur de la touche"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
   ["macro", "Macro (plusieurs actions à la suite)"], ["var", "Variable (compteur, interrupteur…)"], ["if", "Condition (si… alors… sinon)"],
-  ["ai", "IA sur le texte sélectionné"], ["http", "Requête web"],
+  ["ai", "IA sur le texte sélectionné"], ["http", "Requête web"], ["service", "Action d'un addon"],
   ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
   ["profile", "Changer de profil"],
 ];

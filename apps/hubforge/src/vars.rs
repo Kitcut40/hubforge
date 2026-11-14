@@ -26,7 +26,7 @@ pub struct Vars {
 /// Nom de variable : lettres, chiffres, « _ » et « - », 1 à 40 caractères.
 pub fn valid_name(name: &str) -> bool {
     let n = name.trim();
-    !n.is_empty() && n.chars().count() <= 40 && n.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    !n.is_empty() && n.chars().count() <= 40 && n.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') && !n.starts_with('.') && !n.ends_with('.')
 }
 
 /// Nom entre accolades : sans espaces autour (« { rien } » reste du texte).

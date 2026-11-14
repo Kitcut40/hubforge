@@ -25,6 +25,11 @@ const EN_DICT = ''' + json.dumps(D, ensure_ascii=False, indent=0) + r''';
 const EN_PATTERNS = [
   [/^(.+) — (.+)$/, "$T1 — $T2"],
   [/^Modèle : (.+)$/, "Template: $T1"],
+  [/^Addon (.+) : (.+)$/, "Addon $1: $2"],
+  [/^Action de l'addon « (.+) », envoyée à son programme \(événement « (.+) »\)\.$/, "Action of the addon “$1”, sent to its program (event “$2”)."],
+  [/^Action de l'addon « (.+) », qui n'est pas installé\.$/, "Action of the addon “$1”, which isn't installed."],
+  [/^(.+) \(non installé\)$/, "$1 (not installed)"],
+  [/^Il lance (.+) \((.+)\) en arrière-plan, avec les mêmes droits que toi sur ce PC\. N'autorise que les addons dont tu connais la source\.$/, "It runs $1 ($2) in the background, with the same rights as you on this PC. Only allow addons whose source you know."],
   [/^(Gauche|Droite) · (.+)$/, "$T1 · $T2"],
   [/^Étapes \((\d+)\)$/, "Steps ($1)"],
   [/^Modules détectés \((\d+)\)$/, "Detected modules ($1)"],

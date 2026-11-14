@@ -47,6 +47,8 @@ pub struct Settings {
     pub auto_profiles: Option<bool>,
     /// Langue : "fr", "en" ; vide = celle du système.
     pub lang: String,
+    /// Programmes d'addons autorisés par l'utilisateur (« id@version »).
+    pub trusted_services: Vec<String>,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.

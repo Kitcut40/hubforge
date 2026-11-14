@@ -544,6 +544,7 @@ mod tests {
             theme: None,
             confirm: false,
             repeat: false,
+            state_var: None,
         }
     }
 

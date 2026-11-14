@@ -107,7 +107,10 @@ function keyInspector(k) {
   const upd = (fn, opts) => { fn(st); keyChanged(k, opts); };
 
   if (tab === "action") {
-    if (def.toggle) body.push(el("p", { class: "hint", style: "margin:-4px 0 12px" }, S.editState === 0
+    if (def.toggle) body.push(el("p", { class: "hint", style: "margin:-4px 0 12px" }, def.state_var
+      ? (S.editState === 0 ? "Action lancée quand la touche est dans l'état 1 (l'état suit la variable)."
+                           : "Action lancée quand la touche est dans l'état 2 (l'état suit la variable).")
+      : S.editState === 0
       ? "Action lancée quand la touche est dans l'état 1 ; elle passe ensuite à l'état 2."
       : "Action lancée quand la touche est dans l'état 2 ; elle revient ensuite à l'état 1."));
     body.push(...actionEditor(st, k, () => keyChanged(k)));
@@ -238,6 +241,14 @@ function keyOptions(def, st, k) {
     out.push(switchRow("Demander une confirmation", !!def.confirm, (v) => {
       if (v) def.confirm = true; else delete def.confirm; keyChanged(k);
     }, "Il faut appuyer deux fois (la touche s'entoure de jaune) : pour « Arrêter le stream », « Éteindre le PC »…"));
+    if (def.toggle && (isAdv() || def.state_var)) {
+      const listId = "sv-" + Math.random().toString(36).slice(2);
+      const names = [...new Set([...knownVars(), ...Object.keys((S.status && S.status.vars) || {})])];
+      out.push(field("État piloté par une variable", el("input", { class: "input mono", value: def.state_var || "", list: listId, spellcheck: "false", placeholder: "ex. obs.live",
+        onchange: (e) => { const v = e.target.value.trim(); if (v) def.state_var = v; else delete def.state_var; keyChanged(k, { immediate: true }); } }),
+        el("datalist", { id: listId }, ...names.map((n) => el("option", { value: n }))),
+        el("p", { class: "hint" }, "La touche passe à l'état 2 quand la variable vaut autre chose que vide, 0, false ou off (par exemple le direct d'OBS, envoyé par son addon). L'appui ne change alors plus l'état lui-même.")));
+    }
     const canRepeat = ["hotkey", "text", "media", "var"].includes(a.type) && !def.toggle && !def.long && !def.double;
     if (canRepeat || def.repeat) out.push(switchRow("Répéter tant que la touche est enfoncée", !!def.repeat, (v) => {
       if (v) def.repeat = true; else delete def.repeat; keyChanged(k);
@@ -345,7 +356,7 @@ function actionTypeId(a) {
 const isAdv = () => S.uiMode !== "simple";
 const SIMPLE_HIDDEN_CATS = ["Macros intelligentes"];
 const SIMPLE_HIDDEN_ITEMS = ["Maintenir des touches", "Macro (plusieurs actions)", "Requête web", "Webhook Discord", "Bascule personnalisée"];
-const ADV_TYPES = ["hold", "macro", "var", "if", "http", "open_config"];
+const ADV_TYPES = ["hold", "macro", "var", "if", "http", "open_config", "service"];
 
 /** Valeurs par défaut quand on choisit un type d'action. */
 const ACTION_DEFAULTS = {
@@ -361,7 +372,7 @@ const ACTION_DEFAULTS = {
   if: { type: "if", left: "", cmp: "==", right: "", then: [], else: [] },
   ai: { type: "ai", preset: "fix", output: "replace" },
   close_app: { type: "close_app", target: "" },
-  http: { type: "http", method: "GET", url: "https://" },
+  http: { type: "http", method: "GET", url: "https://" }, service: { type: "service", addon: "", event: "" },
 };
 
 const AI_PRESETS = [["fix", "Corriger l'orthographe"], ["translate_en", "Traduire en anglais"], ["translate_fr", "Traduire en français"],
@@ -399,6 +410,7 @@ function stepSummary(a) {
     case "back": return "Retour (fermer le dossier)";
     case "profile": return a.to === "next" ? "Profil suivant" : a.to === "previous" ? "Profil précédent" : `Profil « ${a.to} »`;
     case "game": return "Mini-jeu";
+    case "service": return `Addon ${a.addon || ""} : ${a.event || ""}`;
     case "var": {
       const n = a.name || "?";
       if (a.op === "toggle") return `Basculer ${n}`;
@@ -540,6 +552,20 @@ function actionEditor(st, k, onChange, opts = {}) {
     out.push(field("Effet", el("select", { class: "input", onchange: (e) => upd((x) => { x.op = e.target.value; }) },
       ...[["toggle", "Démarrer / mettre en pause"], ["reset", "Remettre à zéro"]].map(([v, l]) => el("option", { value: v, selected: v === (a.op || "toggle") }, l))),
       el("p", { class: "hint" }, "Agit sur le minuteur de cette touche (touche vivante « Minuteur »). Astuce : mets « Remettre à zéro » en appui long.")));
+  } else if (t === "service") {
+    const withSvc = (S.addons || []).filter((x) => x.addon && x.addon.service);
+    const ad = (S.addons || []).find((x) => x.addon && x.addon.id === a.addon);
+    const opts2 = withSvc.map((x) => [x.addon.id, x.addon.name]);
+    if (a.addon && !ad) opts2.unshift([a.addon, `${a.addon} (non installé)`]);
+    if (!a.addon) opts2.unshift(["", "Choisir un addon…"]);
+    const sel = el("select", { class: "input" }, ...opts2.map(([v, l]) => el("option", { value: v, selected: v === (a.addon || "") }, l)));
+    sel.onchange = () => { upd((x) => { x.addon = sel.value; }); renderInspector(); };
+    out.push(field("Addon", sel, withSvc.length ? null : el("p", { class: "hint" }, "Aucun addon installé n'a de programme.")));
+    out.push(field("Événement", el("input", { class: "input mono", value: a.event || "", spellcheck: "false", placeholder: "ex. ping_now",
+      onchange: (e) => upd((x) => { x.event = e.target.value.trim(); }) }),
+      el("p", { class: "hint" }, "Le nom que le programme de l'addon attend (voir sa documentation).")));
+    if (ad && ad.service && ad.service.state !== "running") out.push(el("p", { class: "hint", style: "color:var(--warn, #ffb74d)" },
+      "Son programme ne tourne pas : ouvre la fiche de l'addon (bouton Addons en haut)."));
   } else if (t === "close_app") {
     out.push(field("Application", el("input", { class: "input", value: a.target || "", spellcheck: "false", placeholder: "ex. discord.exe",
       onchange: (e) => upd((x) => { x.target = exeList(e.target.value).split(",")[0] || ""; }) })));
