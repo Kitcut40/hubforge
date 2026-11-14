@@ -572,6 +572,8 @@ fn import_profile(cfg_dir: &Path, ar: &Archive) -> Result<ImportReport, String> 
                 confirm: false,
                 repeat: false,
                 state_var: None,
+                span: None,
+                canvas: None,
             });
         }
         cfg.pages.push(page);

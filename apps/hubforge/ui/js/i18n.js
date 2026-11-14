@@ -1005,6 +1005,13 @@ const EN_DICT = {
 "milieu (molette)": "middle (wheel)",
 "Pas maintenant": "Not now",
 "Abandonner": "Cancel",
+"Taille sur le module": "Size on the module",
+"Une seule image sur plusieurs touches : idéal pour une photo, un GIF ou le dessin d'un addon. Un appui sur n'importe laquelle lance l'action.": "One image across several keys: ideal for a photo, a GIF or an addon's drawing. Pressing any of them runs the action.",
+"Étale cette touche sur plusieurs touches du module (photo, GIF, barre de progression d'un addon…).": "Spread this key over several keys of the module (photo, GIF, an addon's progress bar…).",
+"Zones sur plusieurs touches": "Areas over several keys",
+"Écart entre deux touches du module 15 touches. Affiche la mire sur le module, puis règle jusqu'à ce que le cercle soit rond et les lignes bien droites d'une touche à l'autre.": "Gap between two keys of the 15-key module. Show the test pattern on the module, then adjust until the circle is round and the lines run straight from one key to the next.",
+"Afficher la mire": "Show the test pattern",
+"Masquer la mire": "Hide the test pattern",
 "IA": "AI",
 "Benjamin": "Benjamin"
 };
@@ -1014,6 +1021,7 @@ const EN_PATTERNS = [
   [/^(.+) — (.+)$/, "$T1 — $T2"],
   [/^Modèle : (.+)$/, "Template: $T1"],
   [/^Addon (.+) : (.+)$/, "Addon $1: $2"],
+  [/^Touches (.+) masquées par la zone \(leur réglage est gardé\)\.$/, "Keys $1 hidden by the area (their settings are kept)."],
   [/^Boucle de (\d+) étapes? \(sans fin\)$/, "Loop of $1 step(s) (endless)"],
   [/^Boucle de (\d+) étapes? \((\d+) fois\)$/, "Loop of $1 step(s) ($2 times)"],
   [/^(\d+) fois$/, "$1 times"],

@@ -1,0 +1,464 @@
+# Addon « Imprimante Prusa » pour HubForge — niveau 2 (programme qui dessine).
+#
+# L'écran de ton imprimante sur le MasterHUB, dans le style de l'interface
+# Prusa : aperçu de la pièce, avancement sur toute une rangée, temps restant,
+# heure de fin, températures, pause, arrêt, préchauffage des filaments.
+# Le programme parle à l'imprimante par PrusaLink, sur le réseau local.
+#
+# Testé pour la MK4S ; devrait marcher avec MK4, MK3.9, MK3.5, MINI, XL et
+# CORE One (firmware récent avec PrusaLink).
+#
+# Installation : zippe ce dossier, renomme l'archive en prusa.forge, glisse-la
+# sur HubForge, autorise son programme, renseigne l'IP et le mot de passe
+# PrusaLink dans sa fiche, puis « Ajouter ses pages au profil ».
+#
+# Licences : code et manifeste MIT ; icônes de l'interface Prusa sous
+# CC BY-NC-SA 4.0 (icons/prusa/SOURCE.md) ; police DejaVu Sans Mono sous
+# licence libre (fonts/LICENSE-DejaVu.txt).
+
+[addon]
+id = "prusa"
+name = "Imprimante Prusa"
+version = "2.0.0"
+author = "HubForge"
+license = "MIT (code) · CC BY-NC-SA 4.0 (icônes Prusa)"
+description = "L'écran de ton imprimante Prusa sur le MasterHUB : aperçu de la pièce, avancement, temps restant, heure de fin, températures, pause, arrêt et préchauffage. Par PrusaLink, en local."
+format = 2
+icon = "icons/prusa/print_80x80.png"
+
+[service]
+run = "powershell"
+main = "main.ps1"
+
+[[setting]]
+id = "host"
+label = "Adresse IP de l'imprimante"
+default = ""
+help = "Sur l'imprimante : Réglages › Réseau (ex. 192.168.1.42)."
+
+[[setting]]
+id = "password"
+label = "Mot de passe PrusaLink"
+type = "password"
+default = ""
+help = "Réglages › Réseau › PrusaLink sur l'imprimante (utilisateur « maker »)."
+
+[[setting]]
+id = "user"
+label = "Utilisateur PrusaLink"
+default = "maker"
+
+[[setting]]
+id = "every"
+label = "Actualiser toutes les (secondes)"
+type = "number"
+default = 3
+
+[[setting]]
+id = "custom_nozzle"
+label = "Préchauffage perso : buse (°C)"
+type = "number"
+default = 240
+
+[[setting]]
+id = "custom_bed"
+label = "Préchauffage perso : plateau (°C)"
+type = "number"
+default = 90
+
+[[setting]]
+id = "notify"
+label = "Me prévenir (fin d'impression, erreur, préchauffage atteint)"
+type = "bool"
+default = true
+
+[[category]]
+id = "prusa"
+name = "Imprimante Prusa"
+
+[[category]]
+id = "prusa-cmd"
+name = "Commandes"
+parent = "prusa"
+
+[[category]]
+id = "prusa-heat"
+name = "Préchauffage"
+parent = "prusa"
+
+# --- Écran d'impression (dessiné par le programme) ----------------------
+
+[[action]]
+id = "thumb"
+name = "Aperçu de la pièce (2 × 2)"
+category = "prusa"
+description = "La vignette du fichier en cours, sur 4 touches. Un appui actualise."
+label = "{prusa.status}"
+icon = "icons/prusa/print_80x80.png"
+color = "#000000"
+type = "service"
+event = "refresh"
+canvas = "thumb"
+span = [2, 2]
+
+[[action]]
+id = "bar"
+name = "Barre d'avancement (4 touches)"
+category = "prusa"
+description = "La barre orange de l'imprimante, sur une rangée."
+label = "{prusa.progress}"
+color = "#000000"
+type = "service"
+event = "refresh"
+canvas = "bar"
+span = [4, 1]
+
+[[action]]
+id = "pct"
+name = "Avancement (%)"
+category = "prusa"
+label = "{prusa.progress}"
+color = "#000000"
+type = "service"
+event = "refresh"
+canvas = "pct"
+
+[[action]]
+id = "remaining"
+name = "Temps restant"
+category = "prusa"
+label = "{prusa.remaining}"
+color = "#000000"
+type = "service"
+event = "refresh"
+canvas = "remaining"
+
+[[action]]
+id = "eta"
+name = "Heure de fin"
+category = "prusa"
+label = "{prusa.eta}"
+color = "#000000"
+type = "service"
+event = "refresh"
+canvas = "eta"
+
+[[action]]
+id = "nozzle"
+name = "Buse"
+category = "prusa"
+description = "Température de la buse ; la barre montre la chauffe."
+label = "{prusa.nozzle}"
+color = "#000000"
+type = "service"
+event = "refresh"
+canvas = "nozzle"
+
+[[action]]
+id = "bed"
+name = "Plateau"
+category = "prusa"
+description = "Température du plateau ; la barre montre la chauffe."
+label = "{prusa.bed}"
+color = "#000000"
+type = "service"
+event = "refresh"
+canvas = "bed"
+
+[[action]]
+id = "status"
+name = "État de l'imprimante"
+category = "prusa"
+label = "{prusa.status}"
+icon = "icons/prusa/print_80x80.png"
+color = "#5B5B5B"
+type = "service"
+event = "refresh"
+canvas = "status"
+
+# --- Commandes (tuiles comme le menu de l'imprimante) -------------------
+
+[[action]]
+id = "pause"
+name = "Pause / Reprendre"
+category = "prusa-cmd"
+label = "Pause"
+icon = "icons/prusa/pause_80x80.png"
+color = "#5B5B5B"
+type = "service"
+event = "pause_toggle"
+canvas = "pause"
+state_var = "paused"
+on_label = "Reprendre"
+on_icon = "icons/prusa/resume_80x80.png"
+on_color = "#5B5B5B"
+
+[[action]]
+id = "stop"
+name = "Arrêter (double appui)"
+category = "prusa-cmd"
+description = "Appuie deux fois dans les 4 secondes : l'impression ne pourra pas reprendre."
+label = "Arrêter"
+icon = "icons/prusa/stop_80x80.png"
+color = "#5B5B5B"
+type = "service"
+event = "stop"
+canvas = "stop"
+
+[[action]]
+id = "reprint"
+name = "Ré-imprimer"
+category = "prusa-cmd"
+description = "Relance le dernier fichier imprimé (imprimante à l'arrêt)."
+label = "Relancer"
+icon = "icons/prusa/reprint_80x80.png"
+color = "#5B5B5B"
+type = "service"
+event = "reprint"
+canvas = "reprint"
+
+[[action]]
+id = "web"
+name = "Ouvrir PrusaLink"
+category = "prusa-cmd"
+label = "PrusaLink"
+icon = "icons/prusa/info_80x80.png"
+color = "#5B5B5B"
+type = "service"
+event = "open_web"
+canvas = "web"
+
+[[action]]
+id = "refresh"
+name = "Actualiser"
+category = "prusa-cmd"
+label = "Actualiser"
+icon = "icons/prusa/set_ready_80x80.png"
+color = "#5B5B5B"
+type = "service"
+event = "refresh"
+canvas = "refresh"
+
+[[action]]
+id = "menu"
+name = "Menu (tuile)"
+category = "prusa-cmd"
+label = "Menu"
+icon = "icons/prusa/settings_80x80.png"
+color = "#5B5B5B"
+type = "none"
+canvas = "menu"
+
+[[action]]
+id = "heatmenu"
+name = "Préchauffage (tuile)"
+category = "prusa-cmd"
+label = "Préchauffage"
+icon = "icons/prusa/preheat_80x80.png"
+color = "#5B5B5B"
+type = "none"
+canvas = "heatmenu"
+
+[[action]]
+id = "back"
+name = "Retour (tuile)"
+category = "prusa-cmd"
+label = "Retour"
+icon = "icons/prusa/back_80x80.png"
+color = "#5B5B5B"
+type = "back"
+canvas = "back"
+
+# --- Préchauffage (températures du menu de l'imprimante) ---------------
+
+[[action]]
+id = "heat_pla"
+name = "PLA 215/60"
+category = "prusa-heat"
+label = "PLA"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "PLA" }
+canvas = "heat_pla"
+
+[[action]]
+id = "heat_petg"
+name = "PETG 230/85"
+category = "prusa-heat"
+label = "PETG"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "PETG" }
+canvas = "heat_petg"
+
+[[action]]
+id = "heat_asa"
+name = "ASA 260/100"
+category = "prusa-heat"
+label = "ASA"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "ASA" }
+canvas = "heat_asa"
+
+[[action]]
+id = "heat_pc"
+name = "PC 275/100"
+category = "prusa-heat"
+label = "PC"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "PC" }
+canvas = "heat_pc"
+
+[[action]]
+id = "heat_pvb"
+name = "PVB 215/75"
+category = "prusa-heat"
+label = "PVB"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "PVB" }
+canvas = "heat_pvb"
+
+[[action]]
+id = "heat_abs"
+name = "ABS 255/100"
+category = "prusa-heat"
+label = "ABS"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "ABS" }
+canvas = "heat_abs"
+
+[[action]]
+id = "heat_hips"
+name = "HIPS 220/100"
+category = "prusa-heat"
+label = "HIPS"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "HIPS" }
+canvas = "heat_hips"
+
+[[action]]
+id = "heat_pp"
+name = "PP 240/100"
+category = "prusa-heat"
+label = "PP"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "PP" }
+canvas = "heat_pp"
+
+[[action]]
+id = "heat_flex"
+name = "FLEX 240/50"
+category = "prusa-heat"
+label = "FLEX"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "FLEX" }
+canvas = "heat_flex"
+
+[[action]]
+id = "heat_pa"
+name = "PA 285/100"
+category = "prusa-heat"
+label = "PA"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "PA" }
+canvas = "heat_pa"
+
+[[action]]
+id = "heat_custom"
+name = "Préchauffage perso"
+category = "prusa-heat"
+description = "Les températures choisies dans les réglages de l'addon."
+label = "PERSO"
+color = "#000000"
+type = "service"
+event = "preheat"
+data = { filament = "CUSTOM" }
+canvas = "heat_custom"
+
+[[action]]
+id = "cooldown"
+name = "Refroidir"
+category = "prusa-heat"
+description = "Éteint la buse et le plateau."
+label = "Refroidir"
+color = "#5B5B5B"
+type = "service"
+event = "cooldown"
+canvas = "cooldown"
+
+# --- Pages prêtes à l'emploi --------------------------------------------
+# Touches numérotées de 1 (en haut à gauche) à 15 (en bas à droite).
+
+[[page]]
+id = "main"
+name = "Imprimante"
+keys = [
+  { key = 1,  action = "thumb" },                 # 1, 2, 6, 7
+  { key = 3,  action = "nozzle" },
+  { key = 4,  action = "bed" },
+  { key = 5,  action = "menu", open = "control" },
+  { key = 8,  action = "remaining" },
+  { key = 9,  action = "eta" },
+  { key = 10, action = "pause" },
+  { key = 11, action = "pct" },
+  { key = 12, action = "bar" },                   # 12 à 15
+]
+
+[[page]]
+id = "control"
+name = "Imprimante — Menu"
+folder = true
+keys = [
+  { key = 1,  action = "back", back = true },
+  { key = 2,  action = "pause" },
+  { key = 3,  action = "stop" },
+  { key = 4,  action = "reprint" },
+  { key = 5,  action = "web" },
+  { key = 6,  action = "heatmenu", open = "heat" },
+  { key = 7,  action = "cooldown" },
+  { key = 8,  action = "refresh" },
+  { key = 9,  action = "nozzle" },
+  { key = 10, action = "bed" },
+  { key = 11, action = "pct" },
+  { key = 12, action = "bar" },
+]
+
+[[page]]
+id = "heat"
+name = "Imprimante — Préchauffage"
+folder = true
+keys = [
+  { key = 1,  action = "heat_pla" },
+  { key = 2,  action = "heat_petg" },
+  { key = 3,  action = "heat_asa" },
+  { key = 4,  action = "heat_pc" },
+  { key = 5,  action = "heat_pvb" },
+  { key = 6,  action = "heat_abs" },
+  { key = 7,  action = "heat_hips" },
+  { key = 8,  action = "heat_pp" },
+  { key = 9,  action = "heat_flex" },
+  { key = 10, action = "heat_pa" },
+  { key = 11, action = "back", back = true },
+  { key = 12, action = "heat_custom" },
+  { key = 13, action = "nozzle" },
+  { key = 14, action = "bed" },
+  { key = 15, action = "cooldown" },
+]

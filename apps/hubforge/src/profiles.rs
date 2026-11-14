@@ -53,6 +53,9 @@ pub struct Settings {
     pub virtual_hub: bool,
     /// Avertissement des macros avancées lu et accepté.
     pub macro_ack: bool,
+    /// Écart entre deux touches du module, en pixels d'écran (calibrage des
+    /// zones sur plusieurs touches) ; None = valeur par défaut.
+    pub key_gap: Option<u8>,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.

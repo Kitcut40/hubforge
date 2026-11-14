@@ -86,3 +86,13 @@ EN3.update({
 "À une position précise de l'écran": "At a specific screen position", "Étapes répétées": "Repeated steps", "sans fin": "endless",
 "Action": "Action", "Fermer": "Close", "droit": "right", "milieu (molette)": "middle (wheel)", "Pas maintenant": "Not now", "Abandonner": "Cancel",
 })
+
+# 0.25 : zones sur plusieurs touches, touches dessinées par les addons
+EN3.update({
+"Taille sur le module": "Size on the module",
+"Une seule image sur plusieurs touches : idéal pour une photo, un GIF ou le dessin d'un addon. Un appui sur n'importe laquelle lance l'action.": "One image across several keys: ideal for a photo, a GIF or an addon's drawing. Pressing any of them runs the action.",
+"Étale cette touche sur plusieurs touches du module (photo, GIF, barre de progression d'un addon…).": "Spread this key over several keys of the module (photo, GIF, an addon's progress bar…).",
+"Zones sur plusieurs touches": "Areas over several keys",
+"Écart entre deux touches du module 15 touches. Affiche la mire sur le module, puis règle jusqu'à ce que le cercle soit rond et les lignes bien droites d'une touche à l'autre.": "Gap between two keys of the 15-key module. Show the test pattern on the module, then adjust until the circle is round and the lines run straight from one key to the next.",
+"Afficher la mire": "Show the test pattern", "Masquer la mire": "Hide the test pattern",
+})

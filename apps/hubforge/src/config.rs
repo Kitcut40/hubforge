@@ -294,6 +294,16 @@ pub struct KeyDef {
     /// false, off ou non. Un appui ne change alors pas l'état lui-même.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_var: Option<String>,
+    /// Zone sur plusieurs touches : [colonnes, lignes] à partir de cette
+    /// touche (vers la droite et vers le bas). L'image est découpée sur les
+    /// touches couvertes ; un appui sur l'une d'elles vaut un appui sur
+    /// celle-ci. Ex. [5, 1] = toute la rangée.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<[u8; 2]>,
+    /// Image dessinée par le programme d'un addon (« prusa.progress ») ; tant
+    /// qu'elle n'existe pas, la touche s'affiche normalement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -313,6 +323,18 @@ pub struct KeyState {
 
 impl KeyDef {
     /// Définition de l'état n° `state` (0 = normal, 1 = second état).
+    /// Taille de la zone (colonnes, lignes), 1 × 1 par défaut, bornée à la
+    /// grille de 5 × 3 à partir de la position de la touche.
+    pub fn span_size(&self) -> (u8, u8) {
+        let Some([c, r]) = self.span else { return (1, 1) };
+        if self.key == 0 || self.key > 15 {
+            return (1, 1);
+        }
+        let col = (self.key - 1) % 5;
+        let row = (self.key - 1) / 5;
+        (c.clamp(1, 5 - col), r.clamp(1, 3 - row))
+    }
+
     pub fn state(&self, state: usize) -> KeyDef {
         match (&self.toggle, state) {
             (Some(t), 1) => KeyDef {
@@ -332,6 +354,8 @@ impl KeyDef {
                 confirm: self.confirm,
                 repeat: self.repeat,
                 state_var: self.state_var.clone(),
+                span: self.span,
+                canvas: self.canvas.clone(),
             },
             _ => KeyDef { toggle: None, ..self.clone() },
         }
@@ -744,6 +768,36 @@ pub fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
 
 impl Config {
     /// La touche avec son thème effectif (touche, sinon page, sinon profil).
+    /// Touche « maîtresse » de chaque touche d'une page (0 à 14) : elle-même,
+    /// ou la touche dont la zone la couvre. Une zone qui chevauche une zone
+    /// déjà placée (ordre des touches) est ramenée à 1 × 1.
+    pub fn span_map(&self, page: usize) -> [u8; 15] {
+        let mut owner: [u8; 15] = std::array::from_fn(|i| i as u8);
+        let mut taken = [false; 15];
+        let Some(pg) = self.pages.get(page) else { return owner };
+        let mut keys: Vec<&KeyDef> = pg.keys.iter().filter(|k| (1..=15).contains(&k.key)).collect();
+        keys.sort_by_key(|k| k.key);
+        for k in keys {
+            let (c, r) = k.span_size();
+            if c * r <= 1 || k.widget.is_some() {
+                continue;
+            }
+            let a = (k.key - 1) as usize;
+            if taken[a] {
+                continue;
+            }
+            let cells: Vec<usize> = (0..r as usize).flat_map(|dr| (0..c as usize).map(move |dc| a + dr * 5 + dc)).collect();
+            if cells.iter().any(|&i| taken[i]) {
+                continue;
+            }
+            for i in cells {
+                taken[i] = true;
+                owner[i] = a as u8;
+            }
+        }
+        owner
+    }
+
     pub fn themed(&self, page: usize, def: &KeyDef) -> KeyDef {
         let theme = def
             .theme
@@ -840,6 +894,11 @@ pub fn validate(cfg: &Config) -> Result<(), String> {
             if let Some(w) = &k.widget {
                 if !crate::widgets::is_known(w) {
                     return Err(format!("page {} touche {} : touche vivante inconnue « {w} »", p + 1, k.key));
+                }
+            }
+            if let Some([c, r]) = k.span {
+                if c == 0 || r == 0 || c > 5 || r > 3 {
+                    return Err(format!("page {} touche {} : zone {c} × {r} impossible (5 × 3 au plus)", p + 1, k.key));
                 }
             }
             let alt = k.toggle.as_ref();
@@ -1468,5 +1527,34 @@ action = { type = "macro", steps = [
         assert!(validate_action(&Action::Mouse { op: "move".into(), button: "left".into(), x: None, y: None, amount: 0 }, 1).is_err());
         assert!(validate_action(&Action::Mouse { op: "click".into(), button: "left".into(), x: Some(1), y: None, amount: 0 }, 1).is_err());
         assert!(validate_action(&Action::Loop { count: 3, steps: vec![] }, 0).is_err());
+    }
+}
+
+#[cfg(test)]
+mod tests_spans {
+    use super::*;
+
+    #[test]
+    fn span_map_merges_and_skips_overlaps() {
+        let t = r#"
+[[pages]]
+name = "P"
+[[pages.keys]]
+key = 1
+span = [2, 2]
+[[pages.keys]]
+key = 2
+label = "cachée"
+[[pages.keys]]
+key = 11
+span = [5, 1]
+[[pages.keys]]
+key = 7
+span = [2, 1]
+"#;
+        let cfg: Config = toml::from_str(t).unwrap();
+        validate(&cfg).unwrap();
+        let m = cfg.span_map(0);
+        assert_eq!(&m[..], &[0, 0, 2, 3, 4, 0, 0, 7, 8, 9, 10, 10, 10, 10, 10]);
     }
 }

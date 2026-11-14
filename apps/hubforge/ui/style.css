@@ -790,3 +790,7 @@ select.input option, select.input optgroup { background: #171a20; }
 .notif-recent { margin: 8px 0 0; padding: 0; list-style: none; font-size: 12px; }
 .notif-recent li { padding: 4px 0; border-top: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notif-recent b { font-weight: 600; margin-right: 6px; }
+
+/* ---- 0.25 : zones sur plusieurs touches ---- */
+.keys .key.zone { aspect-ratio: auto; height: 100%; justify-self: stretch; align-self: stretch; }
+.keys .key.zone img { width: 100%; height: 100%; object-fit: fill; }

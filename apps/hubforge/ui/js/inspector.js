@@ -124,6 +124,7 @@ function keyInspector(k) {
     }, "Elle change d'image et d'action à chaque appui (micro coupé / actif…)."));
     if (S.editState === 0 && (isAdv() || def.long || def.double)) body.push(...gestureEditors(def, k));
   } else {
+  if (S.editState === 0 && !def.widget) body.push(spanEditor(def, k));
   const live = S.editState === 0 && def.widget;
   if (S.editState === 0) {
     const wsel = el("select", { class: "input" }, ...WIDGETS.map(([v, l]) => el("option", { value: v, selected: v === (def.widget || "") }, l)));
@@ -368,6 +369,35 @@ const SIMPLE_HIDDEN_ITEMS = ["Maintenir des touches", "Macro (plusieurs actions)
 const ADV_TYPES = ["hold", "macro", "var", "if", "http", "open_config", "service", "loop", "mouse", "key"];
 /** Types d'action concernés par l'avertissement des macros avancées. */
 const MACRO_ADV_TYPES = ["loop", "mouse", "key"];
+
+/** Taille de la touche sur le module : 1 case ou une zone de plusieurs touches. */
+function spanEditor(def, k) {
+  const col = (k - 1) % 5, row = Math.floor((k - 1) / 5);
+  const opts = [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1], [1, 2], [2, 2], [3, 2], [5, 2], [1, 3], [2, 3], [5, 3]]
+    .filter(([c, r]) => col + c <= 5 && row + r <= 3);
+  const [cc, cr] = spanSize(def);
+  const setSpan = (c, r) => {
+    if (c * r <= 1) delete def.span; else def.span = [c, r];
+    keyChanged(k, { immediate: true });
+    renderKeys();
+    renderInspector();
+  };
+  // Touches réglées qui seraient masquées par la zone.
+  const hidden = [];
+  for (let dr = 0; dr < cr; dr++) for (let dc = 0; dc < cc; dc++) {
+    const n = k + dr * 5 + dc;
+    if (n !== k && keyDef(n)) hidden.push(n);
+  }
+  return field("Taille sur le module",
+    el("div", { class: "chips" }, ...opts.map(([c, r]) => el("span", {
+      class: "chip" + (c === cc && r === cr ? " on style-on" : " add"), translate: "no",
+      onclick: () => setSpan(c, r),
+    }, `${c} × ${r}`))),
+    el("p", { class: "hint" }, cc * cr > 1
+      ? "Une seule image sur plusieurs touches : idéal pour une photo, un GIF ou le dessin d'un addon. Un appui sur n'importe laquelle lance l'action."
+      : "Étale cette touche sur plusieurs touches du module (photo, GIF, barre de progression d'un addon…)."),
+    hidden.length ? el("p", { class: "hint warn-text" }, `Touches ${hidden.join(", ")} masquées par la zone (leur réglage est gardé).`) : null);
+}
 
 /** Encart « accès aux notifications de Windows » (touche Notifications). */
 function notifAccessBox() {

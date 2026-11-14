@@ -58,6 +58,11 @@ pub enum EngineMsg {
     VirtualKey { key: u8, down: bool },
     /// MasterHUB virtuel ouvert : renvoyer la page (même sans module branché).
     VirtualShow,
+    /// Mire de calibrage de l'écart entre les touches (true = l'afficher,
+    /// à nouveau après un changement d'écart ; false = revenir à la page).
+    Calibrate(bool),
+    /// Écart entre les touches changé : zones et dessins sont recalculés.
+    LayoutChanged,
 }
 
 /// Résultat d'une action qui tourne en arrière-plan (requête web, IA).
@@ -200,6 +205,8 @@ pub struct Status {
     pub asleep: bool,
     /// Dernier message d'un addon à afficher : (numéro, addon, texte, erreur).
     pub notice: Option<(u64, String, String, bool)>,
+    /// Change à chaque nouveau dessin d'addon (aperçus de l'interface).
+    pub canvas_version: u64,
 }
 
 fn hex(c: Rgb) -> String {
@@ -258,6 +265,12 @@ pub struct Engine {
     notif_seen: HashMap<(usize, u8), u64>,
     notif_counts: HashMap<(usize, u8), usize>,
     notif_flash: Vec<u8>,
+    /// Touche maîtresse de chaque case, par page (zones sur plusieurs touches).
+    spans: Vec<[u8; KEY_COUNT]>,
+    /// Touches dessinées par un addon (page, touche maîtresse).
+    canvas_keys: Vec<(usize, u8)>,
+    /// Mire de calibrage affichée (rien d'autre n'est envoyé aux touches).
+    calibrating: bool,
     /// Pages d'où l'on a ouvert les dossiers (pour la touche Retour).
     page_stack: Vec<usize>,
     /// Touches vivantes : mesures, prochaine mise à jour, et ce qui est
@@ -392,6 +405,9 @@ impl Engine {
             notif_seen: HashMap::new(),
             notif_counts: HashMap::new(),
             notif_flash: Vec::new(),
+            spans: Vec::new(),
+            canvas_keys: Vec::new(),
+            calibrating: false,
             macro_next: Instant::now(),
             page_stack: Vec::new(),
             sampler: widgets::Sampler::default(),
@@ -480,6 +496,7 @@ impl Engine {
             pressed: self.pressed.to_vec(),
             toggled: (0..KEY_COUNT as u8).map(|k| self.is_toggled(k)).collect(),
             notice: self.notice.clone(),
+            canvas_version: crate::canvas::version(),
             config_error: self.config_error.clone(),
             profile: self.active.lock().map(|a| a.name.clone()).unwrap_or_default(),
             game: self.game.is_some(),
@@ -627,6 +644,25 @@ impl Engine {
                 }
             }
             EngineMsg::VirtualShow => self.show_page(),
+            EngineMsg::Calibrate(on) => {
+                if on {
+                    self.calibrating = true;
+                    self.anims.clear();
+                    for (k, v) in render::calibration_pattern().into_iter().enumerate() {
+                        self.send_image_raw(k as u8, &v.frames[0].jpeg);
+                    }
+                } else if self.calibrating {
+                    self.calibrating = false;
+                    self.show_page();
+                }
+            }
+            EngineMsg::LayoutChanged => {
+                crate::services::broadcast(&serde_json::json!({ "type": "layout", "layout": crate::services::layout() }));
+                self.render_all();
+                if !self.calibrating {
+                    self.show_page();
+                }
+            }
             EngineMsg::Redraw => {
                 self.render_all();
                 self.show_page();
@@ -784,25 +820,56 @@ impl Engine {
         let vars = self.vars.all().clone();
         let mut var_keys = Vec::new();
         let cfg = &self.cfg;
+        let mut canvas_keys = Vec::new();
+        self.spans = (0..cfg.pages.len()).map(|p| cfg.span_map(p)).collect();
+        let spans = &self.spans;
         self.visuals = cfg
             .pages
             .iter()
             .enumerate()
             .map(|(p, page)| {
-                (1..=KEY_COUNT as u8)
+                let mut row: Vec<KeyVisuals> = (1..=KEY_COUNT as u8)
                     .map(|k| match page.keys.iter().find(|d| d.key == k) {
+                        // Case couverte par la zone d'une autre touche : remplie plus bas.
+                        Some(_) if spans[p][(k - 1) as usize] != k - 1 => KeyVisuals { states: vec![render::blank()] },
                         Some(def) => {
                             if key_mentions_vars(def) {
                                 var_keys.push((p, k - 1));
                             }
-                            render_key_visuals(&cfg.themed(p, def), &vars, &dir, rot)
+                            if def.canvas.is_some() {
+                                canvas_keys.push((p, k - 1));
+                            }
+                            let (c, r) = def.span_size();
+                            if c * r > 1 && def.widget.is_none() {
+                                KeyVisuals { states: vec![render::blank()] }
+                            } else {
+                                render_key_visuals(&cfg.themed(p, def), &vars, &dir, rot)
+                            }
                         }
                         None => KeyVisuals { states: vec![render::blank()] },
                     })
-                    .collect()
+                    .collect();
+                // Zones : une image découpée sur les cases.
+                for def in &page.keys {
+                    let k = def.key.wrapping_sub(1);
+                    if (k as usize) >= KEY_COUNT || spans[p][k as usize] != k || def.widget.is_some() {
+                        continue;
+                    }
+                    let (c, r) = def.span_size();
+                    if c * r <= 1 {
+                        continue;
+                    }
+                    for (cell, v) in zone_visuals(&cfg.themed(p, def), &vars, &dir, rot) {
+                        if let Some(slot) = row.get_mut(cell as usize) {
+                            *slot = v;
+                        }
+                    }
+                }
+                row
             })
             .collect();
         self.var_keys = var_keys;
+        self.canvas_keys = canvas_keys;
         if self.visuals.is_empty() {
             self.visuals.push(vec![KeyVisuals { states: vec![render::blank()] }; KEY_COUNT]);
         }
@@ -813,22 +880,55 @@ impl Engine {
     fn refresh_var_keys(&mut self) {
         let vars = self.vars.all().clone();
         let dir = self.cfg_dir.clone();
+        let _ = (&vars, &dir);
         for (p, k) in self.var_keys.clone() {
-            let Some(def) = self.cfg.pages.get(p).and_then(|pg| pg.keys.iter().find(|d| d.key == k + 1)).map(|d| self.cfg.themed(p, d)) else {
-                continue;
-            };
-            let v = render_key_visuals(&def, &vars, &dir, self.keys_rot);
-            if let Some(slot) = self.visuals.get_mut(p).and_then(|pg| pg.get_mut(k as usize)) {
+            self.rerender_key(p, k);
+        }
+    }
+
+    /// Redessine une touche (et toute sa zone) et l'envoie si elle est affichée.
+    fn rerender_key(&mut self, p: usize, k: u8) {
+        let vars = self.vars.all().clone();
+        let dir = self.cfg_dir.clone();
+        let Some(def) = self.cfg.pages.get(p).and_then(|pg| pg.keys.iter().find(|d| d.key == k + 1)).map(|d| self.cfg.themed(p, d)) else {
+            return;
+        };
+        let anchor = self.spans.get(p).map(|m| m[k as usize] == k).unwrap_or(true);
+        if !anchor {
+            return;
+        }
+        let (c, r) = def.span_size();
+        let zone = c * r > 1 && def.widget.is_none() && self.spans.get(p).is_some_and(|m| m.iter().filter(|&&o| o == k).count() > 1);
+        let parts: Vec<(u8, KeyVisuals)> = if zone {
+            zone_visuals(&def, &vars, &dir, self.keys_rot)
+        } else {
+            vec![(k, render_key_visuals(&def, &vars, &dir, self.keys_rot))]
+        };
+        for (cell, v) in parts {
+            if let Some(slot) = self.visuals.get_mut(p).and_then(|pg| pg.get_mut(cell as usize)) {
                 *slot = v;
             }
             if p == self.page && self.game.is_none() {
-                self.widget_sig.remove(&k);
-                let f = self.visual(k).frames[0].clone();
-                let jpeg = if self.pressed[k as usize] && self.cfg.general.press_feedback { f.pressed } else { f.jpeg };
-                self.send_image(k, &jpeg);
-                self.restart_anim(k);
+                self.widget_sig.remove(&cell);
+                let f = self.visual(cell).frames[0].clone();
+                let jpeg = if self.pressed[cell as usize] && self.cfg.general.press_feedback { f.pressed } else { f.jpeg };
+                self.send_image(cell, &jpeg);
+                self.restart_anim(cell);
             }
         }
+    }
+
+    /// Cases de la zone d'une touche maîtresse (elle seule si 1 × 1).
+    fn zone_cells(&self, key: u8) -> Vec<u8> {
+        match self.spans.get(self.page) {
+            Some(m) => (0..KEY_COUNT as u8).filter(|&i| m[i as usize] == key).collect(),
+            None => vec![key],
+        }
+    }
+
+    /// Touche maîtresse d'une case (la case elle-même hors zone).
+    fn anchor_of(&self, key: u8) -> u8 {
+        self.spans.get(self.page).map(|m| m[key as usize]).unwrap_or(key)
     }
 
     /// Valeur d'un nom entre accolades : variable, ou état du PC.
@@ -1137,6 +1237,7 @@ impl Engine {
             return;
         }
         let mut vars_changed: Vec<String> = Vec::new();
+        let mut drawn: Vec<String> = Vec::new();
         for m in msgs {
             match m {
                 crate::services::Incoming::SetVar { name, value } => {
@@ -1158,12 +1259,34 @@ impl Engine {
                     self.notice = Some((id, addon, text, error));
                     self.notify();
                 }
+                crate::services::Incoming::Draw { addon, canvas, svg } => {
+                    let name = crate::canvas::full_name(&addon, &canvas);
+                    let dir = crate::addons::dir(&self.cfg_dir).join(&addon);
+                    if crate::canvas::set(&name, svg, &dir) {
+                        drawn.push(name);
+                    }
+                }
                 crate::services::Incoming::Mark { page, key, ok } => {
                     if (key as usize) < KEY_COUNT {
                         self.set_mark(Some((page, key)), if ok { MARK_OK } else { MARK_ERR }, Duration::from_millis(if ok { 900 } else { 2500 }));
                     }
                 }
             }
+        }
+        // Nouveaux dessins d'addons : les touches concernées sont redessinées.
+        if !drawn.is_empty() {
+            let targets: Vec<(usize, u8)> = self
+                .canvas_keys
+                .iter()
+                .copied()
+                .filter(|(p, k)| {
+                    self.cfg.pages.get(*p).and_then(|pg| pg.keys.iter().find(|d| d.key == k + 1)).and_then(|d| d.canvas.as_ref()).is_some_and(|c| drawn.contains(c))
+                })
+                .collect();
+            for (p, k) in targets {
+                self.rerender_key(p, k);
+            }
+            self.notify();
         }
         if !vars_changed.is_empty() {
             self.refresh_var_keys();
@@ -1176,9 +1299,11 @@ impl Engine {
                 .unwrap_or_default();
             if self.game.is_none() {
                 for k in keys.into_iter().filter(|k| (*k as usize) < KEY_COUNT) {
-                    let f = self.visual(k).frames[0].clone();
-                    self.send_image(k, &f.jpeg);
-                    self.restart_anim(k);
+                    for cell in self.zone_cells(k) {
+                        let f = self.visual(cell).frames[0].clone();
+                        self.send_image(cell, &f.jpeg);
+                        self.restart_anim(cell);
+                    }
                 }
             }
             self.notify();
@@ -1187,7 +1312,7 @@ impl Engine {
 
     fn visual(&self, key: u8) -> &KeyVisual {
         let kv = &self.visuals[self.page][key as usize];
-        let i = if self.is_toggled(key) { 1 } else { 0 };
+        let i = if self.is_toggled(self.anchor_of(key)) { 1 } else { 0 };
         &kv.states[i.min(kv.states.len() - 1)]
     }
 
@@ -1196,8 +1321,9 @@ impl Engine {
     }
 
     fn send_image(&self, key: u8, jpeg: &Arc<Vec<u8>>) {
-        // Pendant Doom, c'est lui qui dessine sur les touches.
-        if self.doom.is_some() {
+        // Pendant Doom, c'est lui qui dessine sur les touches ; pendant la
+        // mire de calibrage, rien d'autre ne s'affiche.
+        if self.doom.is_some() || self.calibrating {
             return;
         }
         if self.run_dots.contains(&key) && self.game.is_none() {
@@ -1320,7 +1446,8 @@ impl Engine {
             }
         }
         let mut changed = Vec::new();
-        for def in defs.iter().filter(|d| d.widget.is_some() && (1..=KEY_COUNT as u8).contains(&d.key)) {
+        let covered = |d: &KeyDef| self.spans.get(page).is_some_and(|m| m[(d.key - 1) as usize] != d.key - 1);
+        for def in defs.iter().filter(|d| d.widget.is_some() && (1..=KEY_COUNT as u8).contains(&d.key) && !covered(d)) {
             let key = def.key - 1;
             // Une touche à 2 états montre son second état tel quel.
             if def.toggle.is_some() && self.is_toggled(key) {
@@ -1388,10 +1515,14 @@ impl Engine {
             g.press(key as usize, Instant::now());
             return;
         }
-        self.pressed[key as usize] = true;
-        if self.cfg.general.press_feedback {
-            let jpeg = self.current_frame(key).pressed.clone();
-            self.send_image(key, &jpeg);
+        // Zone sur plusieurs touches : toute case vaut la touche maîtresse.
+        let key = self.anchor_of(key);
+        for cell in self.zone_cells(key) {
+            self.pressed[cell as usize] = true;
+            if self.cfg.general.press_feedback {
+                let jpeg = self.current_frame(cell).pressed.clone();
+                self.send_image(cell, &jpeg);
+            }
         }
         let Some(def) = self.key_def(key).cloned() else { return };
         let now = Instant::now();
@@ -1509,6 +1640,7 @@ impl Engine {
     }
 
     fn key_up(&mut self, key: u8) {
+        let key = if (key as usize) < KEY_COUNT && self.doom.is_none() && self.game.is_none() { self.anchor_of(key) } else { key };
         if matches!(self.repeating, Some((_, k, _)) if k == key) {
             self.repeating = None;
         }
@@ -1522,10 +1654,13 @@ impl Engine {
         if (key as usize) >= KEY_COUNT || self.game.is_some() {
             return;
         }
-        self.pressed[key as usize] = false;
-        if self.cfg.general.press_feedback {
-            let jpeg = self.current_frame(key).jpeg.clone();
-            self.send_image(key, &jpeg);
+        let key = self.anchor_of(key);
+        for cell in self.zone_cells(key) {
+            self.pressed[cell as usize] = false;
+            if self.cfg.general.press_feedback {
+                let jpeg = self.current_frame(cell).jpeg.clone();
+                self.send_image(cell, &jpeg);
+            }
         }
         let has_double = self.key_def(key).map(|d| d.double.is_some()).unwrap_or(false);
         if let Some(g) = self.gesture.as_mut() {
@@ -2860,6 +2995,23 @@ fn render_key_visuals(def: &KeyDef, vars: &BTreeMap<String, String>, dir: &std::
         states.push(render::render_key_rot(&def.state(1), dir, rot));
     }
     KeyVisuals { states }
+}
+
+/// Zone sur plusieurs touches : visuels de chaque case (numéro de case 0 à 14).
+fn zone_visuals(def: &KeyDef, vars: &BTreeMap<String, String>, dir: &std::path::Path, rot: u16) -> Vec<(u8, KeyVisuals)> {
+    let def = if key_mentions_vars(def) { vars::key_with_values(def, vars) } else { def.clone() };
+    let (c, r) = def.span_size();
+    let anchor = def.key - 1;
+    let cells: Vec<u8> = (0..r).flat_map(|dr| (0..c).map(move |dc| anchor + dr * 5 + dc)).collect();
+    let mut states: Vec<Vec<render::KeyVisual>> = vec![render::slice_zone(&render::render_zone(&def.state(0), dir, c, r), c, r, rot)];
+    if def.toggle.is_some() {
+        states.push(render::slice_zone(&render::render_zone(&def.state(1), dir, c, r), c, r, rot));
+    }
+    cells
+        .into_iter()
+        .enumerate()
+        .map(|(i, cell)| (cell, KeyVisuals { states: states.iter().map(|s| s.get(i).cloned().unwrap_or_else(render::blank)).collect() }))
+        .collect()
 }
 
 /// Actions qu'on peut répéter tant que la touche est enfoncée.

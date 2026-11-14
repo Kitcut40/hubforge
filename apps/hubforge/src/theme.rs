@@ -339,9 +339,40 @@ pub fn svg_doc(st: &Style, body: &str) -> String {
 // ----------------------------------------------------------------------
 
 fn inner(svg: &str) -> &str {
-    let start = svg.find('>').map(|i| i + 1).unwrap_or(0);
+    // Ce qui précède la balise <svg> (commentaire de licence, <?xml…?>) est ignoré.
+    let open = svg.find("<svg").unwrap_or(0);
+    let start = svg[open..].find('>').map(|i| open + i + 1).unwrap_or(0);
     let end = svg.rfind("</svg>").unwrap_or(svg.len());
     &svg[start..end.max(start)]
+}
+
+/// Attributs de dessin de la balise <svg> d'une icône d'addon (fill, stroke…),
+/// à reporter sur le groupe qui la remplace.
+fn root_paint(svg: &str) -> String {
+    let open = svg.find("<svg").unwrap_or(0);
+    let tag = &svg[open..svg[open..].find('>').map(|i| open + i).unwrap_or(open)];
+    let mut out = String::new();
+    for name in ["fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin"] {
+        let pat = format!(" {name}=\"");
+        if let Some(i) = tag.find(&pat).or_else(|| tag.find(&format!("\n{name}=\"")).or_else(|| tag.find(&format!("\t{name}=\"")))) {
+            let rest = &tag[i + pat.len()..];
+            if let Some(end) = rest.find('"') {
+                out += &format!(r#" {name}="{}""#, &rest[..end].replace('"', ""));
+            }
+        }
+    }
+    out
+}
+
+/// Largeur du viewBox d'une icône d'addon (24 pour le style Lucide).
+fn svg_width(svg: &str) -> f32 {
+    let open = svg.find("<svg").unwrap_or(0);
+    let tag = &svg[open..svg[open..].find('>').map(|i| open + i).unwrap_or(open)];
+    tag.find("viewBox=\"")
+        .and_then(|i| tag[i + 9..].split('"').next())
+        .and_then(|v| v.split_whitespace().nth(2).and_then(|w| w.parse::<f32>().ok()))
+        .filter(|w| *w > 0.0)
+        .unwrap_or(24.0)
 }
 
 /// SVG d'une icône de thème (Phosphor) de cette épaisseur, ou None.
@@ -464,6 +495,11 @@ fn options() -> &'static resvg::usvg::Options<'static> {
     })
 }
 
+/// Polices intégrées (Inter), pour les dessins d'addons.
+pub fn font_db() -> Arc<resvg::usvg::fontdb::Database> {
+    options().fontdb.clone()
+}
+
 /// Découpe un texte en `max` lignes au plus (la dernière est raccourcie).
 pub fn wrap_lines(s: &str, size: f32, weight: u16, max_w: f32, max: usize) -> Vec<String> {
     let mut lines = wrap(s, size, weight, max_w);
@@ -542,12 +578,14 @@ pub fn render_key(theme: Theme, def: &KeyDef, addon_svg: Option<&str>) -> RgbIma
             (false, _) => (29.0, 32.0),
         };
         if let Some(svg) = addon_svg {
-            // Icône d'addon (style à traits) : couleur de l'icône du thème.
-            let k = size / 24.0;
+            // Icône d'addon (style à traits) : couleur de l'icône du thème. Les
+            // attributs de la balise <svg> (fill="none", stroke…) sont gardés.
+            let k = size / svg_width(svg);
             body += &format!(
-                r#"<g transform="translate({:.2} {:.2}) scale({k:.4})" color="{c}" {fx}>{}</g>"#,
+                r#"<g transform="translate({:.2} {:.2}) scale({k:.4})" color="{c}" {} {fx}>{}</g>"#,
                 36.0 - size / 2.0,
                 cy - size / 2.0,
+                root_paint(svg).replace("currentColor", &st.ic),
                 inner(svg).replace("currentColor", &st.ic),
                 c = st.ic
             );
@@ -599,6 +637,8 @@ mod tests {
             confirm: false,
             repeat: false,
             state_var: None,
+            span: None,
+            canvas: None,
         }
     }
 

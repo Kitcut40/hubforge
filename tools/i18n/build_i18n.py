@@ -26,6 +26,7 @@ const EN_PATTERNS = [
   [/^(.+) — (.+)$/, "$T1 — $T2"],
   [/^Modèle : (.+)$/, "Template: $T1"],
   [/^Addon (.+) : (.+)$/, "Addon $1: $2"],
+  [/^Touches (.+) masquées par la zone \(leur réglage est gardé\)\.$/, "Keys $1 hidden by the area (their settings are kept)."],
   [/^Boucle de (\d+) étapes? \(sans fin\)$/, "Loop of $1 step(s) (endless)"],
   [/^Boucle de (\d+) étapes? \((\d+) fois\)$/, "Loop of $1 step(s) ($2 times)"],
   [/^(\d+) fois$/, "$1 times"],

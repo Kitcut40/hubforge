@@ -151,9 +151,38 @@ function renderKeys() {
   if (box) fillKeys(box);
 }
 
+/** Taille d'une zone (colonnes, lignes), bornée à la grille (comme HubForge). */
+function spanSize(def) {
+  if (!def || !Array.isArray(def.span) || def.widget) return [1, 1];
+  const col = (def.key - 1) % 5, row = Math.floor((def.key - 1) / 5);
+  return [Math.max(1, Math.min(def.span[0] || 1, 5 - col)), Math.max(1, Math.min(def.span[1] || 1, 3 - row))];
+}
+
+/** Touche maîtresse de chaque case (0 à 14) d'une page : zones sur plusieurs touches. */
+function spanMap(page) {
+  const owner = Array.from({ length: 15 }, (_, i) => i);
+  const taken = Array(15).fill(false);
+  const defs = ((S.cfg.pages[page ?? S.page] || {}).keys || []).filter((d) => d.key >= 1 && d.key <= 15).sort((a, b) => a.key - b.key);
+  for (const d of defs) {
+    const [c, r] = spanSize(d);
+    if (c * r <= 1) continue;
+    const a = d.key - 1;
+    if (taken[a]) continue;
+    const cells = [];
+    for (let dr = 0; dr < r; dr++) for (let dc = 0; dc < c; dc++) cells.push(a + dr * 5 + dc);
+    if (cells.some((i) => taken[i])) continue;
+    for (const i of cells) { taken[i] = true; owner[i] = a; }
+  }
+  return owner;
+}
+
 function fillKeys(box) {
   box.innerHTML = "";
-  for (let k = 1; k <= 15; k++) box.append(keyElement(k));
+  const owner = spanMap();
+  for (let k = 1; k <= 15; k++) {
+    if (owner[k - 1] !== k - 1) continue;          // case couverte par une zone
+    box.append(keyElement(k));
+  }
 }
 
 function shownState(k) {
@@ -179,6 +208,11 @@ function keyElement(k) {
       : def && def.action && def.action.type === "macro" ? el("span", { class: "badge", title: "Macro" }, "M")
       : def && prev && prev.animated ? el("span", { class: "badge", title: "Animation" }, "▶") : null,
   );
+  // Position dans la grille (les zones couvrent plusieurs cases).
+  const [sc, sr] = def && spanMap()[k - 1] === k - 1 ? spanSize(def) : [1, 1];
+  node.style.gridColumn = `${((k - 1) % 5) + 1} / span ${sc}`;
+  node.style.gridRow = `${Math.floor((k - 1) / 5) + 1} / span ${sr}`;
+  if (sc * sr > 1) node.classList.add("zone");
   node.onclick = (e) => { e.stopPropagation(); S.editState = 0; select({ type: "key", key: k }); };
   node.ondragstart = (e) => {
     e.dataTransfer.setData("text/hubforge-key", String(k));
@@ -201,6 +235,7 @@ function keyElement(k) {
 function updateKeyNode(k) {
   const old = document.querySelector(`#keys .key[data-key="${k}"]`);
   if (old) old.replaceWith(keyElement(k));
+  else renderKeys();
 }
 
 async function refreshPreviews(page, onlyKey) {

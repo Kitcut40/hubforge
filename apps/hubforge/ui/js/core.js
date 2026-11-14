@@ -394,6 +394,7 @@ async function init() {
   S.autoProfiles = ini.auto_profiles !== false;
   S.virtualHub = !!ini.virtual_hub;
   S.macroAck = !!ini.macro_ack;
+  S.keyGap = ini.key_gap ?? 14;
   $("#version").textContent = "v" + ini.version;
   S.icons = (await invoke("list_icons")) || [];
   S.layout = (await invoke("get_layout")) || { base_rot: 0, placements: {} };

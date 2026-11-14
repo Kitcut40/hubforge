@@ -137,6 +137,8 @@ pub struct Initial {
     lang: String,
     /// MasterHUB virtuel activé.
     virtual_hub: bool,
+    /// Écart entre les touches du module (zones sur plusieurs touches).
+    key_gap: u8,
     /// Avertissement des macros avancées accepté.
     macro_ack: bool,
 }
@@ -180,6 +182,7 @@ pub fn get_initial(state: State<AppState>) -> Result<Initial, String> {
         auto_profiles: settings.auto_profiles.unwrap_or(true),
         lang: crate::i18n::resolve(&settings.lang),
         virtual_hub: settings.virtual_hub,
+        key_gap: settings.key_gap.unwrap_or(crate::canvas::DEFAULT_GAP),
         macro_ack: settings.macro_ack,
     })
 }
@@ -243,6 +246,30 @@ pub fn virtual_ready(state: State<AppState>) {
 // ----------------------------------------------------------------------
 // Macros avancées
 // ----------------------------------------------------------------------
+
+// ----------------------------------------------------------------------
+// Zones sur plusieurs touches : écart entre les touches du module
+// ----------------------------------------------------------------------
+
+#[tauri::command]
+pub fn set_key_gap(state: State<AppState>, gap: u8, calibrating: bool) {
+    let gap = gap.min(60);
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.key_gap = Some(gap);
+    profiles::save_settings(&state.cfg_dir, &st);
+    crate::canvas::set_gap(gap);
+    let e = state.engine.lock().unwrap();
+    let _ = e.send(EngineMsg::LayoutChanged);
+    if calibrating {
+        let _ = e.send(EngineMsg::Calibrate(true));
+    }
+}
+
+/// Mire de calibrage sur le module (true) ou retour à la page (false).
+#[tauri::command]
+pub fn calibrate_keys(state: State<AppState>, on: bool) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::Calibrate(on));
+}
 
 #[tauri::command]
 pub fn set_macro_ack(state: State<AppState>) {
@@ -801,8 +828,11 @@ pub async fn render_keys(state: State<'_, AppState>, keys: Vec<Option<KeyDef>>) 
         .map(|k| {
             k.map(|def| {
                 let def = crate::vars::key_with_values(&def, vars.all());
+                let (c, r) = def.span_size();
                 let (jpeg, animated) = match (&def.widget, &snap) {
                     (Some(_), Some(snap)) => (render::encode_jpeg(&crate::widgets::render(&def, snap), 90), false),
+                    // Zone sur plusieurs touches : image entière.
+                    (None, _) if c * r > 1 => (render::zone_preview(&def, &dir, c, r), false),
                     _ => render::preview(&def, &dir),
                 };
                 Preview {

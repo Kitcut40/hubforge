@@ -275,6 +275,7 @@ HubForge → programme :
 | `{"type":"init","addon":"ping","hubforge":"0.23.0","lang":"fr","settings":{…}}` | au démarrage |
 | `{"type":"action","event":"ping_now","data":{…},"key":{"page":1,"key":4}}` | une touche de l'addon est appuyée (`key` peut être `null`, dans une macro par exemple) |
 | `{"type":"settings","settings":{…}}` | l'utilisateur a modifié les réglages |
+| `{"type":"layout","layout":{"key":72,"gap":14,"cols":5,"rows":3}}` | l'écart entre les touches a changé (§9) |
 | `{"type":"shutdown"}` | arrêt : le programme a une seconde pour se terminer |
 
 Programme → HubForge :
@@ -285,6 +286,7 @@ Programme → HubForge :
 | `{"type":"notify","text":"Connecté à OBS","level":"info"}` | message affiché dans HubForge (`level` = `info` ou `error`) ; il compte aussi sur les touches « Notifications » qui ciblent l'addon (par son identifiant) |
 | `{"type":"ok","key":{"page":1,"key":4}}` | liseré vert sur la touche (`alert` : liseré rouge) |
 | `{"type":"log","text":"…"}` | ligne dans le journal |
+| `{"type":"draw","canvas":"bar","svg":"<svg…>"}` | dessin des touches `canvas = "bar"` (voir §9) |
 
 Un programme qui s'arrête est relancé (après 2, 4, 8… secondes), au plus 5 fois en 10 minutes ; ensuite la fiche de l'addon propose de le relancer.
 
@@ -292,6 +294,52 @@ Un programme qui s'arrête est relancé (après 2, 4, 8… secondes), au plus 5 
 
 Le programme d'un addon communique avec HubForge seulement par ce protocole : il n'est **pas** soumis à la GPL de HubForge, son auteur choisit sa licence.
 
-## 9. Et après ?
+## 9. Touches dessinées et zones sur plusieurs touches (HubForge 0.25)
+
+Le programme d'un addon peut **dessiner lui-même ses touches** en SVG, et une
+touche peut **s'étaler sur plusieurs cases** du module 15 touches. Exemple
+complet : l'addon [`addons/prusa`](../addons/prusa) (l'écran de l'imprimante
+sur le MasterHUB).
+
+### 9.1 Dans le manifeste
+
+```toml
+[[action]]
+id = "bar"
+name = "Barre d'avancement"
+type = "service"
+event = "refresh"
+canvas = "bar"        # dessin envoyé par le programme sous ce nom
+span = [4, 1]         # 4 colonnes × 1 ligne à partir de la touche placée
+label = "{prusa.progress}"   # affiché tant que le dessin n'existe pas
+
+[[page]]
+id = "main"
+name = "Mon écran"
+keys = [
+  { key = 12, action = "bar" },                    # occupe les touches 12 à 15
+  { key = 5,  action = "menu", open = "reglages" }, # apparence d'une action + ouvre une page
+  { key = 11, action = "retour", back = true },     # apparence d'une action + Retour
+]
+```
+
+- `span = [colonnes, lignes]` : de `[1, 1]` à `[5, 3]`, vers la droite et vers le bas. Un appui sur n'importe quelle case lance l'action. Les touches couvertes sont masquées.
+- `canvas` demande une section `[service]`. Sans dessin (programme pas encore autorisé…), la touche s'affiche normalement (`label`, `icon`, `color`).
+- L'utilisateur peut aussi étaler ses propres touches (photo, GIF) : Apparence › « Taille sur le module ».
+
+### 9.2 Envoyer un dessin
+
+```json
+{"type":"draw","canvas":"bar","svg":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"330\" height=\"72\">…</svg>"}
+```
+
+- **Taille** : une touche fait 72 × 72 pixels. Une zone de c × r touches fait `c·72 + (c−1)·écart` sur `r·72 + (r−1)·écart` pixels : l'écart représente les bords du module entre deux touches (il est réglé par l'utilisateur avec la mire de Réglages › Apparence). HubForge l'envoie au programme : `"layout": {"key": 72, "gap": 14, "cols": 5, "rows": 3}` dans `init`, puis un message `{"type":"layout","layout":{…}}` s'il change (redessine alors tout).
+- **Le SVG est mis à l'échelle** de la touche ou de la zone, fond noir par défaut.
+- **Images** : `<image href="icons/x.png">` (chemin dans le dossier de l'addon) ou `href="data:image/png;base64,…"`.
+- **Polices** : les fichiers `.ttf` / `.otf` du dossier `fonts/` de l'addon sont utilisables (`font-family="…"`), en plus d'Inter. Vérifie la licence des polices que tu fournis.
+- **Lisibilité** : sur une touche de 72 pixels, garde au moins 12 px pour un texte, 20 px et plus pour une valeur. Dans une zone, **aucun texte à cheval sur deux touches** : les bords du module le coupent. Les images et les barres, elles, peuvent traverser.
+- N'envoie un dessin que **quand il change** (HubForge ignore aussi les doublons). 1,5 Mo au plus par dessin.
+
+## 10. Et après ?
 
 Le `format = 1` reste compris par toutes les versions de HubForge. Un catalogue d'addons à télécharger est prévu.

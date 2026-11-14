@@ -22,6 +22,7 @@ mod i18n;
 mod connect;
 mod autostart;
 mod backups;
+mod canvas;
 mod config;
 mod doom;
 mod engine;
@@ -159,6 +160,7 @@ fn main() {
 
     logging::init(&dir);
     i18n::set(&i18n::resolve(&profiles::load_settings(&dir).lang));
+    canvas::set_gap(profiles::load_settings(&dir).key_gap.unwrap_or(canvas::DEFAULT_GAP));
     let hidden = args.iter().any(|a| a == "--hidden");
     let addon_to_install = addon_argument();
 
@@ -252,6 +254,8 @@ fn main() {
             ui::macro_record_state,
             ui::macro_record_stop,
             ui::cursor_pos,
+            ui::set_key_gap,
+            ui::calibrate_keys,
             ui::notif_status,
             ui::notif_request_access,
             ui::open_notif_settings,

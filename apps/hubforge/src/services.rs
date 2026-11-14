@@ -25,7 +25,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// Longueur maximale d'une ligne envoyée par un programme.
-const MAX_LINE: usize = 64 * 1024;
+/// Ligne la plus longue acceptée (un dessin SVG avec une image peut être gros).
+const MAX_LINE: usize = 2 * 1024 * 1024;
 const MAX_RESTARTS: u32 = 5;
 const RESTART_WINDOW: Duration = Duration::from_secs(600);
 
@@ -152,6 +153,8 @@ pub enum Incoming {
     SetVar { name: String, value: String },
     Notify { addon: String, text: String, error: bool },
     Mark { page: usize, key: u8, ok: bool },
+    /// Dessin SVG d'un canevas de l'addon (touches `canvas = "addon.nom"`).
+    Draw { addon: String, canvas: String, svg: String },
 }
 
 /// État d'un programme, affiché dans la fiche de l'addon.
@@ -340,6 +343,7 @@ fn start_locked(h: &mut Host, id: &str) {
         "hubforge": env!("CARGO_PKG_VERSION"),
         "lang": if crate::i18n::en() { "en" } else { "fr" },
         "settings": w.settings,
+        "layout": layout(),
     });
     let mut p = Proc { child, stdin };
     let _ = writeln!(p.stdin, "{init}");
@@ -376,6 +380,20 @@ pub fn stop_all() {
 }
 
 /// Envoie un message à un programme. Faux s'il ne tourne pas.
+/// Géométrie du module 15 touches, pour les programmes qui dessinent :
+/// taille d'une touche et écart (bords du module) entre deux touches.
+pub fn layout() -> Value {
+    json!({ "key": crate::canvas::KEY, "gap": crate::canvas::gap(), "cols": 5, "rows": 3 })
+}
+
+/// Envoie un message à tous les programmes en marche.
+pub fn broadcast(msg: &Value) {
+    let mut h = host().lock().unwrap();
+    for p in h.procs.values_mut() {
+        let _ = writeln!(p.stdin, "{msg}").and_then(|_| p.stdin.flush());
+    }
+}
+
 pub fn send(id: &str, msg: &Value) -> bool {
     let mut h = host().lock().unwrap();
     let Some(p) = h.procs.get_mut(id) else { return false };
@@ -450,6 +468,19 @@ fn interpret(addon: &str, v: &Value) -> Option<Incoming> {
             let page = k.get("page")?.as_u64()? as usize;
             let key = k.get("key")?.as_u64()?;
             (1..=15).contains(&key).then(|| Incoming::Mark { page: page.saturating_sub(1), key: key as u8 - 1, ok: s("type") == "ok" })
+        }
+        "draw" => {
+            let canvas = s("canvas");
+            if !crate::canvas::valid_name(&canvas) {
+                log::warn!("addon {addon} : canevas invalide « {canvas} »");
+                return None;
+            }
+            let svg = s("svg");
+            if svg.len() > crate::canvas::MAX_SVG || !svg.contains("<svg") {
+                log::warn!("addon {addon} : dessin « {canvas} » refusé (SVG absent ou trop gros)");
+                return None;
+            }
+            Some(Incoming::Draw { addon: addon.into(), canvas, svg })
         }
         "log" => {
             log::info!("addon {addon} : {}", s("text").chars().take(300).collect::<String>());
@@ -533,6 +564,12 @@ type = "password"
             _ => panic!(),
         }
         assert!(interpret("obs", &json!({"type": "ok", "key": {"page": 1, "key": 99}})).is_none());
+        match interpret("prusa", &json!({"type": "draw", "canvas": "progress", "svg": "<svg/>"})) {
+            Some(Incoming::Draw { addon, canvas, .. }) => assert_eq!((addon.as_str(), canvas.as_str()), ("prusa", "progress")),
+            _ => panic!(),
+        }
+        assert!(interpret("prusa", &json!({"type": "draw", "canvas": "a b", "svg": "<svg/>"})).is_none());
+        assert!(interpret("prusa", &json!({"type": "draw", "canvas": "x", "svg": "rien"})).is_none());
     }
 
     #[cfg(not(windows))]

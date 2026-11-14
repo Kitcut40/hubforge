@@ -124,6 +124,13 @@ fn rotate_frame(f: &Frame, rot: u16) -> Frame {
 }
 
 fn render_key_opts(def: &KeyDef, base_dir: &Path, first_only: bool) -> KeyVisual {
+    // Touche dessinée par le programme d'un addon.
+    if let Some(d) = def.canvas.as_deref().and_then(crate::canvas::get) {
+        if let Some(img) = crate::canvas::render(&d, S, S) {
+            let rgb = image::DynamicImage::ImageRgba8(img).to_rgb8();
+            return KeyVisual { frames: vec![make_frame(&rgb, Duration::ZERO, 92)] };
+        }
+    }
     let bg = def.color.as_deref().and_then(parse_color).unwrap_or((0, 0, 0));
     let fg = def.text_color.as_deref().and_then(parse_color).unwrap_or((255, 255, 255));
     let bg = Rgb([bg.0, bg.1, bg.2]);
@@ -545,6 +552,8 @@ mod tests {
             confirm: false,
             repeat: false,
             state_var: None,
+            span: None,
+            canvas: None,
         }
     }
 
@@ -676,4 +685,143 @@ pub fn with_dot(jpeg: &[u8], rot: u16) -> Vec<u8> {
         }
     }
     encode_jpeg(&img, 90)
+}
+
+
+// ----------------------------------------------------------------------
+// Zones sur plusieurs touches
+// ----------------------------------------------------------------------
+
+/// Image d'une zone de `cols` × `rows` touches (écarts du module compris),
+/// une par image d'animation : dessin d'addon, image ou GIF étirés pour
+/// couvrir la zone, sinon la touche normale en haut à gauche.
+pub fn render_zone(def: &KeyDef, base_dir: &Path, cols: u8, rows: u8) -> Vec<(RgbaImage, Duration)> {
+    let (w, h) = crate::canvas::zone_size(cols, rows);
+    if let Some(d) = def.canvas.as_deref().and_then(crate::canvas::get) {
+        if let Some(img) = crate::canvas::render(&d, w, h) {
+            return vec![(img, Duration::ZERO)];
+        }
+    }
+    // Image ou GIF de l'utilisateur (pas les icônes intégrées ni le SVG).
+    let icon = def.icon.as_deref().unwrap_or("").trim();
+    let is_picture = !icon.is_empty() && !icon.starts_with("builtin:") && !icon.starts_with("anim:") && !icon.to_ascii_lowercase().ends_with(".svg");
+    if is_picture {
+        let path = if icon.starts_with("addon:") {
+            crate::addons::resolve_icon(base_dir, icon)
+        } else if Path::new(icon).is_absolute() {
+            Some(Path::new(icon).to_path_buf())
+        } else {
+            Some(base_dir.join(icon))
+        };
+        if let Some(Ok(frames)) = path.map(|p| load_frames(&p)) {
+            if !frames.is_empty() {
+                return frames.into_iter().map(|(f, d)| (cover(&f, w, h), d)).collect();
+            }
+        }
+    }
+    // Sinon : la touche normale dans la première case, le reste dans sa couleur.
+    let v = render_key_opts(&KeyDef { span: None, ..def.clone() }, base_dir, false);
+    let bg = def.color.as_deref().and_then(parse_color).map(|c| Rgb([c.0, c.1, c.2])).unwrap_or(Rgb([0, 0, 0]));
+    v.frames
+        .iter()
+        .map(|f| {
+            let mut big = RgbaImage::from_pixel(w, h, image::Rgba([bg.0[0], bg.0[1], bg.0[2], 255]));
+            if let Ok(img) = image::load_from_memory(&f.jpeg) {
+                image::imageops::overlay(&mut big, &img.to_rgba8(), 0, 0);
+            }
+            (big, f.delay)
+        })
+        .collect()
+}
+
+/// Redimensionne pour couvrir `w` × `h` (recadrage au centre).
+fn cover(img: &RgbaImage, w: u32, h: u32) -> RgbaImage {
+    let (iw, ih) = img.dimensions();
+    let k = (w as f32 / iw as f32).max(h as f32 / ih as f32);
+    let (nw, nh) = (((iw as f32 * k).ceil() as u32).max(w), ((ih as f32 * k).ceil() as u32).max(h));
+    let big = image::imageops::resize(img, nw, nh, image::imageops::FilterType::Triangle);
+    image::imageops::crop_imm(&big, (nw - w) / 2, (nh - h) / 2, w, h).to_image()
+}
+
+/// Découpe une zone en touches (ordre : ligne par ligne), en sautant les
+/// bords du module entre les touches. Chaque morceau est tourné de `rot`.
+pub fn slice_zone(frames: &[(RgbaImage, Duration)], cols: u8, rows: u8, rot: u16) -> Vec<KeyVisual> {
+    let g = crate::canvas::gap();
+    let mut out = Vec::new();
+    for r in 0..rows as u32 {
+        for c in 0..cols as u32 {
+            let (x, y) = (c * (S + g), r * (S + g));
+            let v = KeyVisual {
+                frames: frames
+                    .iter()
+                    .map(|(img, delay)| {
+                        let part = image::imageops::crop_imm(img, x, y, S, S).to_image();
+                        let rgb = image::DynamicImage::ImageRgba8(part).to_rgb8();
+                        let f = make_frame(&rgb, *delay, 90);
+                        if rot % 360 != 0 { rotate_frame(&f, rot) } else { f }
+                    })
+                    .collect(),
+            };
+            out.push(v);
+        }
+    }
+    out
+}
+
+/// Aperçu d'une zone pour l'interface (image entière, en JPEG).
+pub fn zone_preview(def: &KeyDef, base_dir: &Path, cols: u8, rows: u8) -> Vec<u8> {
+    let frames = render_zone(def, base_dir, cols, rows);
+    let Some((img, _)) = frames.first() else { return Vec::new() };
+    encode_jpeg(&image::DynamicImage::ImageRgba8(img.clone()).to_rgb8(), 90)
+}
+
+/// Mire de calibrage de l'écart entre les touches : un cercle et des
+/// diagonales sur tout le module, droits seulement si l'écart est juste.
+pub fn calibration_pattern() -> Vec<KeyVisual> {
+    let (w, h) = crate::canvas::zone_size(5, 3);
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let rad = h as f32 * 0.42;
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">
+<rect width="{w}" height="{h}" fill="#000"/>
+<line x1="0" y1="0" x2="{w}" y2="{h}" stroke="#FFFFFF" stroke-width="5"/>
+<line x1="0" y1="{h}" x2="{w}" y2="0" stroke="#FFFFFF" stroke-width="5"/>
+<line x1="0" y1="{cy}" x2="{w}" y2="{cy}" stroke="#FA6831" stroke-width="7"/>
+<circle cx="{cx}" cy="{cy}" r="{rad}" fill="none" stroke="#00C8FF" stroke-width="7"/>
+</svg>"##
+    );
+    let d = crate::canvas::Drawing { svg: std::sync::Arc::new(svg), dir: std::env::temp_dir() };
+    let img = crate::canvas::render(&d, w, h).unwrap_or_else(|| RgbaImage::new(w, h));
+    slice_zone(&[(img, Duration::ZERO)], 5, 3, 0)
+}
+
+#[cfg(test)]
+mod zone_tests {
+    use super::*;
+
+    #[test]
+    fn zones_are_sliced_across_the_gap() {
+        crate::canvas::set_gap(10);
+        // Bande orange sur la moitié gauche d'une zone de 2 × 1 (72 + 10 + 72 = 154 px).
+        crate::canvas::set(
+            "test.zone",
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="154" height="72"><rect width="77" height="72" fill="#FA6831"/></svg>"##.into(),
+            &std::env::temp_dir(),
+        );
+        let def: KeyDef = toml::from_str("key = 3\nspan = [2, 1]\ncanvas = \"test.zone\"").unwrap();
+        assert_eq!(def.span_size(), (2, 1));
+        let frames = render_zone(&def, &std::env::temp_dir(), 2, 1);
+        assert_eq!(frames[0].0.dimensions(), (154, 72));
+        let parts = slice_zone(&frames, 2, 1, 0);
+        assert_eq!(parts.len(), 2);
+        let px = |v: &KeyVisual, x: u32| image::load_from_memory(&v.frames[0].jpeg).unwrap().to_rgb8().get_pixel(x, 36).0;
+        // Case de gauche : orange partout ; case de droite : orange seulement
+        // sur les 77 − 82 = 0 premiers pixels → noir.
+        assert!(px(&parts[0], 5)[0] > 200 && px(&parts[0], 66)[0] > 200);
+        assert!(px(&parts[1], 20)[0] < 40);
+        // Une zone en bord de grille est ramenée à ce qui tient.
+        let d2: KeyDef = toml::from_str("key = 5\nspan = [3, 2]").unwrap();
+        assert_eq!(d2.span_size(), (1, 2));
+        crate::canvas::set_gap(crate::canvas::DEFAULT_GAP);
+    }
 }

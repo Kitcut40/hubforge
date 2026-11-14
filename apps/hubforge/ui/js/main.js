@@ -29,6 +29,11 @@ function onStatus(st) {
   S.status = st;
   if (layoutChanged) { renderModulesChips(); renderDevice(); fitDevice(); }
   if (errChanged) renderBanner();
+  // Nouveau dessin d'un addon : aperçus des touches dessinées.
+  if (prev && st.canvas_version !== prev.canvas_version) {
+    const keys = currentPage().keys.filter((d) => d.canvas).map((d) => d.key);
+    for (const k of keys) refreshPreviews(S.page, k);
+  }
   updateFaderLive();
   updateLedLive();
   updateDoomView(prev, st);

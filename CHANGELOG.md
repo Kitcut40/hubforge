@@ -4,6 +4,25 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.25.0] — 2026-11-14
+
+### Nouveautés
+- **Zones sur plusieurs touches** : une touche peut s'étaler sur 2, 3, 4 ou 5 touches, ou sur un bloc (2 × 2, 3 × 2… jusqu'à tout le module).
+  - Une seule image découpée sur les touches, en tenant compte des bords du module : photo, GIF animé, barre de progression d'un addon…
+  - Un appui sur n'importe laquelle des touches lance l'action.
+  - Réglage dans Apparence › « Taille sur le module » ; les touches couvertes sont masquées (leur réglage est gardé).
+- **Calibrage** : Réglages › Apparence › *Zones sur plusieurs touches*. Une mire s'affiche sur le module ; règle l'écart jusqu'à ce que le cercle soit rond et les lignes droites.
+- **Touches dessinées par les addons** : le programme d'un addon peut dessiner ses touches en SVG, avec ses propres images et polices. Les addons peuvent ainsi avoir leur propre identité visuelle.
+- Les pages d'addon peuvent avoir des touches « Retour » et « dossier » à l'apparence d'une action de l'addon.
+
+### Corrections
+- Les icônes à traits des addons (style Lucide) ne s'affichent plus en pâtés noirs avec les thèmes de touches.
+
+### Pour les créateurs d'addons
+- Manifeste : `canvas = "nom"` et `span = [colonnes, lignes]` sur les actions ; `action` combinable avec `open` / `back` dans les pages.
+- Protocole : message `draw` (programme → HubForge), `layout` (géométrie du module, dans `init` et à chaque changement). Voir `docs/ADDON_GUIDE.md` §9.
+- Nouvel addon d'exemple **Imprimante Prusa** (`addons/prusa`) : l'écran de l'imprimante sur le MasterHUB, par PrusaLink.
+
 ## [0.24.0] — 2026-11-14
 
 ### Nouveautés

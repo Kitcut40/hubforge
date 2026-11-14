@@ -67,6 +67,14 @@ function settingsSection(id) {
         for (const p of S.cfg.pages) { delete p.theme; for (const d of p.keys) delete d.theme; }
         rethemed(); renderInspector();
       } }, "Appliquer à toutes les pages et touches") : null));
+    out.push(setBlock("Zones sur plusieurs touches", "Écart entre deux touches du module 15 touches. Affiche la mire sur le module, puis règle jusqu'à ce que le cercle soit rond et les lignes bien droites d'une touche à l'autre.",
+      el("div", { class: "row", style: "gap:12px;flex-wrap:wrap" },
+        rangeCtl(S.keyGap, 0, 40, " px", (v) => { S.keyGap = v; clearTimeout(S.gapTimer); S.gapTimer = setTimeout(() => invoke("set_key_gap", { gap: v, calibrating: !!S.calibrating }).catch(() => {}), 150); }),
+        el("button", { class: "btn small" + (S.calibrating ? " primary" : ""), onclick: async () => {
+          S.calibrating = !S.calibrating;
+          await invoke("calibrate_keys", { on: S.calibrating }).catch(() => {});
+          renderSettingsPage();
+        } }, S.calibrating ? "Masquer la mire" : "Afficher la mire"))));
     out.push(setRow("Base", "Couleur des LED, orientation sur le bureau, positions des modules.", el("button", { class: "btn", onclick: () => select({ type: "base" }) }, "Régler")));
     out.push(setRow("Animations", "Effets lumineux de la base et des faders.", el("button", { class: "btn", onclick: () => select({ type: "lights" }) }, "Ouvrir")));
   } else if (id === "sound") {

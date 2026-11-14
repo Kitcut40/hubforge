@@ -46,6 +46,13 @@ pub struct AddonAction {
     pub icon: Option<String>,
     pub color: Option<String>,
     pub text_color: Option<String>,
+    /// Style de touche imposé par l'addon (identité visuelle) : un thème
+    /// (graphite, neon, plan, console, mono) ou "classic" (fond uni).
+    pub theme: Option<String>,
+    /// Zone sur plusieurs touches (colonnes, lignes).
+    pub span: Option<[u8; 2]>,
+    /// Dessin du programme de l'addon (« id.nom »).
+    pub canvas: Option<String>,
     pub action: Action,
     /// Touche à 2 états pilotée par une variable du programme de l'addon
     /// (« live » → « <id>.live ») : texte, icône et couleur du second état.
@@ -251,7 +258,7 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
         }
         // Les champs restants décrivent l'action elle-même (comme dans config.toml).
         let mut act = t.clone();
-        for meta in ["id", "name", "category", "description", "label", "icon", "color", "text_color", "state_var", "on_label", "on_icon", "on_color"] {
+        for meta in ["id", "name", "category", "description", "label", "icon", "color", "text_color", "theme", "state_var", "on_label", "on_icon", "on_color", "on_text_color", "span", "canvas"] {
             act.remove(meta);
         }
         if !act.contains_key("type") {
@@ -291,6 +298,36 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
         };
         let on_color = get_str(t, "on_color");
         check_color(&on_color, &ctx)?;
+        let on_text_color = get_str(t, "on_text_color");
+        check_color(&on_text_color, &ctx)?;
+        let span = match t.get("span") {
+            None => None,
+            Some(v) => {
+                let arr: Option<Vec<u8>> = v.as_array().map(|a| a.iter().filter_map(|x| x.as_integer()).map(|x| x.clamp(0, 9) as u8).collect());
+                match arr.as_deref() {
+                    Some([c, r]) if (1..=5).contains(c) && (1..=3).contains(r) => Some([*c, *r]),
+                    _ => return Err(format!("{ctx} : span = [colonnes, lignes], de [1, 1] à [5, 3]")),
+                }
+            }
+        };
+        let canvas = match get_str(t, "canvas").filter(|s| !s.is_empty()) {
+            Some(c) => {
+                if !crate::canvas::valid_name(&c) {
+                    return Err(format!("{ctx} : canvas « {c} » : lettres, chiffres, _ et -"));
+                }
+                if service.is_none() {
+                    return Err(format!("{ctx} : canvas demande une section [service] (c'est le programme qui dessine)"));
+                }
+                Some(crate::canvas::full_name(&id, &c))
+            }
+            None => None,
+        };
+        let theme = get_str(t, "theme").filter(|s| !s.is_empty());
+        if let Some(th) = &theme {
+            if th != "classic" && crate::theme::Theme::parse(th).is_none() {
+                return Err(format!("{ctx} : theme « {th} » inconnu (classic, graphite, neon, plan, console ou mono)"));
+            }
+        }
         let on = match &state_var {
             Some(_) => Some(crate::config::KeyState {
                 label: get_str(t, "on_label").unwrap_or_else(|| get_str(t, "label").unwrap_or_else(|| aname.clone())),
@@ -299,7 +336,7 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
                     None => icon_ref(&id, addon_dir, get_str(t, "icon"), &ctx)?,
                 },
                 color: on_color.or_else(|| Some("#E5484D".into())),
-                text_color: text_color.clone(),
+                text_color: on_text_color.or_else(|| text_color.clone()),
                 action: action.clone(),
             }),
             None => None,
@@ -315,6 +352,9 @@ pub fn parse_manifest(text: &str, addon_dir: &Path) -> Result<Addon, String> {
             description: get_str(t, "description").unwrap_or_default(),
             color,
             text_color,
+            theme,
+            span,
+            canvas,
             action,
         });
     }
@@ -577,10 +617,12 @@ impl AddonAction {
             widget_target: None,
             long: None,
             double: None,
-            theme: None,
+            theme: self.theme.clone(),
             confirm: false,
             repeat: false,
             state_var: self.state_var.clone(),
+            span: self.span,
+            canvas: self.canvas.clone(),
         }
     }
 }
@@ -607,8 +649,18 @@ impl Addon {
                     .keys
                     .iter()
                     .map(|k| {
-                        let mut def = if let Some(a) = k.action.as_ref().and_then(|a| self.actions.iter().find(|x| &x.id == a)) {
-                            a.key_def(k.key)
+                        let from_action = k.action.as_ref().and_then(|a| self.actions.iter().find(|x| &x.id == a)).map(|a| a.key_def(k.key));
+                        let mut def = if let Some(mut d) = from_action {
+                            // Touche « Retour » ou « dossier » avec l'apparence d'une action
+                            // de l'addon (dessin du programme compris).
+                            if k.back {
+                                d.action = Action::Back;
+                                d.toggle = None;
+                            } else if let Some(o) = &k.open {
+                                d.action = Action::Folder { to: index(o).map(|n| n.to_string()).unwrap_or_default() };
+                                d.toggle = None;
+                            }
+                            d
                         } else if k.back {
                             KeyDef {
                                 key: k.key,
@@ -627,6 +679,8 @@ impl Addon {
                                 confirm: false,
                                 repeat: false,
                                 state_var: None,
+                                span: None,
+                                canvas: None,
                             }
                         } else {
                             let target = k.open.as_deref().and_then(|o| self.pages.iter().find(|p| p.id == o));
@@ -647,6 +701,8 @@ impl Addon {
                                 confirm: false,
                                 repeat: false,
                                 state_var: None,
+                                span: None,
+                                canvas: None,
                             }
                         };
                         if let Some(l) = &k.label {
@@ -871,5 +927,89 @@ mod tests_services {
         crate::config::validate_action(&k.action, 0).unwrap();
         // Sans format = 2 : refusé.
         assert!(super::parse_manifest(&text.replace("format = 2", "format = 1"), &dir).is_err());
+    }
+
+    #[test]
+    fn prusa_addon_loads() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../addons/prusa");
+        let text = std::fs::read_to_string(dir.join("manifest.toml")).unwrap();
+        let a = super::parse_manifest(&text, &dir).unwrap();
+        assert_eq!(a.id, "prusa");
+        assert_eq!(a.settings.len(), 7);
+        assert_eq!(a.actions.len(), 28);
+        assert_eq!(a.pages.len(), 3);
+        assert_eq!(a.pages[0].keys.len(), 9);
+        // Zones et dessins : l'aperçu couvre 2 × 2 touches, la barre 4.
+        let thumb = a.actions.iter().find(|x| x.id == "thumb").unwrap().key_def(1);
+        assert_eq!((thumb.span_size(), thumb.canvas.as_deref()), ((2, 2), Some("prusa.thumb")));
+        let pages = a.build_pages(0);
+        let mut cfg: crate::config::Config = toml::from_str("[[pages]]\nname = \"x\"").unwrap();
+        cfg.pages = pages.clone();
+        crate::config::validate(&cfg).unwrap();
+        assert_eq!(&cfg.span_map(0)[..], &[0, 0, 2, 3, 4, 0, 0, 7, 8, 9, 10, 11, 11, 11, 11]);
+        // « Menu » : apparence de l'action, mais ouvre le dossier.
+        let menu = pages[0].keys.iter().find(|k| k.key == 5).unwrap();
+        assert!(matches!(&menu.action, crate::config::Action::Folder { to } if to == "2"));
+        assert_eq!(menu.canvas.as_deref(), Some("prusa.menu"));
+        for act in &a.actions {
+            let k = act.key_def(1);
+            crate::config::validate_action(&k.action, 0).unwrap();
+        }
+        let pause = a.actions.iter().find(|x| x.id == "pause").unwrap();
+        assert_eq!(pause.state_var.as_deref(), Some("prusa.paused"));
+        let pla = a.actions.iter().find(|x| x.id == "heat_pla").unwrap();
+        assert!(matches!(&pla.action, crate::config::Action::Service { event, data, .. } if event == "preheat" && data.get("filament").and_then(|v| v.as_str()) == Some("PLA")));
+    }
+
+    /// Planche des pages d'un addon qui dessine, à partir des dessins de son
+    /// programme (fichier JSON { canvas: svg }) :
+    /// HUBFORGE_ADDON=prusa HUBFORGE_DRAWS=/tmp/draws.json cargo test -p hubforge drawn_sheet -- --ignored
+    #[test]
+    #[ignore]
+    fn drawn_sheet() {
+        use hubforge_device::KEY_IMAGE_SIZE as S;
+        let name = std::env::var("HUBFORGE_ADDON").unwrap_or_else(|_| "prusa".into());
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../addons").join(&name);
+        let text = std::fs::read_to_string(src.join("manifest.toml")).unwrap();
+        let a = super::parse_manifest(&text, &src).unwrap();
+        let draws: std::collections::HashMap<String, String> =
+            serde_json::from_str(&std::fs::read_to_string(std::env::var("HUBFORGE_DRAWS").unwrap()).unwrap()).unwrap();
+        for (c, svg) in draws {
+            crate::canvas::set(&crate::canvas::full_name(&a.id, &c), svg, &src);
+        }
+        let g = crate::canvas::gap();
+        let pages = a.build_pages(0);
+        let (pw, ph) = (5 * S + 4 * g, 3 * S + 2 * g);
+        let mut sheet = image::RgbImage::from_pixel(pw + 40, pages.len() as u32 * (ph + 40) + 20, image::Rgb([24, 24, 28]));
+        let mut cfg: crate::config::Config = toml::from_str("").unwrap_or_else(|_| toml::from_str("[[pages]]\nname = \"x\"").unwrap());
+        cfg.pages = pages.clone();
+        for (pi, p) in pages.iter().enumerate() {
+            let (ox, oy) = (20u32, 20 + pi as u32 * (ph + 40));
+            for i in 0..15u32 {
+                let (x, y) = (ox + (i % 5) * (S + g), oy + (i / 5) * (S + g));
+                image::imageops::replace(&mut sheet, &image::RgbImage::from_pixel(S, S, image::Rgb([0, 0, 0])), x as i64, y as i64);
+            }
+            let owner = cfg.span_map(pi);
+            for k in &p.keys {
+                let a = k.key - 1;
+                if owner[a as usize] != a {
+                    continue;
+                }
+                let (c, r) = k.span_size();
+                let parts = if c * r > 1 {
+                    crate::render::slice_zone(&crate::render::render_zone(k, &src, c, r), c, r, 0)
+                } else {
+                    vec![crate::render::render_key(k, &src)]
+                };
+                for (n, v) in parts.iter().enumerate() {
+                    let cell = a as u32 + (n as u32 / c as u32) * 5 + (n as u32 % c as u32);
+                    let img = image::load_from_memory(&v.frames[0].jpeg).unwrap().to_rgb8();
+                    let (x, y) = (ox + (cell % 5) * (S + g), oy + (cell / 5) * (S + g));
+                    image::imageops::replace(&mut sheet, &img, x as i64, y as i64);
+                }
+            }
+        }
+        let big = image::imageops::resize(&sheet, sheet.width() * 2, sheet.height() * 2, image::imageops::FilterType::Lanczos3);
+        big.save(std::env::var("HUBFORGE_OUT").unwrap_or_else(|_| format!("/tmp/hubforge-{name}-drawn.png"))).unwrap();
     }
 }

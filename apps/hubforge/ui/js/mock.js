@@ -28,6 +28,7 @@ async function mockInvoke(cmd, args) {
       recent: [{ app: "Discord", title: "Laura", body: "On lance la partie ?", at: Date.now() - 60000 }, { app: "WhatsApp", title: "Maman", body: "Tu passes dimanche ?", at: Date.now() - 600000 }] };
     case "notif_request_access": case "open_notif_settings": case "set_macro_ack": case "set_virtual_hub": case "virtual_key": case "virtual_ready": return null;
     case "cursor_pos": return [1280, 720];
+    case "set_key_gap": case "calibrate_keys": return null;
     case "macro_record_start": window.__rec = Date.now(); return null;
     case "macro_record_state": { const e = Date.now() - (window.__rec || Date.now()); return { recording: e < 2500, events: Math.floor(e / 300), elapsed_ms: e, finished: e >= 2500 }; }
     case "macro_record_stop": return { cut: false, steps: [{ type: "key", keys: "ctrl", op: "down" }, { type: "wait", ms: 120 }, { type: "hotkey", keys: "c" }, { type: "wait", ms: 200 },

@@ -1741,6 +1741,8 @@ mod tests {
             confirm: false,
             repeat: false,
             state_var: None,
+            span: None,
+            canvas: None,
         }
     }
 
