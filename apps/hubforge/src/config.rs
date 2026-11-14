@@ -421,6 +421,37 @@ pub enum Action {
     },
     /// Pause dans une macro, en millisecondes
     Wait { ms: u64 },
+    /// Souris : `op` = click, double, down, up, move ou scroll ; `button` =
+    /// left, right ou middle ; position (x, y) en pixels de l'écran, facultative
+    /// (sans position, le pointeur ne bouge pas) ; `amount` : crans de molette
+    /// (positif vers le bas).
+    Mouse {
+        #[serde(default = "default_mouse_op")]
+        op: String,
+        #[serde(default = "default_mouse_button", skip_serializing_if = "is_left")]
+        button: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        x: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        y: Option<i32>,
+        #[serde(default, skip_serializing_if = "is_zero_i32")]
+        amount: i32,
+    },
+    /// Enfoncer (`down`) ou relâcher (`up`) des touches du clavier dans une
+    /// macro. Tout ce qui reste enfoncé est relâché à la fin de la macro.
+    Key {
+        keys: String,
+        #[serde(default = "default_key_op")]
+        op: String,
+    },
+    /// Boucle : répète ses étapes `count` fois ; 0 = jusqu'au prochain appui
+    /// sur la même touche (une heure au plus).
+    Loop {
+        #[serde(default)]
+        count: u32,
+        #[serde(default)]
+        steps: Vec<Action>,
+    },
     /// Variable : "set" (donne la valeur), "add" (ajoute la valeur, négative
     /// pour retirer), "toggle" (0 ↔ 1). La valeur peut contenir des {variables}.
     Var {
@@ -483,7 +514,7 @@ impl Action {
     pub fn any(&self, f: &dyn Fn(&Action) -> bool) -> bool {
         f(self)
             || match self {
-                Action::Macro { steps } => steps.iter().any(|s| s.any(f)),
+                Action::Macro { steps } | Action::Loop { steps, .. } => steps.iter().any(|s| s.any(f)),
                 Action::If { then_steps, else_steps, .. } => then_steps.iter().chain(else_steps).any(|s| s.any(f)),
                 _ => false,
             }
@@ -500,7 +531,7 @@ impl Action {
 
     pub fn children_mut(&mut self) -> Vec<&mut Action> {
         match self {
-            Action::Macro { steps } => steps.iter_mut().collect(),
+            Action::Macro { steps } | Action::Loop { steps, .. } => steps.iter_mut().collect(),
             Action::If { then_steps, else_steps, .. } => then_steps.iter_mut().chain(else_steps.iter_mut()).collect(),
             _ => Vec::new(),
         }
@@ -554,6 +585,31 @@ fn default_cmp() -> String {
     "==".into()
 }
 
+pub const MOUSE_OPS: [&str; 6] = ["click", "double", "down", "up", "move", "scroll"];
+pub const MOUSE_BUTTONS: [&str; 3] = ["left", "right", "middle"];
+/// Nombre maximal de tours d'une boucle (0 = jusqu'au prochain appui).
+pub const LOOP_MAX: u32 = 10_000;
+
+fn default_mouse_op() -> String {
+    "click".into()
+}
+
+fn default_mouse_button() -> String {
+    "left".into()
+}
+
+fn is_left(b: &str) -> bool {
+    b == "left"
+}
+
+fn is_zero_i32(v: &i32) -> bool {
+    *v == 0
+}
+
+fn default_key_op() -> String {
+    "down".into()
+}
+
 /// Nombre maximal d'étapes dans une macro et durée maximale d'une pause.
 pub const MACRO_MAX_STEPS: usize = 100;
 pub const WAIT_MAX_MS: u64 = 60_000;
@@ -576,6 +632,48 @@ pub fn validate_action(a: &Action, depth: usize) -> Result<(), String> {
                 return Err(format!("macro trop longue ({} étapes, maximum {MACRO_MAX_STEPS})", steps.len()));
             }
             steps.iter().try_for_each(|s| validate_action(s, depth + 1))
+        }
+        Action::Loop { count, steps } => {
+            if depth > 0 {
+                return Err("une boucle ne peut pas être dans une macro ou une autre boucle".into());
+            }
+            if *count > LOOP_MAX {
+                return Err(format!("boucle trop longue ({count} tours, maximum {LOOP_MAX})"));
+            }
+            if steps.is_empty() {
+                return Err("boucle vide : ajoute au moins une étape".into());
+            }
+            if steps.len() > MACRO_MAX_STEPS {
+                return Err(format!("boucle trop longue ({} étapes, maximum {MACRO_MAX_STEPS})", steps.len()));
+            }
+            steps.iter().try_for_each(|s| validate_action(s, depth + 1))
+        }
+        Action::Mouse { op, button, x, y, amount } => {
+            if !MOUSE_OPS.contains(&op.as_str()) {
+                return Err(format!("souris : opération inconnue « {op} » (click, double, down, up, move ou scroll)"));
+            }
+            if !MOUSE_BUTTONS.contains(&button.as_str()) {
+                return Err(format!("souris : bouton inconnu « {button} » (left, right ou middle)"));
+            }
+            if x.is_some() != y.is_some() {
+                return Err("souris : indique les deux coordonnées (x et y) ou aucune".into());
+            }
+            if op == "move" && x.is_none() {
+                return Err("souris : « move » demande une position (x, y)".into());
+            }
+            if op == "scroll" && (*amount == 0 || amount.abs() > 100) {
+                return Err("souris : nombre de crans de molette entre -100 et 100 (sauf 0)".into());
+            }
+            Ok(())
+        }
+        Action::Key { keys, op } => {
+            if op != "down" && op != "up" {
+                return Err(format!("touche : opération inconnue « {op} » (down ou up)"));
+            }
+            if keys.trim().is_empty() {
+                return Err("touche : indique la ou les touches".into());
+            }
+            Ok(())
         }
         Action::Wait { ms } if *ms > WAIT_MAX_MS => Err(format!("pause trop longue ({ms} ms, maximum {WAIT_MAX_MS} ms)")),
         Action::Var { name, op, .. } => {
@@ -1327,5 +1425,48 @@ long = { type = "close_app", target = "C:\\Apps\\Discord.exe", force = true }
         assert_eq!(crate::foreground::exe_of_target("C:\\Jeux\\Steam.EXE").as_deref(), Some("steam.exe"));
         assert_eq!(crate::foreground::exe_of_target("https://youtube.com"), None);
         assert_eq!(crate::foreground::exe_of_target("C:\\raccourci.lnk"), None);
+    }
+}
+
+#[cfg(test)]
+mod tests_024 {
+    use super::*;
+
+    #[test]
+    fn loops_mouse_and_keys() {
+        let t = r#"
+[[pages]]
+name = "P"
+[[pages.keys]]
+key = 1
+label = "Clic auto"
+action = { type = "loop", count = 0, steps = [
+  { type = "mouse", op = "click" },
+  { type = "wait", ms = 100 },
+] }
+[[pages.keys]]
+key = 2
+action = { type = "macro", steps = [
+  { type = "key", keys = "shift", op = "down" },
+  { type = "mouse", op = "click", button = "right", x = 100, y = 200 },
+  { type = "mouse", op = "scroll", amount = -3 },
+  { type = "key", keys = "shift", op = "up" },
+] }
+"#;
+        let cfg: Config = toml::from_str(t).unwrap();
+        validate(&cfg).unwrap();
+        match &cfg.pages[0].keys[0].action {
+            Action::Loop { count, steps } => assert!(*count == 0 && steps.len() == 2),
+            other => panic!("{other:?}"),
+        }
+        // Valeurs par défaut non écrites (bouton gauche, pas de position).
+        let out = toml::to_string(&cfg).unwrap();
+        assert_eq!(out.matches("button").count(), 1);
+        // Une boucle ne peut pas être dans une macro.
+        let bad = Action::Macro { steps: vec![Action::Loop { count: 2, steps: vec![Action::Wait { ms: 1 }] }] };
+        assert!(validate_action(&bad, 0).is_err());
+        assert!(validate_action(&Action::Mouse { op: "move".into(), button: "left".into(), x: None, y: None, amount: 0 }, 1).is_err());
+        assert!(validate_action(&Action::Mouse { op: "click".into(), button: "left".into(), x: Some(1), y: None, amount: 0 }, 1).is_err());
+        assert!(validate_action(&Action::Loop { count: 3, steps: vec![] }, 0).is_err());
     }
 }

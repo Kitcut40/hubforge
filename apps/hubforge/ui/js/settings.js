@@ -55,6 +55,8 @@ function settingsSection(id) {
     }
     out.push(setRow("Mode dynamique", "Un profil peut s'activer tout seul quand son application passe au premier plan (menu des profils › Applications de ce profil).",
       toggleCtl(S.autoProfiles, async (v) => { S.autoProfiles = v; try { await invoke("set_auto_profiles", { on: v }); } catch (e) { toast(String(e), true); } })));
+    out.push(setRow("MasterHUB virtuel", "Une petite fenêtre toujours visible qui reproduit tes 15 touches : un clic vaut un appui. Pratique sans le MasterHUB sous la main.",
+      toggleCtl(S.virtualHub, async (v) => { S.virtualHub = v; try { await invoke("set_virtual_hub", { on: v }); } catch (e) { S.virtualHub = !v; toast(String(e), true); renderSettingsPage(); } })));
     out.push(setCard("sparkles", "Assistant de démarrage", "Choisir un style et un profil prêt à l'emploi en quatre étapes.",
       el("button", { class: "btn", onclick: () => openWizard() }, "Lancer")));
   } else if (id === "look") {

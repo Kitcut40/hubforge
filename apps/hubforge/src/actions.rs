@@ -1,6 +1,6 @@
 //! Exécution des actions : raccourcis, texte, lancement, médias, défilement.
 
-use enigo::{Axis, Direction, Enigo, Key, Keyboard, Mouse, Settings};
+use enigo::{Axis, Button, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 
 pub struct Input {
     enigo: Option<Enigo>,
@@ -76,6 +76,53 @@ impl Input {
         if let Some(e) = self.enigo.as_mut() {
             let axis = if horizontal { Axis::Horizontal } else { Axis::Vertical };
             let _ = e.scroll(amount, axis);
+        }
+    }
+
+    /// Action de souris d'une macro (voir `Action::Mouse`).
+    pub fn mouse(&mut self, op: &str, button: &str, pos: Option<(i32, i32)>, amount: i32) {
+        if let Some((x, y)) = pos {
+            self.mouse_to(x, y);
+        }
+        let Some(e) = self.enigo.as_mut() else { return };
+        let b = match button {
+            "right" => Button::Right,
+            "middle" => Button::Middle,
+            _ => Button::Left,
+        };
+        let res = match op {
+            "click" => e.button(b, Direction::Click),
+            "double" => e.button(b, Direction::Click).and_then(|_| {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+                e.button(b, Direction::Click)
+            }),
+            "down" => e.button(b, Direction::Press),
+            "up" => e.button(b, Direction::Release),
+            "scroll" => e.scroll(amount, Axis::Vertical),
+            _ => Ok(()),
+        };
+        if let Err(err) = res {
+            log::warn!("souris : {err}");
+        }
+    }
+
+    /// Relâche un bouton de souris resté enfoncé par une macro.
+    pub fn mouse_release(&mut self, button: &str) {
+        self.mouse("up", button, None, 0);
+    }
+
+    /// Place le pointeur (pixels de l'écran, tous les écrans compris).
+    #[cfg(windows)]
+    fn mouse_to(&mut self, x: i32, y: i32) {
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetCursorPos(x, y);
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn mouse_to(&mut self, x: i32, y: i32) {
+        if let Some(e) = self.enigo.as_mut() {
+            let _ = e.move_mouse(x, y, enigo::Coordinate::Abs);
         }
     }
 

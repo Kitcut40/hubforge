@@ -282,7 +282,7 @@ Programme → HubForge :
 | Message | Effet |
 |---|---|
 | `{"type":"set_var","name":"ms","value":"23 ms"}` | donne une valeur à la variable `ping.ms` (texte, nombre ou booléen ; 500 caractères au plus) |
-| `{"type":"notify","text":"Connecté à OBS","level":"info"}` | message affiché dans HubForge (`level` = `info` ou `error`) |
+| `{"type":"notify","text":"Connecté à OBS","level":"info"}` | message affiché dans HubForge (`level` = `info` ou `error`) ; il compte aussi sur les touches « Notifications » qui ciblent l'addon (par son identifiant) |
 | `{"type":"ok","key":{"page":1,"key":4}}` | liseré vert sur la touche (`alert` : liseré rouge) |
 | `{"type":"log","text":"…"}` | ligne dans le journal |
 

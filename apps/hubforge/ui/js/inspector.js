@@ -151,6 +151,15 @@ function keyInspector(k) {
         body.push(field("Disque", el("input", { class: "input", value: def.widget_target || "C", maxlength: "2", spellcheck: "false", style: "width:80px",
           onchange: (e) => { def.widget_target = (e.target.value.trim()[0] || "C").toUpperCase(); keyChanged(k, { immediate: true }); } })));
       }
+      if (def.widget === "notif") {
+        body.push(field("Application(s)", el("input", { class: "input", value: def.widget_target || "", spellcheck: "false", placeholder: "Toutes les applications",
+          onchange: (e) => {
+            const v = e.target.value.split(",").map((x) => x.trim()).filter(Boolean).join(", ");
+            if (v) def.widget_target = v; else delete def.widget_target;
+            keyChanged(k, { immediate: true });
+          } }), el("p", { class: "hint" }, "Le nom affiché par Windows : discord, whatsapp, outlook… (plusieurs : sépare par des virgules). Vide : toutes. Un addon avec programme compte aussi, par son nom.")));
+        body.push(notifAccessBox());
+      }
       if (def.widget === "media") {
         body.push(el("p", { class: "hint" }, "Ce que Windows affiche dans ses contrôles multimédia : Spotify, YouTube dans le navigateur, VLC…"));
       }
@@ -354,9 +363,40 @@ function actionTypeId(a) {
 
 /** Mode simple : on cache ce qui sert surtout aux utilisateurs avancés. */
 const isAdv = () => S.uiMode !== "simple";
-const SIMPLE_HIDDEN_CATS = ["Macros intelligentes"];
+const SIMPLE_HIDDEN_CATS = ["Macros intelligentes", "Macros avancées"];
 const SIMPLE_HIDDEN_ITEMS = ["Maintenir des touches", "Macro (plusieurs actions)", "Requête web", "Webhook Discord", "Bascule personnalisée"];
-const ADV_TYPES = ["hold", "macro", "var", "if", "http", "open_config", "service"];
+const ADV_TYPES = ["hold", "macro", "var", "if", "http", "open_config", "service", "loop", "mouse", "key"];
+/** Types d'action concernés par l'avertissement des macros avancées. */
+const MACRO_ADV_TYPES = ["loop", "mouse", "key"];
+
+/** Encart « accès aux notifications de Windows » (touche Notifications). */
+function notifAccessBox() {
+  const box = el("div", { class: "notif-box" }, el("p", { class: "hint" }, "…"));
+  const draw = (st) => {
+    const access = (st && st.access) || "unknown";
+    box.className = "notif-box " + access;
+    box.innerHTML = "";
+    const label = { allowed: "Accès aux notifications autorisé", denied: "Windows refuse l'accès aux notifications",
+      unsupported: "Ce Windows ne permet pas de lire les notifications", unknown: "Accès aux notifications pas encore autorisé" }[access];
+    box.append(el("div", { class: "notif-state" }, el("span", { class: "dot" }), label));
+    if (access === "allowed") {
+      box.append(el("p", { class: "hint" }, "Le nombre de notifications non vues s'affiche sur la touche, qui s'entoure de rouge quand une nouvelle arrive. Un appui les marque comme vues."));
+      const recent = (st.recent || []);
+      if (recent.length) box.append(el("ul", { class: "notif-recent", translate: "no" }, ...recent.map((n) => el("li", {}, el("b", {}, n.app), n.title || n.body))));
+    } else if (access === "denied") {
+      box.append(el("p", { class: "hint" }, "Active « Autoriser les applications à accéder à vos notifications » dans les paramètres de Windows, puis reviens ici."),
+        el("button", { class: "btn small", onclick: () => invoke("open_notif_settings") }, "Ouvrir les paramètres de Windows"));
+    } else if (access === "unknown") {
+      box.append(el("p", { class: "hint" }, "Windows va te demander si HubForge peut lire tes notifications. Rien ne quitte ton PC."),
+        el("button", { class: "btn primary small", onclick: async () => { await invoke("notif_request_access").catch(() => {}); setTimeout(refresh, 1500); setTimeout(refresh, 5000); } }, "Autoriser l'accès"));
+    } else {
+      box.append(el("p", { class: "hint" }, "Les notifications envoyées par les addons s'affichent quand même."));
+    }
+  };
+  const refresh = () => { if (box.isConnected || !box.parentNode) invoke("notif_status").then(draw).catch(() => draw(null)); };
+  refresh();
+  return box;
+}
 
 /** Valeurs par défaut quand on choisit un type d'action. */
 const ACTION_DEFAULTS = {
@@ -373,7 +413,90 @@ const ACTION_DEFAULTS = {
   ai: { type: "ai", preset: "fix", output: "replace" },
   close_app: { type: "close_app", target: "" },
   http: { type: "http", method: "GET", url: "https://" }, service: { type: "service", addon: "", event: "" },
+  mouse: { type: "mouse", op: "click", button: "left" }, key: { type: "key", keys: "", op: "down" },
+  loop: { type: "loop", count: 0, steps: [{ type: "hotkey", keys: "" }, { type: "wait", ms: 500 }] },
 };
+
+const MOUSE_OPS = [["click", "Clic"], ["double", "Double-clic"], ["down", "Enfoncer le bouton"], ["up", "Relâcher le bouton"], ["move", "Déplacer le pointeur"], ["scroll", "Molette"]];
+const MOUSE_BUTTONS = [["left", "Gauche"], ["right", "Droit"], ["middle", "Milieu (molette)"]];
+
+/** Avertissement des macros avancées (boucles, souris, enregistreur), montré
+    une seule fois. Résout `true` si l'utilisateur l'accepte. */
+function ensureMacroAck() {
+  if (S.macroAck) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const close = (ok) => { ov.remove(); if (ok) { S.macroAck = true; invoke("set_macro_ack").catch(() => {}); } resolve(ok); };
+    const ov = el("div", { class: "modal-overlay macro-warn" },
+      el("div", { class: "modal-box" },
+        el("h3", {}, "Macros avancées"),
+        el("p", {}, "Boucles, clics de souris et enregistreur servent à automatiser ton travail et tes logiciels : montage, retouche, tâches répétitives…"),
+        el("p", { class: "warn-text" }, "HubForge n'est pas un outil de triche. Beaucoup de jeux en ligne interdisent les macros et les clics automatiques, et peuvent bannir ton compte. Tu les utilises sous ta seule responsabilité : les auteurs de HubForge déclinent toute responsabilité en cas d'usage contraire aux règles d'un jeu ou d'un service."),
+        el("div", { class: "row", style: "justify-content:flex-end;margin-top:16px" },
+          el("button", { class: "btn ghost", onclick: () => close(false) }, "Pas maintenant"),
+          el("button", { class: "btn primary", onclick: () => close(true) }, "J'ai compris"))));
+    document.body.append(ov);
+  });
+}
+
+/** Enregistreur de macro : fenêtre avec décompte, enregistrement, résultat.
+    `onSteps(steps, replace)` reçoit les étapes enregistrées. */
+async function openRecorder(hasSteps, onSteps) {
+  if (!(await ensureMacroAck())) return;
+  let mouse = false, timer = null, phase = "ready";
+  const body = el("div", {});
+  const ov = el("div", { class: "modal-overlay" }, el("div", { class: "modal-box recorder" }, el("h3", {}, "Enregistrer une macro"), body));
+  const close = async () => {
+    clearInterval(timer);
+    if (phase === "rec") await invoke("macro_record_stop").catch(() => {});
+    ov.remove();
+  };
+  const finish = async () => {
+    clearInterval(timer);
+    phase = "done";
+    const r = await invoke("macro_record_stop").catch((e) => { toast(String(e), true); return null; });
+    const steps = (r && r.steps) || [];
+    body.innerHTML = "";
+    if (!steps.length) {
+      body.append(el("p", {}, "Rien n'a été enregistré."), el("div", { class: "row", style: "justify-content:flex-end" }, el("button", { class: "btn", onclick: close }, "Fermer")));
+      return;
+    }
+    const actions = steps.filter((s) => s.type !== "wait").length;
+    body.append(el("p", {}, `${actions} action${actions > 1 ? "s" : ""} enregistrée${actions > 1 ? "s" : ""} (${steps.length} étapes avec les pauses).`),
+      r.cut ? el("p", { class: "hint warn-text" }, "L'enregistrement était trop long : seul le début a été gardé (100 étapes au plus).") : null,
+      el("div", { class: "row", style: "justify-content:flex-end;flex-wrap:wrap" },
+        el("button", { class: "btn ghost", onclick: close }, "Abandonner"),
+        hasSteps ? el("button", { class: "btn", onclick: () => { onSteps(steps, false); close(); } }, "Ajouter à la suite") : null,
+        el("button", { class: "btn primary", onclick: () => { onSteps(steps, true); close(); } }, hasSteps ? "Remplacer les étapes" : "Utiliser")));
+  };
+  const start = async () => {
+    phase = "count";
+    let n = 3;
+    body.innerHTML = "";
+    const big = el("div", { class: "rec-count" }, String(n));
+    body.append(big, el("p", { class: "hint", style: "text-align:center" }, "Va dans le logiciel à piloter…"));
+    await new Promise((res) => { timer = setInterval(() => { n -= 1; big.textContent = String(n); if (n <= 0) { clearInterval(timer); res(); } }, 1000); });
+    try { await invoke("macro_record_start", { mouse }); } catch (e) { toast(String(e), true); ov.remove(); return; }
+    phase = "rec";
+    body.innerHTML = "";
+    const info = el("p", { class: "rec-info" }, "0 évènement");
+    body.append(el("div", { class: "rec-live" }, el("span", { class: "rec-dot" }), "Enregistrement en cours"), info,
+      el("p", { class: "hint" }, "Appuie sur Échap pour arrêter (Échap n'est pas enregistrée)."),
+      el("div", { class: "row", style: "justify-content:flex-end" }, el("button", { class: "btn primary", onclick: finish }, "Arrêter")));
+    timer = setInterval(async () => {
+      const st = await invoke("macro_record_state").catch(() => null);
+      if (!st) return;
+      info.textContent = `${st.events} évènement${st.events > 1 ? "s" : ""} · ${Math.floor(st.elapsed_ms / 1000)} s`;
+      if (!st.recording) finish();
+    }, 250);
+  };
+  body.append(
+    el("p", {}, "HubForge note tes touches du clavier avec leurs délais. Après « Démarrer », tu as 3 secondes pour aller dans le logiciel voulu."),
+    switchRow("Enregistrer aussi les clics et la molette de la souris", false, (v) => { mouse = v; }, "Les clics sont rejoués à la même position de l'écran."),
+    el("div", { class: "row", style: "justify-content:flex-end;margin-top:12px" },
+      el("button", { class: "btn ghost", onclick: close }, "Abandonner"),
+      el("button", { class: "btn primary", onclick: start }, "Démarrer")));
+  document.body.append(ov);
+}
 
 const AI_PRESETS = [["fix", "Corriger l'orthographe"], ["translate_en", "Traduire en anglais"], ["translate_fr", "Traduire en français"],
   ["summarize", "Résumer"], ["formal", "Style professionnel"], ["custom", "Consigne perso…"]];
@@ -411,6 +534,14 @@ function stepSummary(a) {
     case "profile": return a.to === "next" ? "Profil suivant" : a.to === "previous" ? "Profil précédent" : `Profil « ${a.to} »`;
     case "game": return "Mini-jeu";
     case "service": return `Addon ${a.addon || ""} : ${a.event || ""}`;
+    case "mouse": {
+      const op = (MOUSE_OPS.find(([v]) => v === a.op) || MOUSE_OPS[0])[1];
+      const btn = a.button && a.button !== "left" && !["move", "scroll"].includes(a.op) ? ` ${(MOUSE_BUTTONS.find(([v]) => v === a.button) || ["", a.button])[1].toLowerCase()}` : "";
+      const pos = a.x != null && a.y != null ? ` en ${a.x}, ${a.y}` : "";
+      return a.op === "scroll" ? `Molette ${a.amount > 0 ? "↓" : "↑"} ${Math.abs(a.amount || 0)}` : `${op}${btn}${pos}`;
+    }
+    case "key": return `${a.op === "up" ? "Relâcher" : "Enfoncer"} ${a.keys || "…"}`;
+    case "loop": return `Boucle de ${(a.steps || []).length} étape${(a.steps || []).length > 1 ? "s" : ""} (${a.count ? a.count + " fois" : "sans fin"})`;
     case "var": {
       const n = a.name || "?";
       if (a.op === "toggle") return `Basculer ${n}`;
@@ -432,12 +563,16 @@ function actionEditor(st, k, onChange, opts = {}) {
   const nested = !!opts.nested || !!opts.extra;
   const upd = (fn) => { fn(st.action); onChange(); };
   let types = opts.nested
-    ? [...ACTION_TYPES.filter(([v]) => v !== "macro"), ["wait", "Attendre (pause)"]]
+    ? [...ACTION_TYPES.filter(([v]) => v !== "macro" && v !== "loop"), ["key", "Enfoncer / relâcher une touche"], ["wait", "Attendre (pause)"]]
     : ACTION_TYPES;
   if (!isAdv()) types = types.filter(([v]) => !ADV_TYPES.includes(v) || v === actionTypeId(a));
   if (S.gameBest > 0 || a.type === "game") types = [...types, ["game", "🎮 Mini-jeu tape-taupe"]];
   const typeSel = el("select", { class: "input" }, ...types.map(([v, l]) => el("option", { value: v, selected: v === actionTypeId(a) }, l)));
-  typeSel.onchange = () => {
+  typeSel.onchange = async () => {
+    if (MACRO_ADV_TYPES.includes(typeSel.value) && !(await ensureMacroAck())) {
+      typeSel.value = actionTypeId(a);
+      return;
+    }
     st.action = clone(ACTION_DEFAULTS[typeSel.value]);
     if (st.action.type === "folder") {
       // Premier dossier existant, sinon on en crée un.
@@ -457,7 +592,7 @@ function actionEditor(st, k, onChange, opts = {}) {
     applyAppIcon(k, st, p, { quiet: true, keepIcon: ownImage }).then((ok) => { if (!ok) renderInspector(); });
   };
 
-  if (t === "hotkey" || t === "hold") {
+  if (t === "hotkey" || t === "hold" || t === "key") {
     const cap = el("input", { class: "input capture", value: a.keys || "", placeholder: "Clique ici puis fais la combinaison", spellcheck: "false" });
     cap.onfocus = () => { S.capturing = true; cap.classList.add("listening"); cap.placeholder = "Appuie sur la combinaison…"; };
     cap.onblur = () => { S.capturing = false; cap.classList.remove("listening"); cap.placeholder = "Clique ici puis fais la combinaison"; };
@@ -476,7 +611,13 @@ function actionEditor(st, k, onChange, opts = {}) {
       const v = cap.value ? cap.value + "+" + extra.value : extra.value;
       cap.value = v; upd((x) => { x.keys = v; }); extra.value = "";
     };
-    out.push(field(t === "hold" ? "Touches à maintenir" : "Combinaison", cap, el("div", { style: "height:8px" }), extra,
+    if (t === "key") {
+      out.push(field("Opération", el("select", { class: "input", onchange: (e) => { upd((x) => { x.op = e.target.value; }); } },
+        el("option", { value: "down", selected: a.op !== "up" }, "Enfoncer (reste enfoncée)"),
+        el("option", { value: "up", selected: a.op === "up" }, "Relâcher")),
+        el("p", { class: "hint" }, "Tout ce qui reste enfoncé est relâché à la fin de la macro.")));
+    }
+    out.push(field(t === "hold" ? "Touches à maintenir" : t === "key" ? "Touche(s)" : "Combinaison", cap, el("div", { style: "height:8px" }), extra,
       t === "hold"
         ? el("p", { class: "hint" }, "Ces touches restent enfoncées tant que tu tiens la touche du MasterHUB : klaxon, accélérateur, appuyer-pour-parler… (dans une macro ou un appui long : simple appui).")
         : nested ? null : el("p", { class: "hint" }, "Ex. ctrl+shift+s · win+d · alt+f4. Les combinaisons avec la touche Windows s'ajoutent avec la liste.")));
@@ -590,6 +731,60 @@ function actionEditor(st, k, onChange, opts = {}) {
     const quick = el("div", { class: "chips" }, ...[100, 300, 500, 1000, 2000].map((v) =>
       el("span", { class: "chip add", onclick: () => { inp.value = v; inp.oninput(); } }, v < 1000 ? `${v} ms` : `${v / 1000} s`)));
     out.push(field("Durée (millisecondes)", el("div", { class: "row" }, inp, sec), quick));
+  } else if (t === "mouse") {
+    out.push(field("Action", el("select", { class: "input", onchange: (e) => {
+      upd((x) => {
+        x.op = e.target.value;
+        if (x.op === "scroll" && !x.amount) x.amount = 3;
+        if (x.op !== "scroll") delete x.amount;
+        if (x.op === "move" && x.x == null) { x.x = 0; x.y = 0; }
+      });
+      renderInspector();
+    } }, ...MOUSE_OPS.map(([v, l]) => el("option", { value: v, selected: v === (a.op || "click") }, l)))));
+    if (!["move", "scroll"].includes(a.op)) {
+      out.push(field("Bouton", el("div", { class: "chips" }, ...MOUSE_BUTTONS.map(([v, l]) => el("span", {
+        class: "chip" + (v === (a.button || "left") ? " on style-on" : " add"),
+        onclick: () => { upd((x) => { if (v === "left") delete x.button; else x.button = v; }); renderInspector(); },
+      }, l)))));
+    }
+    if (a.op === "scroll") {
+      out.push(field("Crans de molette", el("input", { class: "input", type: "number", min: "-100", max: "100", value: a.amount || 3, style: "width:110px",
+        onchange: (e) => upd((x) => { x.amount = Math.max(-100, Math.min(100, Math.round(Number(e.target.value)) || 1)); }) }),
+        el("p", { class: "hint" }, "Positif : vers le bas ; négatif : vers le haut.")));
+    } else {
+      const hasPos = a.x != null && a.y != null;
+      const xi = el("input", { class: "input", type: "number", value: hasPos ? a.x : "", style: "width:90px", onchange: () => setPos() });
+      const yi = el("input", { class: "input", type: "number", value: hasPos ? a.y : "", style: "width:90px", onchange: () => setPos() });
+      const setPos = () => upd((x) => { x.x = Math.round(Number(xi.value) || 0); x.y = Math.round(Number(yi.value) || 0); });
+      const grab = el("button", { class: "btn small", onclick: async () => {
+        // Décompte : le temps de placer le pointeur où il faut.
+        for (let n = 3; n > 0; n--) { grab.textContent = `Place la souris… ${n}`; await new Promise((r) => setTimeout(r, 1000)); }
+        const p = await invoke("cursor_pos").catch(() => null);
+        grab.textContent = "Prendre la position de la souris";
+        if (!p) { toast("Position de la souris indisponible", true); return; }
+        xi.value = p[0]; yi.value = p[1]; setPos(); renderInspector();
+      } }, "Prendre la position de la souris");
+      if (a.op !== "move") {
+        out.push(switchRow("À une position précise de l'écran", hasPos, (v) => {
+          upd((x) => { if (v) { x.x = 0; x.y = 0; } else { delete x.x; delete x.y; } });
+          renderInspector();
+        }, "Sinon, le clic se fait là où se trouve le pointeur."));
+      }
+      if (hasPos || a.op === "move") {
+        out.push(field("Position (pixels)", el("div", { class: "row" }, el("span", { class: "hint" }, "X"), xi, el("span", { class: "hint" }, "Y"), yi), el("div", { style: "height:8px" }), grab));
+      }
+    }
+  } else if (t === "loop") {
+    if (!Array.isArray(a.steps)) a.steps = [];
+    const cnt = el("input", { class: "input", type: "number", min: "0", max: "10000", value: a.count || 0, style: "width:110px",
+      onchange: (e) => { upd((x) => { x.count = Math.max(0, Math.min(10000, Math.round(Number(e.target.value)) || 0)); }); renderInspector(); } });
+    out.push(field("Nombre de tours", el("div", { class: "row" }, cnt, el("span", { class: "hint" }, a.count ? `${a.count} fois` : "sans fin")),
+      el("div", { class: "chips", style: "margin-top:8px" }, ...[[0, "Jusqu'au prochain appui"], [5, "5"], [10, "10"], [100, "100"]].map(([v, l]) =>
+        el("span", { class: "chip" + ((a.count || 0) === v ? " on style-on" : " add"), onclick: () => { upd((x) => { x.count = v; }); renderInspector(); } }, l))),
+      el("p", { class: "hint" }, "Pendant la boucle, la touche s'entoure de bleu ; appuie de nouveau dessus pour l'arrêter. Une boucle sans fin s'arrête d'elle-même au bout d'une heure.")));
+    out.push(...stepsEditor(a.steps, k, onChange, {
+      title: "Étapes répétées", hint: "Exécutées dans l'ordre, puis on recommence. Mets au moins une pause pour garder la main.", record: true,
+    }));
   } else if (t === "macro") {
     out.push(...macroEditor(a, k, onChange));
   } else if (t === "var") {
@@ -712,7 +907,7 @@ function createFolder(name) {
 function fixPageRefs(removed) {
   const fix = (a) => {
     if (!a) return a;
-    if (a.type === "macro") { a.steps = (a.steps || []).map(fix).filter(Boolean); return a; }
+    if (a.type === "macro" || a.type === "loop") { a.steps = (a.steps || []).map(fix).filter(Boolean); return a; }
     if (a.type === "if") { a.then = (a.then || []).map(fix).filter(Boolean); a["else"] = (a["else"] || []).map(fix).filter(Boolean); return a; }
     if ((a.type === "page" || a.type === "folder") && /^\d+$/.test(a.to || "")) {
       const n = Number(a.to);
@@ -734,7 +929,7 @@ function fixPageRefs(removed) {
 function macroEditor(a, k, onChange) {
   if (!Array.isArray(a.steps)) a.steps = [];
   return stepsEditor(a.steps, k, onChange, {
-    title: "Étapes", hint: "Exécutées dans l'ordre, de haut en bas. Ajoute des pauses pour laisser le temps à une application de s'ouvrir.",
+    title: "Étapes", hint: "Exécutées dans l'ordre, de haut en bas. Ajoute des pauses pour laisser le temps à une application de s'ouvrir.", record: isAdv(),
   });
 }
 
@@ -767,6 +962,12 @@ function stepsEditor(steps, k, onChange, opts) {
     el("div", { class: "row", style: "margin-top:10px" },
       el("button", { class: "btn grow", disabled: steps.length >= 100, onclick: () => { steps.push({ type: "hotkey", keys: "" }); changedAndRedraw(); } }, "+ Étape"),
       el("button", { class: "btn grow", disabled: steps.length >= 100, onclick: () => { steps.push({ type: "wait", ms: 500 }); changedAndRedraw(); } }, "+ Pause")),
+    opts.record ? el("button", { class: "btn rec-btn", style: "margin:8px 0 16px;width:100%", onclick: () => openRecorder(steps.length > 0, (rec, replace) => {
+      if (replace) steps.splice(0, steps.length);
+      steps.push(...rec.slice(0, Math.max(0, 100 - steps.length)));
+      changedAndRedraw();
+      toast("Macro enregistrée : vérifie les étapes, puis essaie-la sur le MasterHUB.");
+    }) }, el("span", { class: "rec-dot" }), "Enregistrer mes actions") : null,
   ];
 }
 

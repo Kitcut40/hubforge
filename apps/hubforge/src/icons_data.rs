@@ -123,4 +123,8 @@ pub const ICONS: &[(&str, &str)] = &[
     ("dumbbell", include_str!("../../../assets/icons/lucide/dumbbell.svg")),
     ("crosshair", include_str!("../../../assets/icons/lucide/crosshair.svg")),
     ("target", include_str!("../../../assets/icons/lucide/target.svg")),
+    ("mouse-pointer-click", include_str!("../../../assets/icons/lucide/mouse-pointer-click.svg")),
+    ("mouse-pointer-2", include_str!("../../../assets/icons/lucide/mouse-pointer-2.svg")),
+    ("mouse", include_str!("../../../assets/icons/lucide/mouse.svg")),
+    ("repeat", include_str!("../../../assets/icons/lucide/repeat.svg")),
 ];

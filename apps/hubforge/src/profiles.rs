@@ -49,6 +49,10 @@ pub struct Settings {
     pub lang: String,
     /// Programmes d'addons autorisés par l'utilisateur (« id@version »).
     pub trusted_services: Vec<String>,
+    /// MasterHUB virtuel (fenêtre à l'écran) ; désactivé par défaut.
+    pub virtual_hub: bool,
+    /// Avertissement des macros avancées lu et accepté.
+    pub macro_ack: bool,
 }
 
 /// Profil actif, partagé entre l'interface et le moteur.

@@ -22,10 +22,10 @@ const LIB_GROUPS = [
   ["keys", "Clavier", ["Clavier", "Fenêtres"]],
   ["apps", "Applis", ["Applications"]],
   ["sound", "Son", ["Multimédia", "Son et musique", "Soundboard", "Touches à 2 états"]],
-  ["live", "Vivantes", ["Touches vivantes", "Minuteurs", "Animations"]],
+  ["live", "Vivantes", ["Touches vivantes", "Minuteurs", "Notifications", "Animations"]],
   ["game", "Jeu", ["Jeu"]],
   ["ai", "IA et web", ["Connecteurs"]],
-  ["system", "Système", ["Système", "Macros intelligentes", "HubForge"]],
+  ["system", "Système", ["Système", "Macros intelligentes", "Macros avancées", "HubForge"]],
 ];
 
 /** Une ligne d'explication sous les actions les plus courantes. */

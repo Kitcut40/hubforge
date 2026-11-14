@@ -29,7 +29,8 @@ Pour fabriquer l'installateur toi-même : `installer/build.sh` (NSIS).
 | 2 | Interface de configuration | ✅ v0.2 → v0.3 (disposition réelle des modules, icônes, touches à 2 états) |
 | 3 | Faders, molettes, audio par application | ✅ v0.2 |
 | 3b | Noyau avancé : pages automatiques par application ✅ v0.4, macros ✅ v0.4.1, dossiers ✅ v0.4.2, touches vivantes ✅ v0.5.0 (styles v0.6.0), profils ✅ v0.6.0, appui long | 🔧 |
-| 4 | Système d'addons `.forge` | 🔧 niveau 1 (déclaratif) ✅ v0.7.0 + addon officiel Fusion 360 — guide : [docs/ADDON_GUIDE.md](docs/ADDON_GUIDE.md) |
+| 4 | Système d'addons `.forge` | niveau 1 (déclaratif) ✅ v0.7.0, niveau 2 (programmes) ✅ v0.23.0 — guide : [docs/ADDON_GUIDE.md](docs/ADDON_GUIDE.md) |
+| 4c | Notifications sur les touches, macros avancées (souris, boucles, enregistreur), MasterHUB virtuel | ✅ v0.24.0 |
 | 4b | Import des profils et des packs d'icônes Stream Deck | ✅ v0.17.0 |
 | 5 | Linux, installeurs, publication v1.0 | ⏳ |
 
@@ -71,6 +72,10 @@ Déjà disponible : images, texte et **GIF animés** sur les touches, pages, rac
 ```sh
 cargo run --release -p hubforge-probe
 ```
+
+## Macros avancées : avertissement
+
+HubForge n'est **pas un outil de triche**. Les macros avancées (boucles, clics de souris, enregistreur) servent à automatiser un travail ou un logiciel. Beaucoup de jeux en ligne interdisent les macros et les clics automatiques et peuvent bannir les comptes qui en utilisent : tu les utilises sous ta seule responsabilité, et les auteurs de HubForge déclinent toute responsabilité en cas d'usage contraire aux règles d'un jeu ou d'un service.
 
 ## Licence
 

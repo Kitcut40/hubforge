@@ -91,6 +91,20 @@ const LIBRARY = [
     { name: "Condition (si… alors… sinon)", label: "Si…", icon: "git-branch", color: "#4527A0",
       action: { type: "if", left: "{app}", cmp: "contains", right: "", then: [{ type: "hotkey", keys: "" }], else: [] } },
   ]},
+  { cat: "Macros avancées", items: [
+    { name: "Clic de souris", label: "Clic", icon: "mouse-pointer-click", color: "#455A64", action: { type: "mouse", op: "click", button: "left" } },
+    { name: "Clic droit", label: "Clic droit", icon: "mouse-pointer-2", color: "#455A64", action: { type: "mouse", op: "click", button: "right" } },
+    { name: "Clic molette", label: "Molette", icon: "mouse", color: "#455A64", action: { type: "mouse", op: "click", button: "middle" } },
+    { name: "Boucle (répéter des étapes)", label: "Boucle", icon: "repeat", color: "#0A84FF",
+      action: { type: "loop", count: 0, steps: [{ type: "hotkey", keys: "" }, { type: "wait", ms: 500 }] } },
+    { name: "Macro enregistrée", label: "Macro", icon: "circle-dot", color: "#C62828", action: { type: "macro", steps: [] } },
+  ]},
+  { cat: "Notifications", items: [
+    { name: "Toutes les notifications", label: "", icon: "bell", color: "#1F2229", widget: "notif", action: { type: "none" } },
+    { name: "Notifications Discord", label: "", icon: "bell", color: "#1F2229", widget: "notif", widget_target: "discord", action: { type: "none" } },
+    { name: "Notifications WhatsApp", label: "", icon: "bell", color: "#1F2229", widget: "notif", widget_target: "whatsapp", action: { type: "none" } },
+    { name: "Dernier message (toutes applis)", label: "", icon: "bell", color: "#1F2229", widget: "notif", widget_style: "last", action: { type: "none" } },
+  ]},
   { cat: "Connecteurs", items: [
     { name: "IA : corriger la sélection", label: "Corriger", icon: "spell-check", color: "#7C4DFF", action: { type: "ai", preset: "fix", output: "replace" } },
     { name: "IA : traduire en anglais", label: "→ EN", icon: "languages", color: "#3949AB", action: { type: "ai", preset: "translate_en", output: "replace" } },
@@ -165,6 +179,7 @@ const ACTION_TYPES = [
   ["launch:program", "Lancer une application"], ["launch:url", "Ouvrir un site web"], ["launch:path", "Ouvrir un dossier ou fichier"],
   ["media", "Multimédia"], ["close_app", "Fermer une application"], ["app_mute", "Couper le son d'une application"], ["audio_output", "Changer de sortie audio"], ["timer", "Minuteur de la touche"], ["sound", "Jouer un son"], ["stop_sounds", "Arrêter tous les sons"], ["page", "Changer de page"], ["lock", "Verrouiller le PC"], ["open_config", "Ouvrir la configuration"],
   ["macro", "Macro (plusieurs actions à la suite)"], ["var", "Variable (compteur, interrupteur…)"], ["if", "Condition (si… alors… sinon)"],
+  ["loop", "Boucle (répéter des étapes)"], ["mouse", "Souris (clic, molette…)"],
   ["ai", "IA sur le texte sélectionné"], ["http", "Requête web"], ["service", "Action d'un addon"],
   ["folder", "Ouvrir un dossier"], ["back", "Retour (fermer le dossier)"],
   ["profile", "Changer de profil"],
@@ -176,7 +191,8 @@ const SWATCHES = ["#FF3B30", "#FF7A1A", "#FFB300", "#FFD60A", "#3DDC84", "#1DB95
 const WIDGETS = [["", "Aucune (image fixe)"], ["clock", "Horloge"], ["date", "Date"], ["weather", "Météo"], ["cpu", "Processeur (CPU)"],
   ["ram", "Mémoire (RAM)"], ["gpu", "Carte graphique (utilisation)"], ["gpu_temp", "Carte graphique (température)"], ["vram", "Mémoire vidéo (VRAM)"],
   ["volume", "Volume général"], ["app_volume", "Volume d'une application"], ["mic", "État du micro"],
-  ["audio_output", "Sortie audio"], ["media", "Musique en cours"], ["timer", "Minuteur"], ["net", "Réseau"], ["disk", "Disque"]];
+  ["audio_output", "Sortie audio"], ["media", "Musique en cours"], ["timer", "Minuteur"], ["net", "Réseau"], ["disk", "Disque"],
+  ["notif", "Notifications"]];
 
 const WIDGET_STYLES = {
   clock: [["digital", "Numérique"], ["analog", "À aiguilles"], ["big", "Grands chiffres"]],
@@ -194,6 +210,7 @@ const WIDGET_STYLES = {
   net: [["text", "Débits"], ["graph", "Graphique"]],
   disk: [["bar", "Barre"], ["gauge", "Jauge"]],
   mic: [["classic", "Icône et texte"], ["icon", "Grande icône"]],
+  notif: [["count", "Compteur"], ["last", "Dernier message"]],
 };
 
 const THEMES = [["graphite", "Graphite"], ["neon", "Néon"], ["plan", "Plan"], ["console", "Console"], ["mono", "Mono"], ["classic", "Classique"]];
@@ -240,7 +257,7 @@ const VAR_SPECIALS = [["{app}", "appli au premier plan"], ["{page}", "numéro de
 /** Actions contenues dans une action (étapes de macro, branches d'une condition). */
 function childActions(a) {
   if (!a) return [];
-  if (a.type === "macro") return a.steps || [];
+  if (a.type === "macro" || a.type === "loop") return a.steps || [];
   if (a.type === "if") return [...(a.then || []), ...(a["else"] || [])];
   return [];
 }
@@ -375,6 +392,8 @@ async function init() {
   S.lang = ini.lang === "en" ? "en" : "fr";
   setupLang(S.lang);
   S.autoProfiles = ini.auto_profiles !== false;
+  S.virtualHub = !!ini.virtual_hub;
+  S.macroAck = !!ini.macro_ack;
   $("#version").textContent = "v" + ini.version;
   S.icons = (await invoke("list_icons")) || [];
   S.layout = (await invoke("get_layout")) || { base_rot: 0, placements: {} };
@@ -384,6 +403,7 @@ async function init() {
   await refreshPreviews(S.page);
 
   listen("status", (e) => onStatus(e.payload));
+  listen("virtual-hub", (e) => { S.virtualHub = !!e.payload; if (S.sel.type === "settings") renderInspector(); });
   listen("autostart", (e) => { S.autostart = e.payload; if (S.sel.type === "settings") renderInspector(); });
   listen("update-state", (e) => { S.update = e.payload || {}; renderUpdatePill(); if (S.sel.type === "settings") renderInspector(); });
   listen("update-progress", (e) => updateProgress(e.payload));

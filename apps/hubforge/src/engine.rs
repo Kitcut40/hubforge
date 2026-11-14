@@ -54,6 +54,10 @@ pub enum EngineMsg {
     Redraw,
     /// Addons avec programme : activation, accord ou réglages modifiés.
     SyncServices,
+    /// MasterHUB virtuel : appui (down) ou relâchement d'une touche (0 à 14).
+    VirtualKey { key: u8, down: bool },
+    /// MasterHUB virtuel ouvert : renvoyer la page (même sans module branché).
+    VirtualShow,
 }
 
 /// Résultat d'une action qui tourne en arrière-plan (requête web, IA).
@@ -76,6 +80,23 @@ enum JobOut {
 const MARK_BUSY: [u8; 3] = [255, 166, 0];
 const MARK_OK: [u8; 3] = [48, 209, 88];
 const MARK_ERR: [u8; 3] = [255, 59, 48];
+/// Liseré d'une boucle en cours (appuyer de nouveau l'arrête).
+const MARK_LOOP: [u8; 3] = [10, 132, 255];
+/// Durée maximale d'une boucle sans fin.
+const LOOP_MAX_TIME: Duration = Duration::from_secs(3600);
+
+/// Boucle en cours : étapes à répéter, tours restants (u32::MAX = jusqu'au
+/// prochain appui), touche qui l'a lancée, fin au plus tard.
+struct LoopRun {
+    steps: Vec<Action>,
+    left: u32,
+    owner: Option<(usize, u8)>,
+    until: Instant,
+}
+
+/// Liseré d'une nouvelle notification.
+const MARK_NOTIF: [u8; 3] = [255, 59, 48];
+
 /// Liseré « appuie encore pour confirmer ».
 const MARK_CONFIRM: [u8; 3] = [255, 214, 10];
 /// Délai pour confirmer une action sensible.
@@ -227,6 +248,16 @@ pub struct Engine {
     /// Étapes de macro restant à exécuter, et moment de la prochaine.
     macro_queue: VecDeque<Action>,
     macro_next: Instant,
+    /// Touches du clavier et boutons de souris enfoncés par une macro
+    /// (relâchés à la fin), et boucle en cours.
+    macro_keys: Vec<String>,
+    macro_buttons: Vec<String>,
+    macro_loop: Option<LoopRun>,
+    /// Touches « Notifications » : dernier appui (ms depuis 1970) et dernier
+    /// nombre affiché (pour signaler une nouvelle notification).
+    notif_seen: HashMap<(usize, u8), u64>,
+    notif_counts: HashMap<(usize, u8), usize>,
+    notif_flash: Vec<u8>,
     /// Pages d'où l'on a ouvert les dossiers (pour la touche Retour).
     page_stack: Vec<usize>,
     /// Touches vivantes : mesures, prochaine mise à jour, et ce qui est
@@ -355,6 +386,12 @@ impl Engine {
             auto_from: None,
             last_fg: None,
             macro_queue: VecDeque::new(),
+            macro_keys: Vec::new(),
+            macro_buttons: Vec::new(),
+            macro_loop: None,
+            notif_seen: HashMap::new(),
+            notif_counts: HashMap::new(),
+            notif_flash: Vec::new(),
             macro_next: Instant::now(),
             page_stack: Vec::new(),
             sampler: widgets::Sampler::default(),
@@ -524,7 +561,7 @@ impl Engine {
                 || self.gesture.is_some()
                 || self.pickup.iter().any(|p| p.is_some())
                 || (0..FADER_COUNT).any(|i| self.fader_slot(i).led != "fixed");
-            let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() && self.game.is_none() && self.doom.is_none() && !busy_lights { 30 } else { 5 };
+            let timeout = if self.anims.is_empty() && self.macro_queue.is_empty() && self.macro_loop.is_none() && self.game.is_none() && self.doom.is_none() && !busy_lights { 30 } else { 5 };
             match self.events.recv_timeout(Duration::from_millis(timeout)) {
                 Ok(ev) => {
                     self.handle(ev);
@@ -556,6 +593,7 @@ impl Engine {
     fn shutdown(&mut self) {
         log::info!("arrêt de HubForge…");
         crate::services::stop_all();
+        self.stop_macro();
         self.release_held();
         self.vars.save_now();
         // Le module 15 touches retrouve son animation du logo.
@@ -574,6 +612,21 @@ impl Engine {
                 self.services_check = Instant::now() - Duration::from_secs(60);
                 self.services_last_full = Instant::now() - Duration::from_secs(60);
             }
+            EngineMsg::VirtualKey { key, down } => {
+                if (key as usize) < KEY_COUNT {
+                    if down {
+                        self.last_device_input = Instant::now();
+                        if self.asleep {
+                            self.set_asleep(false);
+                        }
+                        self.key_down(key);
+                    } else {
+                        self.key_up(key);
+                    }
+                    self.notify();
+                }
+            }
+            EngineMsg::VirtualShow => self.show_page(),
             EngineMsg::Redraw => {
                 self.render_all();
                 self.show_page();
@@ -669,6 +722,9 @@ impl Engine {
         let old = std::mem::replace(&mut self.cfg, cfg);
         self.config_error = None;
         crate::weather::set_city(&self.cfg.general.weather_city);
+        if self.cfg.pages.iter().any(|p| p.keys.iter().any(|k| k.widget.as_deref() == Some("notif"))) {
+            crate::notif::set_wanted(true);
+        }
         self.render_all();
         self.page = self.page.min(self.visuals.len().saturating_sub(1));
         // Les touches qui ne sont plus à 2 états reviennent à l'état normal.
@@ -1098,6 +1154,7 @@ impl Engine {
                     } else {
                         log::info!("addon {addon} : {text}");
                     }
+                    crate::notif::push_local(&addon, &text, "");
                     self.notice = Some((id, addon, text, error));
                     self.notify();
                 }
@@ -1186,6 +1243,7 @@ impl Engine {
     }
 
     fn send_image_raw(&self, key: u8, jpeg: &Arc<Vec<u8>>) {
+        crate::vhub::set_key(key, jpeg, self.keys_rot);
         let packets = Arc::new(protocol::keys15_image_packets(key, jpeg));
         self.mgr.send_kind(Kind::Keys15, Command::Packets(packets));
     }
@@ -1215,6 +1273,7 @@ impl Engine {
             self.restart_anim(k);
         }
         let name = self.cfg.pages.get(self.page).map(|p| p.name.as_str()).unwrap_or("");
+        crate::vhub::set_page(name);
         log::info!("page {} « {name} »", self.page + 1);
     }
 
@@ -1246,6 +1305,19 @@ impl Engine {
             // Résultat au tour suivant (toutes les 500 ms).
             self.audio.send(AudioCmd::Measure(targets.clone()));
             snap.apps = targets.into_iter().filter_map(|t| self.audio.meter_opt(&t).map(|m| (t, m))).collect();
+        }
+        if defs.iter().any(|d| d.widget.as_deref() == Some("notif")) {
+            crate::notif::set_wanted(true);
+            snap.notifs = crate::notif::snapshot().1;
+            snap.notif_seen = self.notif_seen.iter().filter(|((p, _), _)| *p == page).map(|((_, k), v)| (*k, *v)).collect();
+            for d in defs.iter().filter(|d| d.widget.as_deref() == Some("notif") && (1..=KEY_COUNT as u8).contains(&d.key)) {
+                let key = d.key - 1;
+                let n = widgets::notif_state(d, &snap).0;
+                let before = self.notif_counts.insert((page, key), n);
+                if before.is_some_and(|b| n > b) {
+                    self.notif_flash.push(key);
+                }
+            }
         }
         let mut changed = Vec::new();
         for def in defs.iter().filter(|d| d.widget.is_some() && (1..=KEY_COUNT as u8).contains(&d.key)) {
@@ -1284,6 +1356,10 @@ impl Engine {
             let f = self.current_frame(key);
             let jpeg = if self.pressed[key as usize] && self.cfg.general.press_feedback { f.pressed.clone() } else { f.jpeg.clone() };
             self.send_image(key, &jpeg);
+        }
+        // Nouvelle notification : la touche s'entoure de rouge un instant.
+        for key in std::mem::take(&mut self.notif_flash) {
+            self.set_mark(Some((self.page, key)), MARK_NOTIF, Duration::from_millis(2500));
         }
     }
 
@@ -1343,6 +1419,12 @@ impl Engine {
     /// Action « appui simple » d'une touche (avec ses deux états éventuels).
     fn press_key_action(&mut self, key: u8, def: KeyDef) {
         self.acting = Some((self.page, key));
+        // Boucle lancée par cette touche : un nouvel appui l'arrête.
+        if self.macro_loop.as_ref().is_some_and(|l| l.owner == Some((self.page, key))) {
+            log::info!("boucle arrêtée");
+            self.stop_macro();
+            return;
+        }
         // Action sensible : il faut appuyer une seconde fois pour confirmer.
         if def.confirm {
             let now = Instant::now();
@@ -1355,6 +1437,12 @@ impl Engine {
                 }
             }
             self.marks.remove(&key);
+        }
+        // Touche « Notifications » : l'appui les marque comme vues.
+        if def.widget.as_deref() == Some("notif") {
+            self.notif_seen.insert((self.page, key), crate::notif::now_ms());
+            self.notif_counts.insert((self.page, key), 0);
+            self.widgets_due = Instant::now();
         }
         let state = if def.toggle.is_some() && self.is_toggled(key) { 1 } else { 0 };
         let action = def.state(state).action;
@@ -1661,6 +1749,43 @@ impl Engine {
                 }
             }
             Action::Wait { .. } => {} // n'a de sens que dans une macro
+            Action::Mouse { op, button, x, y, amount } => {
+                let pos = x.zip(*y);
+                self.input.mouse(op, button, pos, *amount);
+                match op.as_str() {
+                    "down" if !self.macro_buttons.contains(button) => self.macro_buttons.push(button.clone()),
+                    "up" => self.macro_buttons.retain(|b| b != button),
+                    _ => {}
+                }
+            }
+            Action::Key { keys, op } => {
+                if op == "up" {
+                    self.input.release(keys);
+                    self.macro_keys.retain(|k| k != keys);
+                } else if self.input.press(keys) && !self.macro_keys.contains(keys) {
+                    self.macro_keys.push(keys.clone());
+                }
+            }
+            Action::Loop { count, steps } => {
+                if self.macro_loop.is_some() {
+                    log::warn!("une boucle tourne déjà : appui ignoré");
+                    return;
+                }
+                let steps: Vec<Action> = steps.iter().filter(|s| !matches!(s, Action::Macro { .. } | Action::Loop { .. })).cloned().collect();
+                if steps.is_empty() {
+                    return;
+                }
+                let left = if *count == 0 { u32::MAX } else { count.saturating_sub(1) };
+                log::info!("boucle lancée ({})", if *count == 0 { "jusqu'au prochain appui".to_string() } else { format!("{count} tours") });
+                self.macro_queue.extend(steps.iter().cloned());
+                self.macro_loop = Some(LoopRun { steps, left, owner: self.acting, until: Instant::now() + LOOP_MAX_TIME });
+                if *count != 1 {
+                    self.set_mark(self.acting, MARK_LOOP, LOOP_MAX_TIME);
+                }
+                if !self.in_macro {
+                    self.run_macro();
+                }
+            }
             Action::OpenConfig => actions::launch(&self.cfg_path.to_string_lossy(), &[]),
             Action::Page { to } => {
                 let Some(target) = self.resolve_page(to, true) else { return };
@@ -1733,7 +1858,7 @@ impl Engine {
         self.page_stack.clear();
         self.auto_from = None;
         self.last_fg = None;
-        self.macro_queue.clear();
+        self.stop_macro();
         // Toutes les LED sont renvoyées (couleurs du nouveau profil).
         self.cfg.general.base_color.clear();
         self.apply_config(cfg);
@@ -2154,8 +2279,50 @@ impl Engine {
             }
         }
         self.in_macro = false;
+        if self.macro_queue.is_empty() && Instant::now() >= self.macro_next {
+            let now = Instant::now();
+            let refill = match self.macro_loop.as_mut() {
+                Some(l) if l.left > 0 && now < l.until => {
+                    if l.left != u32::MAX {
+                        l.left -= 1;
+                    }
+                    Some(l.steps.clone())
+                }
+                _ => None,
+            };
+            match refill {
+                Some(steps) => self.macro_queue.extend(steps),
+                None if self.macro_loop.is_some() => self.stop_macro(),
+                None => self.release_macro_input(),
+            }
+        }
         if self.page != page_before {
             self.notify();
+        }
+    }
+
+    /// Arrête la macro ou la boucle en cours et relâche ce qu'elle tenait.
+    fn stop_macro(&mut self) {
+        self.macro_queue.clear();
+        if let Some(l) = self.macro_loop.take() {
+            if let Some((_, key)) = l.owner {
+                if let Some(m) = self.marks.get_mut(&key) {
+                    if m.1 == MARK_LOOP {
+                        m.2 = Instant::now();
+                    }
+                }
+            }
+        }
+        self.release_macro_input();
+    }
+
+    /// Relâche les touches et boutons de souris laissés enfoncés par une macro.
+    fn release_macro_input(&mut self) {
+        for k in std::mem::take(&mut self.macro_keys) {
+            self.input.release(&k);
+        }
+        for b in std::mem::take(&mut self.macro_buttons) {
+            self.input.mouse_release(&b);
         }
     }
 

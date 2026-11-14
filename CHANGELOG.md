@@ -4,6 +4,21 @@ Toutes les évolutions notables de HubForge. Les numéros suivent le principe
 MAJEUR.MINEUR.CORRECTIF ; avant la 1.0, chaque version mineure peut changer
 beaucoup de choses.
 
+## [0.24.0] — 2026-11-14
+
+### Nouveautés
+- **Notifications sur les touches** : nouvelle touche vivante « Notifications ». Elle affiche le nombre de notifications Windows non vues (Discord, WhatsApp, Outlook… ou toutes), ou le dernier message reçu.
+  - La touche s'entoure de rouge quand une notification arrive ; un appui les marque comme vues.
+  - Windows demande ton accord une fois (bouton « Autoriser l'accès » dans la touche). Rien ne quitte ton PC.
+  - Les messages des addons avec programme comptent aussi.
+- **Macros avancées** (mode avancé) :
+  - **Souris** : clic, double-clic, bouton enfoncé / relâché, déplacement et molette, à une position précise de l'écran ou là où se trouve le pointeur.
+  - **Touches enfoncées / relâchées** dans une macro (relâchées automatiquement à la fin).
+  - **Boucles** : répéter des étapes un nombre de fois, ou jusqu'au prochain appui (liseré bleu pendant la boucle, une heure au plus).
+  - **Enregistreur** : « Enregistrer mes actions » note tes touches (et, si tu veux, tes clics et la molette) avec leurs délais, puis en fait les étapes de la macro. Échap arrête l'enregistrement.
+  - Un avertissement s'affiche avant la première utilisation : HubForge n'est pas un outil de triche ; beaucoup de jeux en ligne interdisent les macros et peuvent bannir ton compte.
+- **MasterHUB virtuel** (Réglages › Général, désactivé par défaut) : une petite fenêtre toujours visible qui reproduit tes 15 touches ; un clic vaut un appui, même sans le MasterHUB branché.
+
 ## [0.23.0] — 2026-11-14
 
 ### Nouveautés

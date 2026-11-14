@@ -30,6 +30,8 @@ mod game;
 mod icons_data;
 mod lights;
 mod logging;
+mod macrorec;
+mod notif;
 mod official;
 mod profiles;
 mod render;
@@ -42,6 +44,7 @@ mod sound;
 mod theme;
 mod theme_icons;
 mod vars;
+mod vhub;
 mod weather;
 mod topology;
 mod ui;
@@ -240,6 +243,18 @@ fn main() {
             ui::trust_addon_service,
             ui::save_addon_settings,
             ui::restart_addon_service,
+            ui::set_virtual_hub,
+            ui::virtual_frame,
+            ui::virtual_key,
+            ui::virtual_ready,
+            ui::set_macro_ack,
+            ui::macro_record_start,
+            ui::macro_record_state,
+            ui::macro_record_stop,
+            ui::cursor_pos,
+            ui::notif_status,
+            ui::notif_request_access,
+            ui::open_notif_settings,
             ui::finish_wizard,
             ui::create_starter_profile,
             ui::get_diagnostic,
@@ -431,12 +446,21 @@ fn main() {
                 if !hidden || addon_to_install.is_some() {
                     show_main(&handle);
                 }
+                // MasterHUB virtuel (option des réglages, désactivée par défaut).
+                if profiles::load_settings(&dir).virtual_hub {
+                    if let Err(e) = ui::open_virtual_window(&handle) {
+                        log::warn!("MasterHUB virtuel : {e}");
+                    }
+                }
                 Ok(())
             }
         })
         .on_window_event(|window, event| {
             // Fermer la fenêtre la cache seulement : le MasterHUB continue de fonctionner.
             if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() != "main" {
+                    return;
+                }
                 api.prevent_close();
                 let _ = window.hide();
             }

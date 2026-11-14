@@ -767,3 +767,26 @@ select.input option, select.input optgroup { background: #171a20; }
 .addon-svc.error .dot { background: var(--danger, #ff5a5f); }
 .addon-svc.error { color: #ff9a9d; }
 .addon-svc small { color: var(--faint); }
+
+/* ---- 0.24 : macros avancées, notifications, MasterHUB virtuel ---- */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); display: grid; place-items: center; z-index: 60; }
+.modal-box { width: 440px; max-width: calc(100vw - 40px); background: var(--panel); border: 1px solid var(--line-2); border-radius: 16px; padding: 22px; box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5); }
+.modal-box h3 { margin: 0 0 12px; font-size: 16px; }
+.modal-box p { margin: 0 0 10px; line-height: 1.5; }
+.modal-box .row { gap: 8px; }
+.macro-warn .warn-text { background: rgba(255, 176, 32, 0.08); border: 1px solid rgba(255, 176, 32, 0.35); border-radius: 10px; padding: 10px 12px; color: #FFD27A; }
+.rec-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #FF3B30; margin-right: 8px; vertical-align: middle; }
+.rec-btn { display: flex; align-items: center; justify-content: center; }
+.rec-count { font-size: 64px; font-weight: 800; text-align: center; margin: 8px 0; color: var(--accent, #FF7A1A); }
+.rec-live { display: flex; align-items: center; font-weight: 600; margin-bottom: 6px; }
+.rec-live .rec-dot { animation: recblink 1s infinite; }
+.rec-info { color: var(--muted, #9aa0a6); font-variant-numeric: tabular-nums; }
+@keyframes recblink { 50% { opacity: 0.25; } }
+.notif-box { border: 1px solid var(--line-2); border-radius: 12px; padding: 12px; margin: 4px 0 12px; }
+.notif-box .notif-state { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
+.notif-box .notif-state .dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa0a6; }
+.notif-box.allowed .notif-state .dot { background: #30D158; }
+.notif-box.denied .notif-state .dot, .notif-box.unsupported .notif-state .dot { background: #FF453A; }
+.notif-recent { margin: 8px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.notif-recent li { padding: 4px 0; border-top: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif-recent b { font-weight: 600; margin-right: 6px; }

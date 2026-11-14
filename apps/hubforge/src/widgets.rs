@@ -31,12 +31,13 @@ pub const WIDGETS: &[(&str, &str)] = &[
     ("timer", "Minuteur"),
     ("net", "Réseau"),
     ("disk", "Disque"),
+    ("notif", "Notifications"),
 ];
 
 /// Touches vivantes qui n'existent qu'avec les styles (en Classique, elles
 /// sont dessinées en Graphite).
 fn themed_only(kind: &str) -> bool {
-    matches!(kind, "audio_output" | "media" | "timer" | "net" | "disk")
+    matches!(kind, "audio_output" | "media" | "timer" | "net" | "disk" | "notif")
 }
 
 /// Durée d'un compte à rebours (« 5:00 », « 90 », « 1:30:00 », « 5 min »),
@@ -113,6 +114,8 @@ pub const STYLES: &[(&str, &str, &str)] = &[
     ("net", "graph", "Graphique"),
     ("disk", "bar", "Barre"),
     ("disk", "gauge", "Jauge"),
+    ("notif", "count", "Compteur"),
+    ("notif", "last", "Dernier message"),
     ("mic", "classic", "Icône et texte"),
     ("mic", "icon", "Grande icône"),
 ];
@@ -224,6 +227,10 @@ pub struct Snapshot {
     /// Débit réseau (octets/s reçus, envoyés), et historique des débits reçus.
     pub net: Option<(f64, f64)>,
     pub net_hist: Vec<f64>,
+    /// Notifications (la plus récente d'abord), et moment où chaque touche
+    /// (0 à 14) a été vue pour la dernière fois (ms depuis 1970).
+    pub notifs: std::sync::Arc<Vec<crate::notif::Item>>,
+    pub notif_seen: std::collections::HashMap<u8, u64>,
 }
 
 /// Prend les mesures ; garde la mesure précédente du processeur pour
@@ -304,6 +311,8 @@ impl Sampler {
             timers: Default::default(),
             net: self.net,
             net_hist: self.net_hist.iter().copied().collect(),
+            notifs: Default::default(),
+            notif_seen: Default::default(),
         }
     }
 }
@@ -312,7 +321,9 @@ impl Sampler {
 pub fn preview_snapshot(audio: AudioState) -> Snapshot {
     static SAMPLER: OnceLock<Mutex<Sampler>> = OnceLock::new();
     let m = SAMPLER.get_or_init(|| Mutex::new(Sampler { want_gpu: true, want_net: true, ..Default::default() }));
-    m.lock().map(|mut s| s.sample(audio)).unwrap_or_default()
+    let mut snap = m.lock().map(|mut s| s.sample(audio)).unwrap_or_default();
+    snap.notifs = crate::notif::snapshot().1;
+    snap
 }
 
 /// Ce que la touche affiche, sous forme de texte : on ne renvoie l'image au
@@ -352,6 +363,10 @@ pub fn signature(def: &KeyDef, snap: &Snapshot) -> String {
         }
         ("net", "graph") => format!("{:?}{:?}", snap.net.map(|n| (n.0 as u64 / 10_000, n.1 as u64 / 10_000)), snap.net_hist.len()),
         ("net", _) => format!("{:?}", snap.net.map(|n| (n.0 as u64 / 10_000, n.1 as u64 / 10_000))),
+        ("notif", _) => {
+            let (n, last) = notif_state(def, snap);
+            format!("{n}|{:?}", last.map(|i| (&i.id, &i.title, &i.body)))
+        }
         ("disk", _) => format!("{:?}", crate::pcstate::disk(def.widget_target.as_deref().unwrap_or("C")).map(|d| (d.0 * 10.0) as u64)),
         _ => String::new(),
     };
@@ -564,6 +579,22 @@ pub fn app_target(def: &KeyDef) -> Option<String> {
 
 fn app_meter(def: &KeyDef, snap: &Snapshot) -> Meter {
     app_target(def).and_then(|t| snap.apps.iter().find(|(k, _)| *k == t).map(|(_, m)| *m)).unwrap_or_default()
+}
+
+/// Coupe un texte trop long (« Tu passes dim… »).
+fn ellipsis(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>().trim_end())
+    }
+}
+
+/// Notifications non vues d'une touche « Notifications » : nombre et la plus récente.
+pub fn notif_state<'a>(def: &KeyDef, snap: &'a Snapshot) -> (usize, Option<&'a crate::notif::Item>) {
+    let seen = snap.notif_seen.get(&def.key.saturating_sub(1)).copied().unwrap_or(0);
+    crate::notif::unseen(&snap.notifs, def.widget_target.as_deref().unwrap_or(""), seen)
 }
 
 /// « discord.exe » → « Discord ».
@@ -975,7 +1006,7 @@ mod themed {
                     "#EF4444"
                 }
             }
-            "app_volume" => match brand(def) {
+            "app_volume" | "notif" => match brand(def) {
                 Some("discord") => "#5865F2",
                 Some("spotify") => "#1DB954",
                 Some("steam") => "#66C0F4",
@@ -1207,6 +1238,44 @@ mod themed {
                     b += &val(&st, 36.0, 40.0 + d * 0.7, &text, if text.len() > 6 { 11.0 } else { 16.0 });
                     b += &bar(&st, 46.0 + d * 0.6, shown, &color);
                     b += &th::label(&st, &title, ly);
+                }
+            }
+            "notif" => {
+                let (n, last) = notif_state(def, snap);
+                let icon = brand(def).unwrap_or("bell");
+                let title = if !label.is_empty() {
+                    label.to_string()
+                } else if def.widget_target.as_deref().unwrap_or("").trim().is_empty() {
+                    "Notifications".to_string()
+                } else {
+                    app_title(def)
+                };
+                let ic = if n > 0 { st.ic.clone() } else { st.soft.clone() };
+                let count = if n > 99 { "99+".to_string() } else { n.to_string() };
+                let badge = |cx: f32, cy: f32, r: f32| {
+                    format!(
+                        r##"<circle cx="{cx}" cy="{cy}" r="{r}" fill="#FF3B30"/>{}"##,
+                        th::text(cx, cy + r * 0.36, &count, if count.len() > 2 { r * 0.85 } else { r * 1.05 }, "#FFFFFF", 800, 0.0, r * 2.0, 1.0)
+                    )
+                };
+                match (style, last) {
+                    ("last", Some(item)) => {
+                        b += &th::icon(icon, st.weight, 18.0, 15.0 + d, 14.0, &ic, fx);
+                        b += &badge(54.0, 14.0 + d, 9.0);
+                        let who = if item.title.is_empty() { item.app.as_str() } else { item.title.as_str() };
+                        b += &th::text(36.0, 37.0 + d, &ellipsis(who, 11), 11.0, &st.val, st.value_weight, 0.0, 62.0, 1.0);
+                        if !item.body.is_empty() {
+                            b += &small(&st, 36.0, 50.0 + d * 0.6, &ellipsis(&item.body, 15), 8.5, 62.0);
+                        }
+                        b += &th::label(&st, &title, ly);
+                    }
+                    _ => {
+                        b += &th::icon(icon, st.weight, 36.0, 29.0 + d * 0.7, 30.0, &ic, fx);
+                        if n > 0 {
+                            b += &badge(50.0, 15.0 + d, 10.5);
+                        }
+                        b += &th::label(&st, &title, ly);
+                    }
                 }
             }
             "mic" => {

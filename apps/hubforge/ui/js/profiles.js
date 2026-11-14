@@ -417,7 +417,7 @@ function movePage(from, to) {
   const newIndex = (old) => order.indexOf(old);
   const fix = (a) => {
     if (!a) return a;
-    if (a.type === "macro" || a.type === "if") { childActions(a).forEach(fix); return a; }
+    if (a.type === "macro" || a.type === "loop" || a.type === "if") { childActions(a).forEach(fix); return a; }
     if ((a.type === "page" || a.type === "folder") && /^\d+$/.test(a.to || "")) {
       const old = Number(a.to) - 1;
       if (old >= 0 && old < order.length) a.to = String(newIndex(old) + 1);

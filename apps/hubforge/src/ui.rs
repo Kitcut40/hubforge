@@ -135,6 +135,10 @@ pub struct Initial {
     auto_profiles: bool,
     /// Langue de l'interface : "fr" ou "en".
     lang: String,
+    /// MasterHUB virtuel activé.
+    virtual_hub: bool,
+    /// Avertissement des macros avancées accepté.
+    macro_ack: bool,
 }
 
 #[derive(Serialize)]
@@ -175,7 +179,139 @@ pub fn get_initial(state: State<AppState>) -> Result<Initial, String> {
         show_wizard,
         auto_profiles: settings.auto_profiles.unwrap_or(true),
         lang: crate::i18n::resolve(&settings.lang),
+        virtual_hub: settings.virtual_hub,
+        macro_ack: settings.macro_ack,
     })
+}
+
+// ----------------------------------------------------------------------
+// MasterHUB virtuel
+// ----------------------------------------------------------------------
+
+/// Ouvre (ou montre) la fenêtre du MasterHUB virtuel.
+pub fn open_virtual_window(app: &AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("virtual") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(app, "virtual", tauri::WebviewUrl::App("virtual.html".into()))
+        .title(crate::i18n::t("MasterHUB virtuel", "Virtual MasterHUB"))
+        .inner_size(292.0, 318.0)
+        .min_inner_size(200.0, 220.0)
+        .resizable(true)
+        .always_on_top(true)
+        .decorations(false)
+        .transparent(false)
+        .background_color(tauri::webview::Color(14, 15, 19, 255))
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_virtual_hub(app: AppHandle, state: State<'_, AppState>, on: bool) -> Result<(), String> {
+    use tauri::Manager;
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.virtual_hub = on;
+    profiles::save_settings(&state.cfg_dir, &st);
+    if on {
+        open_virtual_window(&app)?;
+    } else if let Some(w) = app.get_webview_window("virtual") {
+        let _ = w.close();
+    }
+    let _ = app.emit("virtual-hub", on);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn virtual_frame(since: u64) -> crate::vhub::Frame {
+    crate::vhub::frame(since)
+}
+
+#[tauri::command]
+pub fn virtual_key(state: State<AppState>, key: u8, down: bool) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::VirtualKey { key, down });
+}
+
+#[tauri::command]
+pub fn virtual_ready(state: State<AppState>) {
+    let _ = state.engine.lock().unwrap().send(EngineMsg::VirtualShow);
+}
+
+// ----------------------------------------------------------------------
+// Macros avancées
+// ----------------------------------------------------------------------
+
+#[tauri::command]
+pub fn set_macro_ack(state: State<AppState>) {
+    let mut st = profiles::load_settings(&state.cfg_dir);
+    st.macro_ack = true;
+    profiles::save_settings(&state.cfg_dir, &st);
+}
+
+#[tauri::command]
+pub fn macro_record_start(mouse: bool) -> Result<(), String> {
+    crate::macrorec::start(mouse)
+}
+
+#[tauri::command]
+pub fn macro_record_state() -> crate::macrorec::RecState {
+    crate::macrorec::state()
+}
+
+/// Position actuelle du pointeur de la souris (pixels de l'écran).
+#[tauri::command]
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    #[cfg(windows)]
+    unsafe {
+        let mut p = windows::Win32::Foundation::POINT::default();
+        windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p).ok()?;
+        Some((p.x, p.y))
+    }
+    #[cfg(not(windows))]
+    None
+}
+
+#[derive(Serialize)]
+pub struct Recorded {
+    steps: Vec<config::Action>,
+    cut: bool,
+}
+
+#[tauri::command]
+pub fn macro_record_stop() -> Recorded {
+    let (steps, cut) = crate::macrorec::stop();
+    Recorded { steps, cut }
+}
+
+// ----------------------------------------------------------------------
+// Notifications
+// ----------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct NotifStatus {
+    access: crate::notif::Access,
+    /// Dernières notifications (pour vérifier que ça marche).
+    recent: Vec<crate::notif::Item>,
+}
+
+#[tauri::command]
+pub fn notif_status() -> NotifStatus {
+    crate::notif::set_wanted(true);
+    let (_, all) = crate::notif::snapshot();
+    NotifStatus { access: crate::notif::access(), recent: all.iter().take(5).cloned().collect() }
+}
+
+#[tauri::command]
+pub fn notif_request_access() {
+    crate::notif::request_access();
+}
+
+#[tauri::command]
+pub fn open_notif_settings() {
+    crate::actions::launch("ms-settings:privacy-notifications", &[]);
 }
 
 #[tauri::command]

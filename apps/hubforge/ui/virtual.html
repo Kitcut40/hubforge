@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<title>MasterHUB</title>
+<!-- HubForge — MasterHUB virtuel : les 15 touches à l'écran, un clic vaut un appui. -->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0E0F13; color: #E8EAED; font: 12px/1.3 "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; }
+  body { display: flex; flex-direction: column; border: 1px solid #262A33; border-radius: 10px; }
+  header { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 6px 0 10px; cursor: grab; }
+  header .logo { width: 8px; height: 8px; border-radius: 2px; background: #FF7A1A; box-shadow: 0 0 8px rgba(255, 122, 26, 0.7); }
+  header .title { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+  header .page { color: #9AA0A6; font-weight: 400; margin-left: 6px; }
+  header button { width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: #9AA0A6; font-size: 14px; cursor: pointer; display: grid; place-items: center; }
+  header button:hover { background: #262A33; color: #fff; }
+  main { flex: 1; display: grid; place-items: center; padding: 4px 10px 10px; min-height: 0; }
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; width: 100%; max-width: calc((100vh - 44px) * 5 / 3); }
+  .key { position: relative; aspect-ratio: 1; border-radius: 9px; overflow: hidden; background: #16181D; border: 1px solid #23262E; cursor: pointer; transition: transform 0.06s, filter 0.06s; }
+  .key img { width: 100%; height: 100%; display: block; object-fit: cover; pointer-events: none; }
+  .key:hover { border-color: #3A3F4B; }
+  .key.down { transform: scale(0.94); filter: brightness(0.75); }
+</style>
+</head>
+<body>
+<header data-tauri-drag-region>
+  <span class="logo" data-tauri-drag-region></span>
+  <span class="title" data-tauri-drag-region>MasterHUB<span class="page" id="page"></span></span>
+  <button id="close" title="Fermer">✕</button>
+</header>
+<main><div class="grid" id="grid"></div></main>
+<script>
+"use strict";
+const T = window.__TAURI__;
+const invoke = T ? T.core.invoke : async () => null;
+const grid = document.getElementById("grid");
+const keys = [];
+let version = 0, rot = 0, down = null;
+
+for (let i = 0; i < 15; i++) {
+  const k = document.createElement("div");
+  k.className = "key";
+  const img = document.createElement("img");
+  img.alt = "";
+  img.style.visibility = "hidden";
+  k.append(img);
+  k.onpointerdown = (e) => {
+    if (e.button !== 0) return;
+    k.setPointerCapture(e.pointerId);
+    down = i;
+    k.classList.add("down");
+    invoke("virtual_key", { key: i, down: true });
+  };
+  const up = () => {
+    if (down !== i) return;
+    down = null;
+    k.classList.remove("down");
+    invoke("virtual_key", { key: i, down: false });
+  };
+  k.onpointerup = up;
+  k.onpointercancel = up;
+  grid.append(k);
+  keys.push(img);
+}
+
+document.getElementById("close").onclick = () => invoke("set_virtual_hub", { on: false });
+
+if (navigator.language && !navigator.language.toLowerCase().startsWith("fr")) {
+  document.documentElement.lang = "en";
+  document.getElementById("close").title = "Close";
+}
+
+async function poll() {
+  try {
+    const f = await invoke("virtual_frame", { since: version });
+    if (f) {
+      if (f.rot !== rot) {
+        rot = f.rot;
+        // L'image est tournée pour le module : on la remet droite.
+        for (const img of keys) img.style.transform = rot ? `rotate(${-rot}deg)` : "";
+      }
+      for (const [k, b64] of f.keys) {
+        const img = keys[k];
+        if (!img) continue;
+        img.src = "data:image/jpeg;base64," + b64;
+        img.style.visibility = "visible";
+      }
+      document.getElementById("page").textContent = f.page ? "· " + f.page : "";
+      version = f.version;
+    }
+  } catch (_) {}
+  setTimeout(poll, document.hidden ? 1000 : 120);
+}
+
+invoke("virtual_ready").finally(poll);
+</script>
+</body>
+</html>
